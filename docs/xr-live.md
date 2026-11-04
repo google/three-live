@@ -632,3 +632,12 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
     `XRSpatialRealityKitFeatures.requestGrab(_:)` and cancel the gesture when it
     returns `false` (another peer holds the node); near-simultaneous grabs
     resolve like the web and call `onPeerGrabConflict`.
+
+
+### Gemini Live session ownership
+
+Disconnect, remote closure and replacement revoke old capture, timer, transport,
+transcription, audio and recognition callbacks. Teardown detaches old state before
+external callbacks run. Reentrant replacement keeps the newer session and closes
+superseded transports. Synchronous setup failures clean up the failed session.
+Ordinary text turns retain the existing text-only wire format.
