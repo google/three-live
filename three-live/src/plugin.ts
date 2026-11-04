@@ -59,6 +59,7 @@ export interface ThreeLivePlugin {
     gl: WebGL2RenderingContext,
     viewer: any,
     vpMatrix: Float32Array,
+    eye?: 'left' | 'right' | 'none', viewport?: readonly number[], projection?: Float32Array,
   ): void;
   onBeforeDrawScene?(
     viewer: any,

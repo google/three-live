@@ -129,5 +129,12 @@ export * from './shared-room';
 export * from './spatial-locomotion';
 export * from './spatial-measure';
 export * from './spatial-paint';
-export * from './splat-loader';
+export {
+  MAX_SPLATS, MAX_SPLAT_FILE_BYTES, MAX_SPZ_DECOMPRESSED_BYTES,
+  parseSplat, gunzip, parseSpzPayload, parseSpz, resolveSplatUrl, loadSplat,
+  createSplatSortScratch, sortSplatsByDepth, SplatRenderer, XRSplatLoader,
+  getSplatLoader, splatLoaderPlugin, type SplatData, type SplatSortScratch,
+  computeSplatCovariance3D, projectSplatCovariance2D, evaluateSplatSH,
+  computeSplatViewColors, shBasisCountForDegree, type SplatEllipse2D,
+} from './splat-loader';
 export * from './world-understanding';
