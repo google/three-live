@@ -2348,3 +2348,8 @@ transcription, audio and recognition callbacks. Teardown detaches old state befo
 external callbacks run. Reentrant replacement keeps the newer session and closes
 superseded transports. Synchronous setup failures clean up the failed session.
 Ordinary text turns retain the existing text-only wire format.
+
+Browser depth particles use shared static cross-quads when the viewer supports
+instance offsets. Position uploads are 12 bytes per particle update instead of
+96. Older viewers retain the expanded geometry fallback. Existing mesh-instance
+matrices and colors keep their current rendering path.
