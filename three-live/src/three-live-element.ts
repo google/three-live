@@ -29,6 +29,7 @@ import {
 } from './messages';
 import {getSharedRegistry} from './plugin';
 import {
+  createEditReceipt,
   normalizeToneMapping,
   SANDBOX_HOST_SCENE_LIMITS,
   ThreeView,
@@ -40,10 +41,33 @@ import {
   type HostSceneLimits,
   type MeshDecoder,
   type OrbitLimits,
+  type SceneBoundingBox,
+  type SceneConstraintCheck,
+  type SceneEditConstraints,
+  type SceneEditOptions,
+  type SceneEditReceipt,
   type ToneMappingMode,
 } from './three-view';
 
-export type {DecoderType, MeshDecoder, OrbitLimits, ToneMappingMode};
+export type {
+  DecoderType,
+  MeshDecoder,
+  OrbitLimits,
+  SceneBoundingBox,
+  SceneConstraintCheck,
+  SceneEditConstraints,
+  SceneEditOptions,
+  SceneEditReceipt,
+  ToneMappingMode,
+};
+
+export interface ElementSceneEditOptions
+  extends Omit<SceneEditOptions, 'replacement'> {
+  replacement?: GLBData | ArrayBuffer | ArrayBufferView | string;
+  script?: string;
+  scriptSrc?: string;
+  strictFidelity?: boolean;
+}
 
 export type ARMode = 'quick-look' | 'webxr' | 'scene-viewer';
 
@@ -70,7 +94,10 @@ export interface ARProvider {
 }
 
 export interface ScriptExecutionCallbacks {
-  onModelReady: (glbBuffer: ArrayBuffer | GLBData) => void;
+  onModelReady: (
+    glbBuffer: ArrayBuffer | GLBData,
+    warnings?: string[],
+  ) => void;
   onUpdateTransforms?: (transforms: any) => void;
   onError?: (err: Error) => void;
   onToast?: (message: string) => void;
@@ -95,6 +122,7 @@ export type SandboxMode = 'worker' | 'iframe';
 /** Options controlling procedural script execution security policy. */
 export interface ScriptExecutionOptions {
   readonly allowClientScripts?: boolean;
+  readonly strictFidelity?: boolean;
 }
 
 export interface ScriptRunner {
@@ -108,6 +136,7 @@ export interface ScriptRunner {
     scriptUrl: string,
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
+    options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void>;
 }
 
@@ -328,6 +357,19 @@ export class ThreeLiveElement extends BaseElement {
   private scriptHandle: ScriptExecutionHandle | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private mutationObserver: MutationObserver | null = null;
+  private loadRevision = 0;
+  private activeFetchAbort: AbortController | null = null;
+  private lastCompileWarnings: string[] = [];
+
+  private emitEvent(type: string, detail: unknown): void {
+    this.dispatchEvent(
+      new CustomEvent(type, {bubbles: true, composed: true, detail}),
+    );
+  }
+
+  public getLastCompileDiagnostics(): {warnings: string[]} {
+    return {warnings: [...this.lastCompileWarnings]};
+  }
 
   connectedCallback(): void {
     if (typeof document === 'undefined') return;
@@ -367,6 +409,11 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   disconnectedCallback(): void {
+    this.loadRevision++;
+    if (this.activeFetchAbort) {
+      this.activeFetchAbort.abort();
+      this.activeFetchAbort = null;
+    }
     for (const plugin of ThreeView.getRegisteredPlugins()) {
       plugin.onElementDisconnected?.(this);
     }
@@ -839,13 +886,9 @@ export class ThreeLiveElement extends BaseElement {
     if (!this.viewer) return false;
     const applied = this.viewer.selectVariant(name);
     if (applied) {
-      this.dispatchEvent(
-        new CustomEvent('variant-applied', {
-          bubbles: true,
-          composed: true,
-          detail: {variantName: this.viewer.getVariantName()},
-        }),
-      );
+      this.emitEvent('variant-applied', {
+        variantName: this.viewer.getVariantName(),
+      });
     }
     return applied;
   }
@@ -1022,28 +1065,51 @@ export class ThreeLiveElement extends BaseElement {
   private async loadModelWithLimits(
     model: GLBData | ArrayBuffer | ArrayBufferView | string,
     limits?: HostSceneLimits,
+    expectedRev?: number,
   ): Promise<void> {
     if (!this.viewer) {
       this.currentModel = model;
       this.currentModelLimits = limits;
       return;
     }
+    const rev = expectedRev ?? ++this.loadRevision;
+    if (this.activeFetchAbort) {
+      this.activeFetchAbort.abort();
+      this.activeFetchAbort = null;
+    }
+    let fetchAbort: AbortController | null = null;
     try {
       let resolvedModel: GLBData | ArrayBuffer | ArrayBufferView;
       if (typeof model === 'string') {
-        this.isModelLoaded = false;
-        this.viewer?.clearScene?.();
-        const response = await fetch(model);
+        fetchAbort =
+          typeof AbortController !== 'undefined' ? new AbortController() : null;
+        this.activeFetchAbort = fetchAbort;
+        const response = await fetch(
+          model,
+          fetchAbort ? {signal: fetchAbort.signal} : undefined,
+        );
+        if (rev !== this.loadRevision || !this.viewer) {
+          return;
+        }
         if (!response.ok) {
           throw new Error(
             `Failed to load 3D model from "${model}": HTTP ${response.status}`,
           );
         }
         resolvedModel = await response.arrayBuffer();
+        if (rev !== this.loadRevision || !this.viewer) {
+          return;
+        }
       } else {
+        if (rev !== this.loadRevision || !this.viewer) {
+          return;
+        }
         resolvedModel = model;
       }
       const glbData = toGLBData(resolvedModel);
+      if (rev !== this.loadRevision || !this.viewer) {
+        return;
+      }
       this.viewer.loadGLBData(glbData, limits);
       this.currentModel = glbData;
       this.currentModelLimits = limits;
@@ -1060,22 +1126,17 @@ export class ThreeLiveElement extends BaseElement {
         this.selectVariant(initialVariant);
       }
 
-      this.dispatchEvent(
-        new CustomEvent('load', {
-          bubbles: true,
-          composed: true,
-          detail: {model: glbData},
-        }),
-      );
+      this.emitEvent('load', {model: glbData});
     } catch (err: any) {
-      this.dispatchEvent(
-        new CustomEvent('error', {
-          bubbles: true,
-          composed: true,
-          detail: {error: err},
-        }),
-      );
+      if (rev !== this.loadRevision) {
+        return;
+      }
+      this.emitEvent('error', {error: err});
       throw err;
+    } finally {
+      if (fetchAbort && this.activeFetchAbort === fetchAbort) {
+        this.activeFetchAbort = null;
+      }
     }
   }
 
@@ -1126,13 +1187,7 @@ export class ThreeLiveElement extends BaseElement {
 
     if (!this.currentModel) {
       const err = new Error('No 3D model is loaded in <three-live>.');
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'failed', error: err},
-        }),
-      );
+      this.emitEvent('ar-status', {status: 'failed', error: err});
       this.showToast(err.message, 6000);
       throw err;
     }
@@ -1141,13 +1196,7 @@ export class ThreeLiveElement extends BaseElement {
       const err = new Error(
         "AR module not bundled. Use the default 'three-live' bundle or call ThreeLiveElement.registerAR().",
       );
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'failed', error: err},
-        }),
-      );
+      this.emitEvent('ar-status', {status: 'failed', error: err});
       this.showToast(err.message, 6000);
       throw err;
     }
@@ -1158,13 +1207,7 @@ export class ThreeLiveElement extends BaseElement {
       .filter(Boolean) as ARMode[];
 
     try {
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'session-started'},
-        }),
-      );
+      this.emitEvent('ar-status', {status: 'session-started'});
       const result = await ThreeLiveElement.arProvider.activateAR({
         model: (iosSrc || this.currentModel) as any,
         glbUrl:
@@ -1177,23 +1220,11 @@ export class ThreeLiveElement extends BaseElement {
         webXROptions: {
           onExit: () => {
             this.activeXRSession = null;
-            this.dispatchEvent(
-              new CustomEvent('ar-status', {
-                bubbles: true,
-                composed: true,
-                detail: {status: 'not-presenting'},
-              }),
-            );
+            this.emitEvent('ar-status', {status: 'not-presenting'});
           },
           onError: (err) => {
             this.activeXRSession = null;
-            this.dispatchEvent(
-              new CustomEvent('ar-status', {
-                bubbles: true,
-                composed: true,
-                detail: {status: 'failed', error: err},
-              }),
-            );
+            this.emitEvent('ar-status', {status: 'failed', error: err});
             this.showToast(`AR error: ${err.message}`, 6000);
           },
         },
@@ -1250,13 +1281,7 @@ export class ThreeLiveElement extends BaseElement {
         }
 
         if (result.error) {
-          this.dispatchEvent(
-            new CustomEvent('ar-status', {
-              bubbles: true,
-              composed: true,
-              detail: {status: 'failed', error: result.error},
-            }),
-          );
+          this.emitEvent('ar-status', {status: 'failed', error: result.error});
         }
       } else {
         if (result.session) {
@@ -1273,13 +1298,7 @@ export class ThreeLiveElement extends BaseElement {
       return result;
     } catch (err: any) {
       this.activeXRSession = null;
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'failed', error: err},
-        }),
-      );
+      this.emitEvent('ar-status', {status: 'failed', error: err});
       this.showToast(`AR error: ${err.message || String(err)}`, 6000);
       throw err;
     }
@@ -1354,26 +1373,14 @@ export class ThreeLiveElement extends BaseElement {
       minCameraOrbit: minOrbit,
       maxCameraOrbit: maxOrbit,
       onMeshClick: (hit: HitDetail) => {
-        this.dispatchEvent(
-          new CustomEvent('meshclick', {
-            bubbles: true,
-            composed: true,
-            detail: hit,
-          }),
-        );
+        this.emitEvent('meshclick', hit);
       },
       onCameraChange: (cam: CameraDetail) => {
         this.updateHotspots();
         for (const plugin of ThreeView.getRegisteredPlugins()) {
           plugin.onCameraChange?.(this.viewer!, this);
         }
-        this.dispatchEvent(
-          new CustomEvent('camera-change', {
-            bubbles: true,
-            composed: true,
-            detail: cam,
-          }),
-        );
+        this.emitEvent('camera-change', cam);
       },
     });
 
@@ -1683,28 +1690,35 @@ export class ThreeLiveElement extends BaseElement {
         'Procedural script execution requires "three-live/full" or ThreeLiveElement.registerScriptRunner().',
       );
       this.showToast(error.message);
-      this.dispatchEvent(
-        new CustomEvent('error', {
-          bubbles: true,
-          composed: true,
-          detail: {error},
-        }),
-      );
+      this.emitEvent('error', {error});
       return Promise.reject(error);
     }
 
+    const rev = ++this.loadRevision;
+    if (this.activeFetchAbort) {
+      this.activeFetchAbort.abort();
+      this.activeFetchAbort = null;
+    }
     if (this.scriptHandle) {
       this.scriptHandle.terminate();
       this.scriptHandle = null;
     }
-    this.isModelLoaded = false;
-    this.viewer?.clearScene?.();
 
     return new Promise<ArrayBuffer | GLBData | void>((resolve, reject) => {
       let settled = false;
       const callbacks: ScriptExecutionCallbacks = {
-        onModelReady: (model) => {
-          this.loadModelWithLimits(model, SANDBOX_HOST_SCENE_LIMITS).then(
+        onModelReady: (model, warnings) => {
+          if (rev !== this.loadRevision) {
+            if (!settled) {
+              settled = true;
+              resolve(undefined);
+            }
+            return;
+          }
+          this.lastCompileWarnings = Array.isArray(warnings)
+            ? [...warnings]
+            : [];
+          this.loadModelWithLimits(model, SANDBOX_HOST_SCENE_LIMITS, rev).then(
             () => {
               if (!settled) {
                 settled = true;
@@ -1712,9 +1726,11 @@ export class ThreeLiveElement extends BaseElement {
               }
             },
             (error: unknown) => {
-              const message =
-                error instanceof Error ? error.message : String(error);
-              this.showToast(message);
+              if (rev === this.loadRevision) {
+                const message =
+                  error instanceof Error ? error.message : String(error);
+                this.showToast(message);
+              }
               if (!settled) {
                 settled = true;
                 reject(error);
@@ -1722,38 +1738,54 @@ export class ThreeLiveElement extends BaseElement {
             },
           );
         },
-        onUpdateTransforms: (transforms) =>
-          this.viewer?.updateMeshTransforms(transforms),
+        onUpdateTransforms: (transforms) => {
+          if (rev === this.loadRevision) {
+            this.viewer?.updateMeshTransforms(transforms);
+          }
+        },
         onError: (error) => {
+          if (rev !== this.loadRevision) {
+            if (!settled) {
+              settled = true;
+              resolve(undefined);
+            }
+            return;
+          }
           this.showToast(error.message);
-          this.dispatchEvent(
-            new CustomEvent('error', {
-              bubbles: true,
-              composed: true,
-              detail: {error},
-            }),
-          );
+          this.emitEvent('error', {error});
           if (!settled) {
             settled = true;
             reject(error);
           }
         },
-        onToast: (message) => this.showToast(message),
+        onToast: (message) => {
+          if (rev === this.loadRevision) {
+            this.showToast(message);
+          }
+        },
       };
 
       invokeRunner(runner, callbacks).then(
         (handle) => {
           if (handle) {
-            this.scriptHandle = handle;
+            if (rev === this.loadRevision) {
+              this.scriptHandle = handle;
+            } else {
+              handle.terminate();
+            }
           }
         },
         (error: unknown) => {
-          if (error instanceof Error && error.message) {
+          if (rev === this.loadRevision && error instanceof Error && error.message) {
             this.showToast(error.message);
           }
           if (!settled) {
             settled = true;
-            reject(error);
+            if (rev === this.loadRevision) {
+              reject(error);
+            } else {
+              resolve(undefined);
+            }
           }
         },
       );
@@ -1764,7 +1796,10 @@ export class ThreeLiveElement extends BaseElement {
    * Loads and compiles a server-generated Three.js scene script URL directly
    * inside the mandatory sandbox (Use Case 2).
    */
-  loadScriptFromSrc(src: string): Promise<ArrayBuffer | GLBData | void> {
+  loadScriptFromSrc(
+    src: string,
+    options?: ScriptExecutionOptions,
+  ): Promise<ArrayBuffer | GLBData | void> {
     return this.runWithScriptRunner((runner, callbacks) => {
       if (typeof runner.executeUrl !== 'function') {
         const error = new Error(
@@ -1773,7 +1808,7 @@ export class ThreeLiveElement extends BaseElement {
         callbacks.onError?.(error);
         return Promise.reject(error);
       }
-      return runner.executeUrl(src, this.sandbox, callbacks);
+      return runner.executeUrl(src, this.sandbox, callbacks, options);
     });
   }
 
@@ -1782,27 +1817,209 @@ export class ThreeLiveElement extends BaseElement {
    * mandatory sandbox (Use Case 1). Requires opting in via
    * `ThreeLiveElement.allowClientScripts = true` or `allow-client-scripts`.
    */
-  executeScript(script: string): Promise<ArrayBuffer | GLBData | void> {
+  executeScript(
+    script: string,
+    options?: ScriptExecutionOptions,
+  ): Promise<ArrayBuffer | GLBData | void> {
     if (!ThreeLiveElement.scriptRunner) {
       return this.runWithScriptRunner(() => Promise.resolve());
     }
     if (!this.allowClientScripts) {
       const error = new Error(CLIENT_SCRIPTS_DISABLED_ERROR);
       this.showToast(CLIENT_SCRIPTS_DISABLED_TOAST);
-      this.dispatchEvent(
-        new CustomEvent('error', {
-          bubbles: true,
-          composed: true,
-          detail: {error},
-        }),
-      );
+      this.emitEvent('error', {error});
       return Promise.reject(error);
     }
     return this.runWithScriptRunner((runner, callbacks) =>
       runner.execute(script, this.sandbox, callbacks, {
         allowClientScripts: true,
+        strictFidelity: options?.strictFidelity,
       }),
     );
+  }
+
+  private compileScriptCandidate(
+    options: ElementSceneEditOptions,
+  ): Promise<{model: ArrayBuffer | GLBData; warnings: string[]}> {
+    const runner = ThreeLiveElement.scriptRunner;
+    if (!runner) {
+      return Promise.reject(
+        new Error(
+          'Procedural script execution requires "three-live/full" or ThreeLiveElement.registerScriptRunner().',
+        ),
+      );
+    }
+    if (options.script !== undefined && !this.allowClientScripts) {
+      return Promise.reject(new Error(CLIENT_SCRIPTS_DISABLED_ERROR));
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let runHandle: ScriptExecutionHandle | void;
+      const cleanup = () => {
+        if (runHandle && typeof runHandle.terminate === 'function') {
+          runHandle.terminate();
+          runHandle = undefined;
+        }
+      };
+      const callbacks: ScriptExecutionCallbacks = {
+        onModelReady: (model, warnings) => {
+          cleanup();
+          if (!settled) {
+            settled = true;
+            resolve({
+              model,
+              warnings: Array.isArray(warnings) ? [...warnings] : [],
+            });
+          }
+        },
+        onError: (err) => {
+          cleanup();
+          if (!settled) {
+            settled = true;
+            reject(err);
+          }
+        },
+      };
+      const execPromise =
+        options.script !== undefined
+          ? runner.execute(options.script, this.sandbox, callbacks, {
+              allowClientScripts: true,
+              strictFidelity: options.strictFidelity,
+            })
+          : typeof runner.executeUrl === 'function'
+            ? runner.executeUrl(options.scriptSrc!, this.sandbox, callbacks, {
+                strictFidelity: options.strictFidelity,
+              })
+            : Promise.reject(
+                new Error(
+                  'Registered ScriptRunner does not support executeUrl() for server-generated scripts.',
+                ),
+              );
+      execPromise.then(
+        (h) => {
+          runHandle = h;
+          if (settled) cleanup();
+        },
+        (err) => {
+          cleanup();
+          if (!settled) {
+            settled = true;
+            reject(err);
+          }
+        },
+      );
+    });
+  }
+
+  /**
+   * Stages a targeted replacement preview on `<three-live>`, supporting direct
+   * GLB/URL payloads as well as sandboxed `script` or `scriptSrc` compilation.
+   */
+  public async previewEdit(
+    options: ElementSceneEditOptions,
+  ): Promise<SceneEditReceipt> {
+    const targets = (
+      Array.isArray(options.target) ? options.target : [options.target]
+    ).filter(Boolean);
+    const fail = (errors: string[], warnings: string[] = []): SceneEditReceipt =>
+      createEditReceipt({
+        revision: this.loadRevision,
+        status: 'rejected',
+        targets,
+        warnings,
+        errors,
+        undoDepth: this.viewer?.getEditHistory().undoStack.length ?? 0,
+      });
+    if (!this.viewer) {
+      return fail(['Viewer is not initialized on <three-live>.']);
+    }
+
+    const rev = ++this.loadRevision;
+    let replacementData: GLBData | ArrayBuffer | ArrayBufferView;
+    let limits = options.limits;
+    const warnings = options.warnings ? [...options.warnings] : [];
+
+    try {
+      if (options.script !== undefined || options.scriptSrc !== undefined) {
+        const compiled = await this.compileScriptCandidate(options);
+        if (rev !== this.loadRevision || !this.viewer) {
+          return fail(['Superseded by a newer scene revision.'], compiled.warnings);
+        }
+        replacementData = compiled.model;
+        this.lastCompileWarnings = [...compiled.warnings];
+        warnings.push(...compiled.warnings);
+        if (!limits) limits = SANDBOX_HOST_SCENE_LIMITS;
+      } else if (typeof options.replacement === 'string') {
+        const resp = await fetch(options.replacement);
+        if (rev !== this.loadRevision || !this.viewer) {
+          return fail(['Superseded by a newer scene revision.'], warnings);
+        }
+        if (!resp.ok) {
+          throw new Error(
+            `Failed to load replacement model from "${options.replacement}": HTTP ${resp.status}`,
+          );
+        }
+        replacementData = await resp.arrayBuffer();
+        if (rev !== this.loadRevision || !this.viewer) {
+          return fail(['Superseded by a newer scene revision.'], warnings);
+        }
+      } else if (options.replacement) {
+        replacementData = options.replacement;
+      } else {
+        throw new Error(
+          'previewEdit requires `replacement`, `script`, or `scriptSrc`.',
+        );
+      }
+    } catch (err: any) {
+      const receipt = fail([err?.message || String(err)], warnings);
+      this.emitEvent('scene-edit', receipt);
+      return receipt;
+    }
+
+    const receipt = this.viewer.previewEdit({
+      ...options,
+      replacement: replacementData,
+      limits,
+      warnings,
+    });
+    this.updateHotspots();
+    this.emitEvent('scene-edit', receipt);
+    return receipt;
+  }
+
+  private applyViewerEdit(
+    fn: 'acceptEdit' | 'rejectEdit' | 'undoEdit',
+  ): SceneEditReceipt {
+    if (!this.viewer) {
+      throw new Error('Viewer is not initialized on <three-live>.');
+    }
+    const receipt = this.viewer[fn]();
+    if (fn !== 'acceptEdit') this.updateHotspots();
+    this.emitEvent('scene-edit', receipt);
+    return receipt;
+  }
+
+  public acceptEdit(): SceneEditReceipt {
+    return this.applyViewerEdit('acceptEdit');
+  }
+
+  public rejectEdit(): SceneEditReceipt {
+    return this.applyViewerEdit('rejectEdit');
+  }
+
+  public undoEdit(): SceneEditReceipt {
+    return this.applyViewerEdit('undoEdit');
+  }
+
+  public getEditHistory(): ReturnType<ThreeView['getEditHistory']> {
+    if (!this.viewer) {
+      return {activePreview: null, undoStack: [], maxUndoSteps: 8, revision: 0};
+    }
+    return this.viewer.getEditHistory();
+  }
+
+  public setMaxUndoSteps(maxSteps: number): void {
+    this.viewer?.setMaxUndoSteps(maxSteps);
   }
 }
 

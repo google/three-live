@@ -23,6 +23,7 @@ import {
   sceneToGLB,
 } from '../../three-live/src/three-convert';
 import {ThreeLiveElement} from '../../three-live/src/three-live-element';
+import {parseGLB, ThreeView} from '../../three-live/src/three-view';
 import {XRDepthManager} from '../src/xr-depth';
 import {
   captureXRViewFrame,
@@ -1351,6 +1352,218 @@ async function runXRLiveTests() {
       cpuAfterGpuViewer.xrDepthState.depthViewProj === null,
     'CPU depth resets GPU-only texture-array, linearization, and reprojection state',
   );
+
+  // =========================================================================
+  // Phase 13: Physics Continuity Through Targeted Scene Replacement
+  // =========================================================================
+  {
+    const physCanvas: any = {
+      width: 300,
+      height: 300,
+      clientWidth: 300,
+      clientHeight: 300,
+      style: {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 300,
+        height: 300,
+      }),
+      getContext: () =>
+        new Proxy(
+          {
+            canvas: {width: 300, height: 300},
+            getShaderParameter: () => true,
+            getProgramParameter: () => true,
+            getAttribLocation: () => 0,
+          },
+          {
+            get(target: any, prop: string) {
+              if (prop in target) return target[prop];
+              return () => ({});
+            },
+          },
+        ),
+    };
+
+    const buildPhysicsRoomGLB = () => {
+      const s = new THREE.Scene();
+      const chair = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, 1.0, 0.6),
+        new THREE.MeshStandardMaterial({color: 0x64748b}),
+      );
+      chair.name = 'Chair';
+      chair.position.set(-1.5, 0.5, 0);
+      s.add(chair);
+
+      const platform = new THREE.Mesh(
+        new THREE.BoxGeometry(2.0, 0.4, 2.0),
+        new THREE.MeshStandardMaterial({color: 0x475569}),
+      );
+      platform.name = 'Platform';
+      platform.position.set(1.5, 0.2, 0);
+      platform.userData.xr = {physics: 'static'};
+      s.add(platform);
+
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(0.2, 12, 12),
+        new THREE.MeshStandardMaterial({color: 0xf97316}),
+      );
+      ball.name = 'Ball';
+      ball.position.set(0, 1.8, 0);
+      ball.userData.xr = {physics: 'dynamic', bounce: 0.6, friction: 0.3};
+      s.add(ball);
+
+      return sceneToGLB(s).buffer;
+    };
+
+    const makeChairReplacementGLB = (h = 1.0) => {
+      const s = new THREE.Scene();
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, h, 0.6),
+        new THREE.MeshStandardMaterial({color: 0x8b5a2b}),
+      );
+      m.name = 'Chair';
+      s.add(m);
+      return sceneToGLB(s).buffer;
+    };
+
+    // Control viewer (no edits) vs edited viewer (preview -> accept -> undo -> preview -> reject)
+    const controlViewer = new ThreeView(physCanvas, physCanvas, {
+      autoRotate: false,
+    });
+    const editedViewer = new ThreeView(physCanvas, physCanvas, {
+      autoRotate: false,
+    });
+    controlViewer.loadGLBData(parseGLB(buildPhysicsRoomGLB()));
+    editedViewer.loadGLBData(parseGLB(buildPhysicsRoomGLB()));
+
+    const controlPhys = new XRHeightfieldPhysics();
+    const editedPhys = new XRHeightfieldPhysics();
+    controlPhys.setVelocity(
+      controlViewer.meshes.find((m) => m.name === 'Ball')!,
+      0.8,
+      1.2,
+      -0.4,
+    );
+    editedPhys.setVelocity(
+      editedViewer.meshes.find((m) => m.name === 'Ball')!,
+      0.8,
+      1.2,
+      -0.4,
+    );
+
+    // Step 5 frames before any scene edit
+    for (let i = 0; i < 5; i++) {
+      controlPhys.step(controlViewer.meshes, null, 0.016, new Set());
+      editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+    }
+
+    // Interleave previewEdit, acceptEdit, undoEdit, previewEdit, rejectEdit on 'Chair' across physics steps
+    editedViewer.previewEdit({
+      target: 'Chair',
+      replacement: makeChairReplacementGLB(1.02),
+      constraints: {preserveHeight: {tolerance: 0.05}},
+    });
+    controlPhys.step(controlViewer.meshes, null, 0.016, new Set());
+    editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+
+    editedViewer.acceptEdit();
+    controlPhys.step(controlViewer.meshes, null, 0.016, new Set());
+    editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+
+    editedViewer.undoEdit();
+    controlPhys.step(controlViewer.meshes, null, 0.016, new Set());
+    editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+
+    editedViewer.previewEdit({
+      target: 'Chair',
+      replacement: makeChairReplacementGLB(0.98),
+    });
+    controlPhys.step(controlViewer.meshes, null, 0.016, new Set());
+    editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+
+    editedViewer.rejectEdit();
+    for (let i = 0; i < 10; i++) {
+      controlPhys.step(controlViewer.meshes, null, 0.016, new Set());
+      editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+    }
+
+    const ctrlBall = controlViewer.meshes.find((m) => m.name === 'Ball')!;
+    const editBall = editedViewer.meshes.find((m) => m.name === 'Ball')!;
+    const ctrlBody = controlPhys.getOrCreateBody(ctrlBall);
+    const editBody = editedPhys.getOrCreateBody(editBall);
+    assert(
+      ctrlBall.transform[12] === editBall.transform[12] &&
+        ctrlBall.transform[13] === editBall.transform[13] &&
+        ctrlBall.transform[14] === editBall.transform[14] &&
+        ctrlBody.velocity[0] === editBody.velocity[0] &&
+        ctrlBody.velocity[1] === editBody.velocity[1] &&
+        ctrlBody.velocity[2] === editBody.velocity[2],
+      'Physics continuity: unrelated dynamic Ball retains exact position and velocity trajectory across previewEdit, acceptEdit, undoEdit, and rejectEdit on Chair',
+    );
+
+    // Replacing a dynamic mesh itself with preserveTransform transfers its velocity via __replacedFrom
+    const velBeforeReplace: [number, number, number] = [
+      editBody.velocity[0],
+      editBody.velocity[1],
+      editBody.velocity[2],
+    ];
+    const newBallScene = new THREE.Scene();
+    const newBall = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 12, 12),
+      new THREE.MeshStandardMaterial({color: 0x22c55e}),
+    );
+    newBall.name = 'Ball';
+    newBall.userData.xr = {physics: 'dynamic', bounce: 0.6, friction: 0.3};
+    newBallScene.add(newBall);
+    const ballReplaceRec = editedViewer.previewEdit({
+      target: 'Ball',
+      replacement: sceneToGLB(newBallScene).buffer,
+    });
+    const transferredBody = editedPhys.getOrCreateBody(
+      editedViewer.meshes.find((m) => m.name === 'Ball')!,
+    );
+    assert(
+      ballReplaceRec.applied &&
+        transferredBody.velocity[0] === velBeforeReplace[0] &&
+        transferredBody.velocity[1] === velBeforeReplace[1] &&
+        transferredBody.velocity[2] === velBeforeReplace[2],
+      'Physics continuity: replacing a dynamic mesh transfers its in-flight velocity to the replacement mesh via __replacedFrom',
+    );
+
+    // Static collider mesh support: replacing Platform with a taller static collider updates collision height
+    const tallPlatformScene = new THREE.Scene();
+    const tallPlatform = new THREE.Mesh(
+      new THREE.BoxGeometry(4.0, 2.0, 4.0),
+      new THREE.MeshStandardMaterial({color: 0x94a3b8}),
+    );
+    tallPlatform.name = 'Platform';
+    tallPlatform.userData.xr = {physics: 'static'};
+    tallPlatformScene.add(tallPlatform);
+    editedViewer.previewEdit({
+      target: 'Platform',
+      replacement: sceneToGLB(tallPlatformScene).buffer,
+    });
+    const replacedBall = editedViewer.meshes.find((m) => m.name === 'Ball')!;
+    // Place Ball at x=1.5, y=1.25 (just above tallPlatform top at y = 0.2 + 1.0 = 1.2)
+    replacedBall.transform[12] = 1.5;
+    replacedBall.transform[13] = 1.25;
+    replacedBall.transform[14] = 0;
+    transferredBody.velocity = [0, -2.0, 0];
+    for (let i = 0; i < 10; i++) {
+      editedPhys.step(editedViewer.meshes, null, 0.016, new Set());
+    }
+    assert(
+      replacedBall.transform[13] >= 1.19,
+      `Physics continuity: static collider mesh replacement immediately updates collision bounds in XRHeightfieldPhysics.step (ball Y=${replacedBall.transform[13].toFixed(3)} >= 1.20)`,
+    );
+
+    controlViewer.destroy();
+    editedViewer.destroy();
+  }
 
   console.log(`\n🏆 xr-live Test Results: ${passed} Passed, ${failed} Failed.`);
   if (failed > 0) process.exit(1);

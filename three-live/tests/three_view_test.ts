@@ -77,8 +77,6 @@ import {
   parseOutlineTrait,
 } from '../src/xr-trait-schema';
 
-registerPlugin(keyframeAnimationPlugin);
-
 let passed = 0;
 let failed = 0;
 
@@ -92,8 +90,98 @@ function assert(condition: boolean, testName: string) {
   }
 }
 
+// A real GLB container: one triangle and an optional two-key translation clip.
+function animationGLB(kind: 'clip' | 'absent' | 'empty' = 'clip'): ArrayBuffer {
+  const bin = new Float32Array([
+    0, 0, 0, 1, 0, 0, 0, 1, 0, // positions
+    0, 1, // times
+    0, 0, 0, 2, 0, 0, // translations
+  ]);
+  const gltf: any = {
+    asset: {version: '2.0'}, scene: 0, scenes: [{nodes: [0]}],
+    nodes: [{name: 'MovingTriangle', mesh: 0}],
+    meshes: [{primitives: [{attributes: {POSITION: 0}}]}],
+    buffers: [{byteLength: bin.byteLength}],
+    bufferViews: [
+      {buffer: 0, byteOffset: 0, byteLength: 36},
+      {buffer: 0, byteOffset: 36, byteLength: 8},
+      {buffer: 0, byteOffset: 44, byteLength: 24},
+    ],
+    accessors: [
+      {bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [0, 0, 0], max: [1, 1, 0]},
+      {bufferView: 1, componentType: 5126, count: 2, type: 'SCALAR', min: [0], max: [1]},
+      {bufferView: 2, componentType: 5126, count: 2, type: 'VEC3'},
+    ],
+  };
+  if (kind !== 'absent') gltf.animations = kind === 'empty' ? [] : [{
+    name: 'Slide', samplers: [{input: 1, output: 2, interpolation: 'LINEAR'}],
+    channels: [{sampler: 0, target: {node: 0, path: 'translation'}}],
+  }];
+  const json = new TextEncoder().encode(JSON.stringify(gltf));
+  const jsonSize = (json.length + 3) & ~3;
+  const buffer = new ArrayBuffer(28 + jsonSize + bin.byteLength);
+  const view = new DataView(buffer);
+  view.setUint32(0, 0x46546c67, true);
+  view.setUint32(4, 2, true);
+  view.setUint32(8, buffer.byteLength, true);
+  view.setUint32(12, jsonSize, true);
+  view.setUint32(16, 0x4e4f534a, true);
+  new Uint8Array(buffer, 20, jsonSize).fill(32);
+  new Uint8Array(buffer, 20, json.length).set(json);
+  view.setUint32(20 + jsonSize, bin.byteLength, true);
+  view.setUint32(24 + jsonSize, 0x004e4942, true);
+  new Uint8Array(buffer, 28 + jsonSize).set(new Uint8Array(bin.buffer));
+  return buffer;
+}
+
 async function runThreeViewTests() {
   console.log('🤖 Running three-view Engine Unit Tests...\n');
+
+  assert(!ThreeView.getRegisteredPlugins().some((p) => p.name === 'keyframes'),
+    'viewer imports do not implicitly register animation');
+  const lateAnimation = parseGLB(animationGLB());
+  assert(lateAnimation.animationsParsed === false && lateAnimation.animations === undefined,
+    'binary GLB retains unparsed animation data without the extension');
+  await import('../src/animation');
+  assert(ThreeView.getRegisteredPlugins().includes(keyframeAnimationPlugin),
+    'animation entrypoint registers the keyframes plugin');
+  const animated = parseGLB(animationGLB());
+  assert(animated.animationsParsed === true && animated.animations?.length === 1,
+    'binary GLB parses one animation through the registered plugin');
+  const clip = animated.animations![0];
+  assert(clip.name === 'Slide' && clip.channels[0].values[3] === 2,
+    'binary GLB preserves clip name and translation values');
+  const midpoint = [0, 0, 0];
+  sampleChannel(clip.channels[0], 0.5, midpoint);
+  assert(midpoint[0] === 1, 'binary translation clip interpolates its midpoint');
+  const originalClips = animated.animations;
+  keyframeAnimationPlugin.onParseGLB!(animated);
+  assert(animated.animations === originalClips, 'second parse pass preserves parsed clips');
+  for (const kind of ['absent', 'empty'] as const) {
+    const data = parseGLB(animationGLB(kind));
+    const emptyClips = data.animations;
+    assert(data.animationsParsed === true && emptyClips?.length === 0,
+      `${kind} raw animations produce a completed empty result`);
+    // A getter detects even an attempted raw-data reinspection on a second pass.
+    Object.defineProperty(data.gltf, 'animations', {get() { throw new Error('reparsed'); }});
+    keyframeAnimationPlugin.onParseGLB!(data);
+    assert(data.animations === emptyClips, `${kind} empty result is cached`);
+  }
+  for (const supplied of [originalClips!, []]) {
+    const data = {gltf: animated.gltf, bin: animated.bin, animations: supplied};
+    keyframeAnimationPlugin.onParseGLB!(data);
+    assert(data.animations === supplied, 'caller-supplied clips without a flag remain authoritative');
+  }
+  const invalid = {...animated, animations: undefined, animationsParsed: false, bin: new ArrayBuffer(0)};
+  let parseFailed = false;
+  try { keyframeAnimationPlugin.onParseGLB!(invalid); } catch { parseFailed = true; }
+  assert(parseFailed && invalid.animationsParsed === false && invalid.animations === undefined,
+    'failed parsing does not publish a completed result');
+  invalid.bin = animated.bin;
+  keyframeAnimationPlugin.onParseGLB!(invalid);
+  assert(invalid.animationsParsed === true && invalid.animations?.length === 1,
+    'corrected input can be parsed after a failed attempt');
+
 
   // 1. Export check
   assert(ThreeView !== undefined, 'ThreeView class is exported');
@@ -877,6 +965,33 @@ async function runThreeViewTests() {
         },
       ),
   };
+
+  const animationViewer = new ThreeView(mockCanvas, mockCanvas, {autoRotate: false, autoplay: true});
+  animationViewer.loadGLBData(lateAnimation);
+  assert(lateAnimation.animationsParsed === true && animationViewer.animations[0]?.name === 'Slide',
+    'late animation registration parses raw data at viewer load');
+  assert(animationViewer.isPlayingAnimation, 'loaded binary animation starts autoplay');
+  (animationViewer as any).update(0.5);
+  assert(Math.abs(animationViewer.meshes[0].transform[12] - 1) < 1e-6,
+    'actual viewer playback moves the binary GLB mesh to its midpoint');
+  const lateClips = lateAnimation.animations;
+  animationViewer.loadGLBData(lateAnimation);
+  assert(animationViewer.animations === lateClips, 'repeat viewer load reuses parsed clips');
+  animationViewer.loadGLBData(animated);
+  assert(animationViewer.animations === originalClips, 'viewer uses clips parsed at binary load');
+  for (const kind of ['absent', 'empty'] as const) {
+    const data = parseGLB(animationGLB(kind));
+    const staticViewer = new ThreeView(mockCanvas, mockCanvas, {autoRotate: false, autoplay: true});
+    staticViewer.loadGLBData(data);
+    const emptyClips = data.animations;
+    staticViewer.loadGLBData(data);
+    assert(staticViewer.animations === emptyClips && emptyClips?.length === 0,
+      `${kind} animation-free GLB stays empty across viewer loads`);
+    assert(!staticViewer.isPlayingAnimation && staticViewer.meshes[0].transform[12] === 0,
+      `${kind} animation-free geometry retains its authored translation`);
+    staticViewer.destroy();
+  }
+  animationViewer.destroy();
 
   const viewInstance = new ThreeView(mockCanvas, mockCanvas, {
     autoRotate: false,
@@ -2633,6 +2748,392 @@ async function runThreeViewTests() {
         `WebGL context loss pauses rendering and restore rebuilds programs, plugins and the last model (programs ${programsBefore} -> ${programs}, hooks ${restoredHooks})`,
       );
     }
+  }
+
+  // =========================================================================
+  // 26. Targeted Scene Editing ("Change this" Preview/Accept/Reject/Undo),
+  //     Constraint Validation, Shared GPU Resource Reference-Tracking, and
+  //     Failed-Build GPU Handle Cleanup
+  // =========================================================================
+  {
+    const createdVaos: object[] = [];
+    const deletedVaos = new Set<object>();
+    const createdBuffers: object[] = [];
+    const deletedBuffers = new Set<object>();
+    const createdTextures: object[] = [];
+    const deletedTextures = new Set<object>();
+    let bufferDataCalls = 0;
+
+    const trackedCanvas: any = {
+      width: 400,
+      height: 400,
+      clientWidth: 400,
+      clientHeight: 400,
+      style: {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 400,
+        height: 400,
+      }),
+      getContext: () =>
+        new Proxy(
+          {
+            canvas: {width: 400, height: 400},
+            getShaderParameter: () => true,
+            getProgramParameter: () => true,
+            getAttribLocation: () => 0,
+            createVertexArray: () => {
+              const vao = {kind: 'vao', id: createdVaos.length + 1};
+              createdVaos.push(vao);
+              return vao;
+            },
+            deleteVertexArray: (vao: object) => {
+              if (vao) deletedVaos.add(vao);
+            },
+            createBuffer: () => {
+              const buf = {kind: 'vbo', id: createdBuffers.length + 1};
+              createdBuffers.push(buf);
+              return buf;
+            },
+            deleteBuffer: (buf: object) => {
+              if (buf) deletedBuffers.add(buf);
+            },
+            bufferData: () => {
+              bufferDataCalls++;
+            },
+            createTexture: () => {
+              const tex = {kind: 'tex', id: createdTextures.length + 1};
+              createdTextures.push(tex);
+              return tex;
+            },
+            deleteTexture: (tex: object) => {
+              if (tex) deletedTextures.add(tex);
+            },
+          },
+          {
+            get(target: any, prop: string) {
+              if (prop in target) return target[prop];
+              return () => ({});
+            },
+          },
+        ),
+    };
+
+    const editViewer = new ThreeView(trackedCanvas, trackedCanvas, {
+      autoRotate: false,
+    });
+
+    // Helper to build a scene with Table, ChairGroup (Seat + Legs), and Chair
+    const buildRoomSceneGLB = () => {
+      const s = new THREE.Scene();
+      const woodMat = new THREE.MeshStandardMaterial({
+        color: 0x8b5a2b,
+        roughness: 0.65,
+        metalness: 0.05,
+      });
+      const chairMat = new THREE.MeshStandardMaterial({
+        color: 0x334155,
+        roughness: 0.4,
+        metalness: 0.2,
+      });
+      const table = new THREE.Mesh(
+        new THREE.BoxGeometry(2.0, 0.8, 1.2),
+        woodMat,
+      );
+      table.name = 'Table';
+      table.position.set(-1.5, 0.4, 0);
+      s.add(table);
+
+      const chair = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, 1.0, 0.6),
+        chairMat,
+      );
+      chair.name = 'Chair';
+      chair.position.set(0.5, 0.5, 0);
+      s.add(chair);
+
+      const chairGroup = new THREE.Group();
+      chairGroup.name = 'ChairAssembly';
+      chairGroup.position.set(2.0, 0, 0);
+      const seat = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.1, 0.5),
+        chairMat,
+      );
+      seat.name = 'AssemblySeat';
+      seat.position.set(0, 0.45, 0);
+      const backrest = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.5, 0.1),
+        chairMat,
+      );
+      backrest.name = 'AssemblyBack';
+      backrest.position.set(0, 0.75, -0.2);
+      chairGroup.add(seat);
+      chairGroup.add(backrest);
+      s.add(chairGroup);
+
+      return s.toGLB().buffer;
+    };
+
+    const makeBoxReplacementGLB = (
+      name: string,
+      w: number,
+      h: number,
+      d: number,
+      color = 0x334155,
+    ) => {
+      const s = new THREE.Scene();
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.4,
+          metalness: 0.2,
+        }),
+      );
+      m.name = name;
+      s.add(m);
+      return s.toGLB().buffer;
+    };
+
+    editViewer.loadGLBData(parseGLB(buildRoomSceneGLB()));
+    // Attach a distinct GPU texture handle to Table so we can test shared texture safety
+    const tableMesh = editViewer.meshes.find((m) => m.name === 'Table')!;
+    const sharedTableTex = (editViewer.gl as any).createTexture();
+    tableMesh.primitives[0].texture = sharedTableTex;
+    editViewer.gpuTextures.push(sharedTableTex);
+
+    editViewer.setCamera(30, 60, 4.2);
+    editViewer.setTarget(0.25, 0.5, -0.1);
+    editViewer.jumpCameraToGoal();
+    editViewer.setSelectedMesh('Chair');
+
+    // 26a. Failed candidate build cleans up partial GPU allocations and preserves active scene
+    const vaosBeforeFail = createdVaos.length;
+    const buffersBeforeFail = createdBuffers.length;
+    const twoMeshScene = new THREE.Scene();
+    const m1 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 1.0, 0.6),
+      new THREE.MeshStandardMaterial(),
+    );
+    m1.name = 'Part1';
+    const m2 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 1.0, 0.6),
+      new THREE.MeshStandardMaterial(),
+    );
+    m2.name = 'Part2';
+    twoMeshScene.add(m1);
+    twoMeshScene.add(m2);
+    const twoMeshGLB = twoMeshScene.toGLB().buffer;
+    const limitFailReceipt = editViewer.previewEdit({
+      target: 'Chair',
+      replacement: twoMeshGLB,
+      // Allow 1st mesh (24 verts) to allocate, then fail on 2nd mesh (48 verts > 30)
+      limits: {maxMeshes: 10, maxTextures: 10, maxVertices: 30, maxIndices: 500},
+    });
+    const partialVaos = createdVaos.slice(vaosBeforeFail);
+    const partialBuffers = createdBuffers.slice(buffersBeforeFail);
+    assert(
+      limitFailReceipt.status === 'rejected' &&
+        !limitFailReceipt.applied &&
+        limitFailReceipt.errors.some((e) => e.includes('SecurityError')) &&
+        partialVaos.length > 0 &&
+        partialVaos.every((v) => deletedVaos.has(v)) &&
+        partialBuffers.every((b) => deletedBuffers.has(b)) &&
+        editViewer.meshes.some((m) => m.name === 'Chair'),
+      'buildGpuScene failure cleanup: partial VAOs/VBOs are deleted when a later primitive fails quota check',
+    );
+
+    // 26b. Missing target & duplicate target ambiguity fail closed by default
+    const missingReceipt = editViewer.previewEdit({
+      target: 'NonExistentSofa',
+      replacement: makeBoxReplacementGLB('Sofa', 0.6, 1.0, 0.6),
+    });
+    assert(
+      missingReceipt.status === 'rejected' &&
+        !missingReceipt.applied &&
+        missingReceipt.errors.some((e) => e.includes('NonExistentSofa')),
+      'Node targeting: missing target fails closed with explicit diagnostic in receipt',
+    );
+
+    const dupScene = new THREE.Scene();
+    const d1 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.5, 0.5),
+      new THREE.MeshStandardMaterial(),
+    );
+    d1.name = 'Stool';
+    const d2 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.5, 0.5),
+      new THREE.MeshStandardMaterial(),
+    );
+    d2.name = 'Stool';
+    dupScene.add(d1);
+    dupScene.add(d2);
+    const dupViewer = new ThreeView(trackedCanvas, trackedCanvas, {
+      autoRotate: false,
+    });
+    dupViewer.loadGLBData(parseGLB(dupScene.toGLB().buffer));
+    const dupBlocked = dupViewer.previewEdit({
+      target: 'Stool',
+      replacement: makeBoxReplacementGLB('Stool', 0.5, 0.5, 0.5),
+    });
+    const dupAllowed = dupViewer.previewEdit({
+      target: 'Stool',
+      allowDuplicateTargets: true,
+      replacement: makeBoxReplacementGLB('Stool', 0.5, 0.5, 0.5),
+    });
+    assert(
+      dupBlocked.status === 'rejected' &&
+        dupBlocked.errors.some((e) => e.includes('Ambiguous target')) &&
+        dupAllowed.status === 'preview' &&
+        dupAllowed.applied &&
+        dupAllowed.replacedMeshNames.length === 2,
+      'Node targeting: duplicate mesh names fail closed by default and succeed when allowDuplicateTargets=true',
+    );
+    dupViewer.destroy();
+
+    // 26c. Constraint violation rejects candidate, reports structured check, and disposes candidate GPU handles
+    const vaosBeforeTall = createdVaos.length;
+    const tallReceipt = editViewer.previewEdit({
+      target: 'Chair',
+      replacement: makeBoxReplacementGLB('TallChair', 0.6, 1.8, 0.6),
+      constraints: {
+        preserveHeight: {tolerance: 0.05},
+        preserveFootprint: {tolerance: 0.05},
+      },
+    });
+    const tallVaos = createdVaos.slice(vaosBeforeTall);
+    assert(
+      tallReceipt.status === 'rejected' &&
+        !tallReceipt.applied &&
+        tallReceipt.constraints.length === 2 &&
+        tallReceipt.constraints.find((c) => c.name === 'preserveHeight')
+          ?.passed === false &&
+        tallReceipt.constraints.find((c) => c.name === 'preserveFootprint')
+          ?.passed === true &&
+        tallVaos.length > 0 &&
+        tallVaos.every((v) => deletedVaos.has(v)),
+      'Constraint validation: preserveHeight violation rejects edit, populates structured receipt, and disposes candidate VAO/VBOs',
+    );
+
+    // 26d. Preview + copyMaterialFrom + matchMaterialOf + Reject preserves shared Table texture
+    const originalChairMesh = editViewer.meshes.find((m) => m.name === 'Chair')!;
+    const originalChairVao = originalChairMesh.primitives[0].vao;
+    const preview1 = editViewer.previewEdit({
+      target: 'Chair',
+      replacement: makeBoxReplacementGLB('CurvedChair', 0.6, 1.02, 0.6),
+      copyMaterialFrom: 'Table',
+      constraints: {
+        preserveHeight: {tolerance: 0.05},
+        preserveBounds: {tolerance: 0.05},
+        maxBounds: [1.0, 1.2, 1.0],
+        matchMaterialOf: 'Table',
+      },
+    });
+    const previewChairMesh = editViewer.meshes.find((m) => m.name === 'Chair')!;
+    const previewChairVao = previewChairMesh.primitives[0].vao;
+    assert(
+      preview1.status === 'preview' &&
+        preview1.applied &&
+        preview1.constraints.every((c) => c.passed) &&
+        previewChairMesh !== originalChairMesh &&
+        previewChairMesh.primitives[0].texture === sharedTableTex &&
+        !deletedVaos.has(originalChairVao),
+      'Preview edit: stages replacement Chair with copied Table material/texture and retains original Chair VAO for rollback',
+    );
+
+    const reject1 = editViewer.rejectEdit();
+    assert(
+      reject1.status === 'rejected' &&
+        editViewer.meshes.find((m) => m.name === 'Chair') ===
+          originalChairMesh &&
+        deletedVaos.has(previewChairVao) &&
+        !deletedVaos.has(originalChairVao) &&
+        !deletedTextures.has(sharedTableTex),
+      'Reject edit: restores original Chair mesh, deletes candidate VAO, and never deletes shared Table texture',
+    );
+
+    // 26e. Preview -> Accept -> Zero-Reupload Undo preserves camera, selection, and shared texture
+    const preview2 = editViewer.previewEdit({
+      target: 'Chair',
+      replacement: makeBoxReplacementGLB('CurvedChairV2', 0.6, 1.0, 0.6),
+      copyMaterialFrom: 'Table',
+      constraints: {preserveHeight: true, matchMaterialOf: 'Table'},
+    });
+    const acceptedChairMesh = editViewer.meshes.find((m) => m.name === 'Chair')!;
+    const acceptedChairVao = acceptedChairMesh.primitives[0].vao;
+    const accept2 = editViewer.acceptEdit();
+    assert(
+      preview2.applied &&
+        accept2.status === 'accepted' &&
+        accept2.undoDepth === 1 &&
+        !deletedVaos.has(originalChairVao),
+      'Accept edit: commits preview to undo stack while retaining replaced Chair GPU handles',
+    );
+
+    const vaosBeforeUndo = createdVaos.length;
+    const bufsBeforeUndo = createdBuffers.length;
+    const uploadsBeforeUndo = bufferDataCalls;
+    const undo2 = editViewer.undoEdit();
+    const orbitAfterUndo = editViewer.getCameraOrbit();
+    const targetAfterUndo = editViewer.getCameraTarget();
+    assert(
+      undo2.status === 'undone' &&
+        undo2.applied &&
+        undo2.undoDepth === 0 &&
+        editViewer.meshes.find((m) => m.name === 'Chair') ===
+          originalChairMesh &&
+        createdVaos.length === vaosBeforeUndo &&
+        createdBuffers.length === bufsBeforeUndo &&
+        bufferDataCalls === uploadsBeforeUndo &&
+        deletedVaos.has(acceptedChairVao) &&
+        !deletedTextures.has(sharedTableTex) &&
+        Math.abs(orbitAfterUndo.theta - (30 * Math.PI) / 180) < 1e-4 &&
+        Math.abs(orbitAfterUndo.phi - (60 * Math.PI) / 180) < 1e-4 &&
+        Math.abs(orbitAfterUndo.radius - 4.2) < 1e-4 &&
+        Math.abs(targetAfterUndo.x - 0.25) < 1e-5 &&
+        editViewer.selectedMeshName === 'Chair',
+      'Zero-reupload undo: restores original Chair mesh with 0 WebGL buffer/VAO creations or uploads, deletes undone VAO, preserves shared texture, and keeps camera/selection intact',
+    );
+
+    // 26f. Bounded undo history (setMaxUndoSteps) evicts oldest entry and frees its GPU handles
+    editViewer.setMaxUndoSteps(2);
+    for (let step = 1; step <= 3; step++) {
+      editViewer.previewEdit({
+        target: 'Chair',
+        replacement: makeBoxReplacementGLB(`ChairStep${step}`, 0.6, 1.0, 0.6),
+        copyMaterialFrom: 'Table',
+      });
+      editViewer.acceptEdit();
+    }
+    assert(
+      editViewer.getEditHistory().undoStack.length === 2 &&
+        deletedVaos.has(originalChairVao) &&
+        !deletedTextures.has(sharedTableTex),
+      'Bounded undo stack: setMaxUndoSteps(2) evicts oldest undo entry on 3rd accept and deletes its unreferenced VAO without deleting shared Table texture',
+    );
+
+    // 26g. Hierarchy group node targeting replaces all descendant meshes of ChairAssembly
+    const groupEdit = editViewer.previewEdit({
+      target: 'ChairAssembly',
+      replacement: makeBoxReplacementGLB('MergedAssembly', 0.5, 0.85, 0.5),
+    });
+    assert(
+      groupEdit.status === 'preview' &&
+        groupEdit.applied &&
+        groupEdit.replacedMeshNames.length === 2 &&
+        groupEdit.replacedMeshNames.includes('AssemblySeat') &&
+        groupEdit.replacedMeshNames.includes('AssemblyBack') &&
+        Math.abs(
+          editViewer.meshes.find((m) => m.name === 'MergedAssembly')!
+            .transform[12] - 2.0,
+        ) < 1e-5,
+      'Hierarchy group targeting: targeting parent glTF node "ChairAssembly" replaces both descendant meshes and inherits group world transform',
+    );
+    editViewer.undoEdit();
+    editViewer.destroy();
   }
 
   console.log(

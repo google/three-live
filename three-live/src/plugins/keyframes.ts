@@ -437,9 +437,14 @@ export const keyframeAnimationPlugin: ThreeLivePlugin & {
   crossFadeTo,
 
   onParseGLB(glbData: any): void {
-    if (!glbData.animations && glbData.gltf?.animations) {
-      glbData.animations = parseAnimations(glbData.gltf, glbData.bin);
+    if (glbData.animationsParsed === true) return;
+    if (glbData.animationsParsed === undefined && Array.isArray(glbData.animations)) {
+      glbData.animationsParsed = true;
+      return;
     }
+    // Publish completion only after parsing succeeds, including zero clips.
+    glbData.animations = parseAnimations(glbData.gltf, glbData.bin);
+    glbData.animationsParsed = true;
   },
 
   onUpdate(viewer: any, dt: number): void {

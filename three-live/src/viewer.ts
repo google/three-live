@@ -26,6 +26,12 @@ export {
   type ARMode,
   type ARProvider,
   type CameraState,
+  type ElementSceneEditOptions,
+  type SceneBoundingBox,
+  type SceneConstraintCheck,
+  type SceneEditConstraints,
+  type SceneEditOptions,
+  type SceneEditReceipt,
 } from './three-live-element';
 
 export {

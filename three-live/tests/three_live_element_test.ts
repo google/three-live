@@ -18,7 +18,8 @@ import {
 } from '../src/constants';
 import {environmentMapPlugin} from '../src/plugins/envmap';
 import {hotspotPlugin} from '../src/plugins/hotspots';
-import {authorScriptRunner} from '../src/three-author';
+import {authorScriptRunner, THREE} from '../src/three-author';
+import {sceneToGLB} from '../src/three-convert';
 import {ThreeLiveElement} from '../src/three-live-element';
 import {ThreeView} from '../src/three-view';
 
@@ -883,6 +884,216 @@ async function runElementTests() {
     resetTheta === 0.5 && Math.abs(instance.turntableRotation - 0.5) < 1e-5,
     'instance.resetTurntableRotation(theta) delegates to viewer.resetTurntableRotation',
   );
+
+  // =========================================================================
+  // Atomic Revision-Fenced Staging & Element-Level Targeted Scene Editing
+  // =========================================================================
+  {
+    const makeNamedMeshGLB = (name: string, height = 1.0): ArrayBuffer => {
+      const s = new THREE.Scene();
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, height, 0.6),
+        new THREE.MeshStandardMaterial({color: 0x38bdf8}),
+      );
+      m.name = name;
+      s.add(m);
+      return sceneToGLB(s).buffer;
+    };
+
+    const elCanvas: any = {
+      width: 300,
+      height: 300,
+      clientWidth: 300,
+      clientHeight: 300,
+      style: {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 300,
+        height: 300,
+      }),
+      getContext: () =>
+        new Proxy(
+          {
+            canvas: {width: 300, height: 300},
+            getShaderParameter: () => true,
+            getProgramParameter: () => true,
+            getAttribLocation: () => 0,
+          },
+          {
+            get(target: any, prop: string) {
+              if (prop in target) return target[prop];
+              return () => ({});
+            },
+          },
+        ),
+    };
+
+    const realViewer = new ThreeView(elCanvas, elCanvas, {autoRotate: false});
+    const editEl = Object.create(ThreeLiveElement.prototype) as ThreeLiveElement;
+    (editEl as any).viewer = realViewer;
+    (editEl as any).canvas = elCanvas;
+    (editEl as any).loadRevision = 0;
+    (editEl as any).activeFetchAbort = null;
+    (editEl as any).scriptHandle = null;
+    (editEl as any).lastCompileWarnings = [];
+    (editEl as any).attrs = new Map<string, string>();
+    (editEl as any).getAttribute = (k: string) =>
+      (editEl as any).attrs.get(k) ?? null;
+    (editEl as any).setAttribute = (k: string, v: string) =>
+      (editEl as any).attrs.set(k, v);
+    (editEl as any).hasAttribute = (k: string) =>
+      (editEl as any).attrs.has(k);
+    (editEl as any).querySelector = () => null;
+    (editEl as any).querySelectorAll = () => [];
+    const emittedEvents: Array<{name: string; detail: any}> = [];
+    (editEl as any).emitEvent = (name: string, detail?: any) => {
+      emittedEvents.push({name, detail});
+    };
+    (editEl as any).showToast = () => {};
+    (editEl as any).hidePoster = () => {};
+    (editEl as any).updateHotspots = () => {};
+
+    // 1. Load initial working scene ("BaseChair")
+    await editEl.loadModel(makeNamedMeshGLB('BaseChair', 1.0));
+    assert(
+      realViewer.meshes.length === 1 &&
+        realViewer.meshes[0].name === 'BaseChair',
+      'Atomic staging: initial loadModel populates BaseChair on viewer',
+    );
+
+    // 2. Overlapping URL loads: slow load starts first, fast load starts second and resolves first;
+    //    when slow load resolves later, its stale callback is discarded.
+    const prevFetch = (globalThis as any).fetch;
+    let resolveSlowFetch!: (resp: any) => void;
+    let slowSignalAborted = false;
+    (globalThis as any).fetch = (url: string, init?: {signal?: AbortSignal}) => {
+      if (url === '/slow.glb') {
+        init?.signal?.addEventListener('abort', () => {
+          slowSignalAborted = true;
+        });
+        return new Promise((resolve) => {
+          resolveSlowFetch = resolve;
+        });
+      }
+      if (url === '/fast.glb') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => makeNamedMeshGLB('FastScene', 1.0),
+        });
+      }
+      if (url === '/error500.glb') {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          arrayBuffer: async () => new ArrayBuffer(0),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected URL ${url}`));
+    };
+
+    try {
+      const slowPromise = editEl.loadModel('/slow.glb');
+      const fastPromise = editEl.loadModel('/fast.glb');
+      await fastPromise;
+      resolveSlowFetch({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => makeNamedMeshGLB('StaleSlowScene', 1.0),
+      });
+      await slowPromise;
+      assert(
+        slowSignalAborted &&
+          realViewer.meshes.length === 1 &&
+          realViewer.meshes[0].name === 'FastScene',
+        'Atomic staging: overlapping loadModel aborts superseded fetch and keeps newer FastScene when stale slow fetch resolves later',
+      );
+
+      // 3. Failed HTTP 500 load or malformed GLB preserves FastScene on screen
+      let httpFailed = false;
+      try {
+        await editEl.loadModel('/error500.glb');
+      } catch {
+        httpFailed = true;
+      }
+      let malformedFailed = false;
+      try {
+        await editEl.loadModel(new ArrayBuffer(8));
+      } catch {
+        malformedFailed = true;
+      }
+      assert(
+        httpFailed &&
+          malformedFailed &&
+          realViewer.meshes.length === 1 &&
+          realViewer.meshes[0].name === 'FastScene',
+        'Atomic staging: failed HTTP 500 fetch and malformed GLB preserve the active working FastScene on screen',
+      );
+
+      // 4. Element-level previewEdit with script runner + warnings, acceptEdit, and undoEdit
+      (editEl as any).attrs.set('allow-client-scripts', 'true');
+      ThreeLiveElement.registerScriptRunner({
+        execute: async (_script, _mode, callbacks, options) => {
+          if (options?.strictFidelity) {
+            const err = new Error(
+              'FidelityError: Authoring fidelity degradation detected in strict mode',
+            );
+            callbacks.onError?.(err);
+            throw err;
+          }
+          callbacks.onModelReady(makeNamedMeshGLB('ScriptEditedScene', 1.02), [
+            '[three-author] MeshPhongMaterial converted to PBR.',
+          ]);
+          return {terminate() {}};
+        },
+      });
+
+      const strictPreview = await editEl.previewEdit({
+        target: 'FastScene',
+        script: '/* degraded */',
+        strictFidelity: true,
+      });
+      assert(
+        strictPreview.status === 'rejected' &&
+          !strictPreview.applied &&
+          strictPreview.errors.some((e) => e.includes('FidelityError')) &&
+          realViewer.meshes[0].name === 'FastScene',
+        'Element previewEdit: strictFidelity failure rejects edit and preserves active FastScene',
+      );
+
+      const scriptPreview = await editEl.previewEdit({
+        target: 'FastScene',
+        script: '/* valid */',
+        preserveTargetName: false,
+        constraints: {preserveHeight: {tolerance: 0.05}},
+      });
+      assert(
+        scriptPreview.status === 'preview' &&
+          scriptPreview.applied &&
+          scriptPreview.warnings.some((w) => w.includes('MeshPhongMaterial')) &&
+          editEl.getLastCompileDiagnostics().warnings.length === 1 &&
+          realViewer.meshes[0].name === 'ScriptEditedScene',
+        'Element previewEdit: stages sandboxed script replacement, forwards compiler warnings into receipt, and updates scene',
+      );
+
+      const acceptRec = editEl.acceptEdit();
+      const undoRec = editEl.undoEdit();
+      assert(
+        acceptRec.status === 'accepted' &&
+          undoRec.status === 'undone' &&
+          realViewer.meshes[0].name === 'FastScene' &&
+          emittedEvents.some((e) => e.name === 'scene-edit'),
+        'Element acceptEdit & undoEdit: commits preview, restores FastScene on undo, and emits scene-edit events',
+      );
+    } finally {
+      (globalThis as any).fetch = prevFetch;
+      ThreeLiveElement.registerScriptRunner(authorScriptRunner);
+      realViewer.destroy();
+    }
+  }
 
   console.log(
     `\n🏆 <three-live> Element Test Results: ${passed} Passed, ${failed} Failed.`,

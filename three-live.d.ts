@@ -118,7 +118,18 @@ export {
   type ARMode,
   type ARProvider,
   type CameraState,
+  type ElementSceneEditOptions,
+  type SceneBoundingBox,
+  type SceneConstraintCheck,
+  type SceneEditConstraints,
+  type SceneEditOptions,
+  type SceneEditReceipt,
 } from './three-live/src/three-live-element';
+export {
+  createAuthorFidelityCheck,
+  getAuthorWarnings,
+  type AuthorFidelityLoss,
+} from './three-live/src/three-author';
 export {
   XRAnchorElement,
   XRLiveElement,

@@ -79,15 +79,61 @@ export class XRHeightfieldPhysics {
       }
       const scl = extractScale(mesh.transform);
       radius *= Math.max(scl[0], scl[1], scl[2]);
+      const prev =
+        mesh?.__replacedFrom && typeof mesh.__replacedFrom === 'object'
+          ? this.bodies.get(mesh.__replacedFrom)
+          : undefined;
       state = {
-        velocity: [0, 0, 0],
+        velocity: prev
+          ? [prev.velocity[0], prev.velocity[1], prev.velocity[2]]
+          : [0, 0, 0],
         radius,
-        restitution: 0.65,
-        friction: 0.25,
+        restitution: prev ? prev.restitution : 0.65,
+        friction: prev ? prev.friction : 0.25,
       };
       this.bodies.set(mesh, state);
     }
     return state;
+  }
+
+  private computeStaticMeshWorldBox(mesh: any): {
+    min: [number, number, number];
+    max: [number, number, number];
+  } | null {
+    const mat: Float32Array | undefined = mesh?.transform;
+    if (!mat || !Array.isArray(mesh?.primitives)) return null;
+    const min: [number, number, number] = [Infinity, Infinity, Infinity];
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (const prim of mesh.primitives) {
+      const pos: Float32Array | undefined = prim?.positions;
+      if (!pos || pos.length < 3) continue;
+      const lMin = [Infinity, Infinity, Infinity];
+      const lMax = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < pos.length; i += 3) {
+        const x = pos[i],
+          y = pos[i + 1],
+          z = pos[i + 2];
+        if (x < lMin[0]) lMin[0] = x;
+        if (y < lMin[1]) lMin[1] = y;
+        if (z < lMin[2]) lMin[2] = z;
+        if (x > lMax[0]) lMax[0] = x;
+        if (y > lMax[1]) lMax[1] = y;
+        if (z > lMax[2]) lMax[2] = z;
+      }
+      for (let c = 0; c < 3; c++) {
+        let wMin = mat[12 + c];
+        let wMax = mat[12 + c];
+        for (let j = 0; j < 3; j++) {
+          const a = mat[j * 4 + c] * lMin[j];
+          const b = mat[j * 4 + c] * lMax[j];
+          wMin += a < b ? a : b;
+          wMax += a > b ? a : b;
+        }
+        if (wMin < min[c]) min[c] = wMin;
+        if (wMax > max[c]) max[c] = wMax;
+      }
+    }
+    return isFinite(min[0]) ? {min, max} : null;
   }
 
   public setVelocity(mesh: any, vx: number, vy: number, vz: number): void {
@@ -110,6 +156,17 @@ export class XRHeightfieldPhysics {
     if (!(dt > 0)) return;
     const clampedDt = Math.max(0.001, Math.min(0.05, dt));
     const dynamicMeshes: Array<{mesh: any; body: PhysicsBodyState}> = [];
+    const activeColliders = xrCameraContext?.isAR ? [] : [...this.colliders];
+    if (!xrCameraContext?.isAR) {
+      for (const m of meshes) {
+        if (!m || m.visible === false) continue;
+        const t = getMeshXRTraits(m);
+        if (t?.physics === 'static' || (t as any)?.collider === true) {
+          const box = this.computeStaticMeshWorldBox(m);
+          if (box) activeColliders.push(box);
+        }
+      }
+    }
 
     for (const mesh of meshes) {
       if (!mesh || mesh.visible === false) continue;
@@ -309,7 +366,6 @@ export class XRHeightfieldPhysics {
         }
       }
 
-      const activeColliders = xrCameraContext?.isAR ? [] : this.colliders;
       for (const box of activeColliders) {
         const cx = Math.max(box.min[0], Math.min(box.max[0], pos[0]));
         const cy = Math.max(box.min[1], Math.min(box.max[1], pos[1]));

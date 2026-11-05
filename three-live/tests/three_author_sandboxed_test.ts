@@ -17,6 +17,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   buildSandboxWorkerSource,
+  createAuthorFidelityCheck,
   Float32BufferAttribute,
   getAllowClientScripts,
   getSandboxIframeSrc,
@@ -1298,6 +1299,121 @@ async function runSandboxedAuthorTests() {
       urlWorkerPosted.some((m) => m.type === '3D_MODEL_READY') &&
       urlWorkerPosted.some((m) => m.type === 'DONE'),
     'Use Case 2: Worker loads server scriptUrl directly via private nativeImportScripts after scrubbing self.importScripts',
+  );
+
+  // 24. Structured Authoring Fidelity Check & Worker Warning Transport / strictFidelity
+  const cleanCheck = createAuthorFidelityCheck();
+  new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({color: 0xffffff}),
+  );
+  let cleanThrew = false;
+  try {
+    cleanCheck();
+  } catch {
+    cleanThrew = true;
+  }
+  assert(
+    !cleanThrew,
+    'Structured authoring fidelity: createAuthorFidelityCheck passes when only supported MeshStandardMaterial is used',
+  );
+
+  const checkDegradation = (fn: () => void, expectedFeature: string) => {
+    const check = createAuthorFidelityCheck();
+    fn();
+    let msg = '';
+    try {
+      check();
+    } catch (e: unknown) {
+      msg = e instanceof Error ? e.message : String(e);
+    }
+    return msg.startsWith('FidelityError:') && msg.includes(expectedFeature);
+  };
+  assert(
+    checkDegradation(
+      () => new THREE.MeshBasicMaterial({color: 0xff0000}),
+      'MeshBasicMaterial',
+    ) &&
+      checkDegradation(
+        () => new THREE.MeshLambertMaterial({color: 0x00ff00}),
+        'MeshLambertMaterial',
+      ) &&
+      checkDegradation(
+        () => new THREE.MeshPhongMaterial({color: 0x0000ff}),
+        'MeshPhongMaterial',
+      ) &&
+      checkDegradation(
+        () =>
+          new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [
+            new THREE.MeshStandardMaterial({color: 0xffffff}),
+            new THREE.MeshStandardMaterial({color: 0x111111}),
+          ]),
+        'Mesh material array',
+      ),
+    'Structured authoring fidelity: createAuthorFidelityCheck throws FidelityError on MeshBasic/Lambert/Phong and multi-material array degradations',
+  );
+
+  const runFidelityWorker = (strictFidelity: boolean, scriptCode: string) => {
+    const posted: PostedMessage[] = [];
+    const workerProto: Record<string, unknown> = {
+      importScripts: () => {},
+      postMessage: (msg: PostedMessage) => posted.push(msg),
+    };
+    const workerSelf = Object.create(workerProto) as StubWorkerSelf;
+    workerSelf.THREE = g['THREE'];
+    workerSelf.onmessage = null;
+    const prevSelf = g['self'];
+    g['self'] = workerSelf;
+    try {
+      new Function(
+        buildSandboxWorkerSource(
+          'https://cdn.example.com/three-live.min.js',
+          WORKER_NONCE,
+          {
+            allowClientScripts: true,
+            strictFidelity,
+          },
+        ),
+      )();
+      workerSelf.onmessage?.({
+        data: {
+          type: 'EXECUTE',
+          nonce: WORKER_NONCE,
+          script: scriptCode,
+          strictFidelity,
+        },
+      });
+    } finally {
+      g['self'] = prevSelf;
+    }
+    return posted;
+  };
+
+  const warnMessages = runFidelityWorker(
+    false,
+    'scene.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshPhongMaterial({color: 0xff0000})));',
+  );
+  const readyMsg = warnMessages.find((m) => m.type === '3D_MODEL_READY');
+  assert(
+    Boolean(readyMsg) &&
+      Array.isArray(readyMsg?.['warnings']) &&
+      (readyMsg!['warnings'] as string[]).some((w) =>
+        w.includes('MeshPhongMaterial'),
+      ),
+    'Worker warning transport: 3D_MODEL_READY includes THREE.getAuthorWarnings() in non-strict mode',
+  );
+
+  const strictFailMessages = runFidelityWorker(
+    true,
+    'scene.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial({color: 0xff0000})));',
+  );
+  const strictErrMsg = strictFailMessages.find((m) => m.type === 'ERROR');
+  assert(
+    Boolean(strictErrMsg) &&
+      String(strictErrMsg?.['message']).includes('FidelityError:') &&
+      !strictFailMessages.some((m) => m.type === '3D_MODEL_READY') &&
+      !strictFailMessages.some((m) => m.type === '3D_UPDATE_TRANSFORMS'),
+    'Strict fidelity mode: worker suppresses 3D_MODEL_READY and posts FidelityError when authoring degradation occurs',
   );
 
   console.log(

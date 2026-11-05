@@ -1570,9 +1570,24 @@ export class Material {
 }
 
 export class MeshStandardMaterial extends Material {}
-export class MeshBasicMaterial extends Material {}
-export class MeshLambertMaterial extends Material {}
-export class MeshPhongMaterial extends Material {}
+export class MeshBasicMaterial extends Material {
+  constructor(params: Record<string, any> = {}) {
+    super(params);
+    recordAuthorFidelityLoss('MeshBasicMaterial', 'standard PBR material');
+  }
+}
+export class MeshLambertMaterial extends Material {
+  constructor(params: Record<string, any> = {}) {
+    super(params);
+    recordAuthorFidelityLoss('MeshLambertMaterial', 'standard PBR material');
+  }
+}
+export class MeshPhongMaterial extends Material {
+  constructor(params: Record<string, any> = {}) {
+    super(params);
+    recordAuthorFidelityLoss('MeshPhongMaterial', 'standard PBR material');
+  }
+}
 export class MeshPhysicalMaterial extends Material {}
 
 // =========================================================================
@@ -1707,6 +1722,9 @@ export class Mesh extends Object3D {
 
   constructor(geometry?: BufferGeometry, material?: Material) {
     super();
+    if (Array.isArray(material) && material.length > 1) {
+      recordAuthorFidelityLoss('Mesh material array', 'first material only');
+    }
     const mat = Array.isArray(material) ? material[0] : material;
     this.geometry =
       geometry instanceof BufferGeometry
@@ -2280,7 +2298,7 @@ export const noopProxy: any = new Proxy(noop, {
 });
 
 export interface ScriptExecutionCallbacks {
-  onModelReady: (glbBuffer: ArrayBuffer | GLBData) => void;
+  onModelReady: (glbBuffer: ArrayBuffer | GLBData, warnings?: string[]) => void;
   onUpdateTransforms?: (transforms: any) => void;
   onError?: (err: Error) => void;
   onToast?: (message: string) => void;
@@ -2302,9 +2320,11 @@ export interface ScriptExecutionHandle {
  */
 export type SandboxMode = 'worker' | 'iframe';
 
-/** Options controlling procedural script execution security policy. */
+/** Options controlling procedural script execution policy. */
 export interface ScriptExecutionOptions {
   readonly allowClientScripts?: boolean;
+  /** Reject known authoring degradations before publishing any scene output. */
+  readonly strictFidelity?: boolean;
 }
 
 export interface ScriptRunner {
@@ -2318,6 +2338,7 @@ export interface ScriptRunner {
     scriptUrl: string,
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
+    options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void>;
 }
 
@@ -2676,6 +2697,7 @@ const REVOKED_WORKER_GLOBALS: readonly string[] = [
 export interface SandboxWorkerSourceOptions {
   readonly allowClientScripts?: boolean;
   readonly allowedScriptUrl?: string | null;
+  readonly strictFidelity?: boolean;
 }
 
 /** Values baked into a generated sandbox worker. */
@@ -2684,6 +2706,7 @@ interface SandboxWorkerConfig {
   readonly engineSrc: string;
   readonly allowedScriptUrl: string | null;
   readonly allowClientScripts: boolean;
+  readonly strictFidelity: boolean;
   readonly revoked: readonly string[];
 }
 
@@ -2809,6 +2832,21 @@ function sandboxWorkerMain(
     }
   }
 
+  let checkFidelity: (() => void) | null = null;
+  if (cfg.strictFidelity) {
+    if (
+      !Object.prototype.hasOwnProperty.call(THREE, 'createAuthorFidelityCheck') ||
+      typeof THREE.createAuthorFidelityCheck !== 'function'
+    ) {
+      fail('FidelityError: The sandbox engine does not support strictFidelity.');
+      return;
+    }
+    checkFidelity = THREE.createAuthorFidelityCheck();
+  }
+  if (typeof THREE.clearAuthorWarnings === 'function') {
+    THREE.clearAuthorWarnings();
+  }
+
   // Revoke ambient authority on self AND every prototype along the worker's
   // prototype chain (DedicatedWorkerGlobalScope.prototype -> WorkerGlobalScope.prototype)
   // so scripts cannot bypass self.fetch = undefined via
@@ -2872,14 +2910,29 @@ function sandboxWorkerMain(
   // scene message types and stamp the nonce on self AND across the prototype chain.
   const SCENE_MESSAGE_TYPES = ['3D_MODEL_READY', '3D_UPDATE_TRANSFORMS'];
   let sentModel = false;
+  let scriptFinished = false;
+  let pendingModel: {msg: any; transfer?: Transferable[]} | null = null;
+  let pendingTransforms: {msg: any; transfer?: transferList} | null = null;
+  type transferList = Transferable[];
 
   // tslint:disable-next-line:no-any
   function emit(msg: any, transfer?: Transferable[]) {
+    checkFidelity?.();
     if (msg.type === '3D_MODEL_READY') {
       if (sentModel) return;
       sentModel = true;
+      if (typeof THREE.getAuthorWarnings === 'function') {
+        const w = THREE.getAuthorWarnings();
+        if (w && w.length) msg.warnings = w;
+      }
     }
     msg.nonce = NONCE;
+    if (checkFidelity && !scriptFinished) {
+      const pending = {msg, transfer};
+      if (msg.type === '3D_MODEL_READY') pendingModel = pending;
+      else pendingTransforms = pending;
+      return;
+    }
     if (transfer && transfer.length) post(msg, transfer);
     else post(msg);
   }
@@ -2995,6 +3048,8 @@ function sandboxWorkerMain(
         }
       }
 
+      checkFidelity?.();
+
       // Scripts that never call renderer.render() still get serialized.
       if (!sentModel) {
         if (THREE.SceneQuotaValidator) {
@@ -3016,8 +3071,15 @@ function sandboxWorkerMain(
           [glbBuffer],
         );
       }
+      checkFidelity?.();
+      scriptFinished = true;
+      for (const pending of [pendingModel, pendingTransforms]) {
+        if (pending) post(pending.msg, pending.transfer || []);
+      }
+      pendingModel = pendingTransforms = null;
       post({type: 'DONE', nonce: NONCE});
     } catch (err) {
+      pendingModel = pendingTransforms = null;
       // tslint:disable-next-line:no-any
       fail((err && (err as any).message) || err);
     }
@@ -3046,6 +3108,7 @@ export function buildSandboxWorkerSource(
     engineSrc,
     allowedScriptUrl,
     allowClientScripts,
+    strictFidelity: options?.strictFidelity === true,
     revoked: REVOKED_WORKER_GLOBALS,
   };
   const installerExprs = (getSharedRegistry().workerExtensionInstallers ?? [])
@@ -3106,7 +3169,7 @@ export type ValidatedSandboxWorkerMessage =
         | Array<number[] | Float32Array>
         | Record<string, number[] | Float32Array>;
     }
-  | {type: '3D_MODEL_READY'; payload: ArrayBuffer};
+  | {type: '3D_MODEL_READY'; payload: ArrayBuffer; warnings?: string[]};
 
 const MAX_WORKER_ERROR_LENGTH = 1024;
 const MAX_TRANSFORM_KEY_LENGTH = 256;
@@ -3208,7 +3271,22 @@ export function validateSandboxWorkerMessage(
       ) {
         return null;
       }
-      return {type: '3D_MODEL_READY', payload: glbBuffer};
+      const rawWarnings = record['warnings'];
+      const warnings = Array.isArray(rawWarnings)
+        ? rawWarnings
+            .slice(0, 32)
+            .filter((w): w is string => typeof w === 'string')
+            .map((w) =>
+              w
+                .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+                .slice(0, MAX_WORKER_ERROR_LENGTH),
+            )
+        : undefined;
+      return {
+        type: '3D_MODEL_READY',
+        payload: glbBuffer,
+        ...(warnings && warnings.length ? {warnings} : {}),
+      };
     }
     default:
       return null;
@@ -3244,7 +3322,7 @@ function dispatchValidatedSandboxMessage(
     case '3D_MODEL_READY':
       if (state.modelDispatched) return;
       state.modelDispatched = true;
-      callbacks.onModelReady(validated.payload);
+      callbacks.onModelReady(validated.payload, validated.warnings);
       return;
     case 'DONE':
       // The script has finished and flushed every frame it is going to
@@ -3265,8 +3343,16 @@ function dispatchValidatedSandboxMessage(
 }
 
 type SandboxExecutionJob =
-  | {readonly kind: 'script'; readonly script: string}
-  | {readonly kind: 'url'; readonly scriptUrl: string};
+  | {
+      readonly kind: 'script';
+      readonly script: string;
+      readonly strictFidelity?: boolean;
+    }
+  | {
+      readonly kind: 'url';
+      readonly scriptUrl: string;
+      readonly strictFidelity?: boolean;
+    };
 
 function executeInSandboxIframe(
   job: SandboxExecutionJob,
@@ -3279,8 +3365,16 @@ function executeInSandboxIframe(
     engineSrc,
     nonce,
     job.kind === 'url'
-      ? {allowClientScripts: false, allowedScriptUrl: job.scriptUrl}
-      : {allowClientScripts: true, allowedScriptUrl: null},
+      ? {
+          allowClientScripts: false,
+          allowedScriptUrl: job.scriptUrl,
+          strictFidelity: job.strictFidelity,
+        }
+      : {
+          allowClientScripts: true,
+          allowedScriptUrl: null,
+          strictFidelity: job.strictFidelity,
+        },
   );
   const iframe = document.createElement('iframe');
   // Omit `allow-same-origin` so the iframe and its Worker run in a unique
@@ -3474,8 +3568,16 @@ function runSandboxedJob(
     engineSrc,
     nonce,
     job.kind === 'url'
-      ? {allowClientScripts: false, allowedScriptUrl: job.scriptUrl}
-      : {allowClientScripts: true, allowedScriptUrl: null},
+      ? {
+          allowClientScripts: false,
+          allowedScriptUrl: job.scriptUrl,
+          strictFidelity: job.strictFidelity,
+        }
+      : {
+          allowClientScripts: true,
+          allowedScriptUrl: null,
+          strictFidelity: job.strictFidelity,
+        },
   );
   let worker: Worker;
   try {
@@ -3616,7 +3718,7 @@ export const authorScriptRunner: ScriptRunner = {
     }
 
     return runSandboxedJob(
-      {kind: 'script', script},
+      {kind: 'script', script, strictFidelity: options?.strictFidelity},
       sandbox,
       callbacks,
       reject,
@@ -3627,6 +3729,7 @@ export const authorScriptRunner: ScriptRunner = {
     scriptUrl: string,
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
+    options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void> {
     const reject = (
       message: string,
@@ -3650,7 +3753,11 @@ export const authorScriptRunner: ScriptRunner = {
     }
 
     return runSandboxedJob(
-      {kind: 'url', scriptUrl: resolvedScriptUrl},
+      {
+        kind: 'url',
+        scriptUrl: resolvedScriptUrl,
+        strictFidelity: options?.strictFidelity,
+      },
       sandbox,
       callbacks,
       reject,
@@ -3659,8 +3766,29 @@ export const authorScriptRunner: ScriptRunner = {
 };
 
 const unsupportedWarnings = new Set<string>();
+let latestAuthorFidelityLoss: {message: string} | undefined;
+
+function recordAuthorFidelityLoss(feature: string, fallback: string): void {
+  const message = `[three-live] ${feature} is unsupported; degraded to ${fallback}.`;
+  latestAuthorFidelityLoss = {message};
+  unsupportedWarnings.add(message);
+}
+
+/**
+ * Creates a synchronous check for known authoring degradations from this point
+ * forward. It is independent of clearAuthorWarnings() and other checks.
+ */
+export function createAuthorFidelityCheck(): () => void {
+  const initial = latestAuthorFidelityLoss;
+  return () => {
+    if (latestAuthorFidelityLoss !== initial) {
+      throw new Error(`FidelityError: ${latestAuthorFidelityLoss!.message}`);
+    }
+  };
+}
 
 export function warnUnsupported(feature: string, fallback: string): void {
+  recordAuthorFidelityLoss(feature, fallback);
   const msg = `[three-live] ${feature} is unsupported; degraded to ${fallback}.`;
   if (!unsupportedWarnings.has(msg)) {
     unsupportedWarnings.add(msg);
@@ -3848,6 +3976,7 @@ const threeExports: Record<string, any> = {
   authorScriptRunner,
   getAuthorWarnings,
   clearAuthorWarnings,
+  createAuthorFidelityCheck,
 };
 
 Object.freeze(SceneQuotaValidator);

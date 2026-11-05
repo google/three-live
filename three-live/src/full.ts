@@ -21,13 +21,7 @@
 import {authorScriptRunner} from './three-author';
 import {ThreeLiveElement} from './three-live-element';
 
-import * as ThreeLiveBundleExports from './full';
-
 ThreeLiveElement.registerScriptRunner(authorScriptRunner);
-
-if (typeof window !== 'undefined') {
-  (window as any).ThreeLiveBundle = ThreeLiveBundleExports;
-}
 
 export * from './animation';
 export * from './cad';
