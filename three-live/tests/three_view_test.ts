@@ -979,17 +979,61 @@ async function runThreeViewTests() {
   assert(animationViewer.animations === lateClips, 'repeat viewer load reuses parsed clips');
   animationViewer.loadGLBData(animated);
   assert(animationViewer.animations === originalClips, 'viewer uses clips parsed at binary load');
+  (animationViewer as any).update(0.5);
+  const playingMeshBeforeFail = animationViewer.meshes[0];
+  const playingClipBeforeFail = animationViewer.currentClip;
+  let failedReplacementDuringPlayback = false;
+  try {
+    animationViewer.loadGLBData({
+      ...animated,
+      animations: undefined,
+      animationsParsed: false,
+      bin: animated.bin.slice(0, 36),
+    });
+  } catch {
+    failedReplacementDuringPlayback = true;
+  }
+  assert(
+    failedReplacementDuringPlayback &&
+      animationViewer.meshes[0] === playingMeshBeforeFail &&
+      animationViewer.currentClip === playingClipBeforeFail &&
+      animationViewer.isPlayingAnimation &&
+      Math.abs(animationViewer.animationTime - 0.5) < 1e-6,
+    'failed replacement during playback preserves active scene, clip, and playback time',
+  );
+  (animationViewer as any).update(0.25);
+  assert(
+    Math.abs(animationViewer.meshes[0].transform[12] - 1.5) < 1e-6,
+    'preserved playback continues advancing after failed replacement',
+  );
   for (const kind of ['absent', 'empty'] as const) {
+    crossFadeTo(animationViewer, 'Slide', 0.2);
     const data = parseGLB(animationGLB(kind));
-    const staticViewer = new ThreeView(mockCanvas, mockCanvas, {autoRotate: false, autoplay: true});
-    staticViewer.loadGLBData(data);
+    animationViewer.loadGLBData(data);
     const emptyClips = data.animations;
-    staticViewer.loadGLBData(data);
-    assert(staticViewer.animations === emptyClips && emptyClips?.length === 0,
+    animationViewer.loadGLBData(data);
+    assert(animationViewer.animations === emptyClips && emptyClips?.length === 0,
       `${kind} animation-free GLB stays empty across viewer loads`);
-    assert(!staticViewer.isPlayingAnimation && staticViewer.meshes[0].transform[12] === 0,
-      `${kind} animation-free geometry retains its authored translation`);
-    staticViewer.destroy();
+    (animationViewer as any).update(0.5);
+    assert(
+      !animationViewer.isPlayingAnimation &&
+        animationViewer.currentClip === null &&
+        animationViewer.animationTime === 0 &&
+        animationViewer.meshes[0].transform[12] === 0,
+      `${kind} animation-free replacement on playing viewer retires active clip and retains authored translation`,
+    );
+    animationViewer.loadGLBData(animated);
+    assert(
+      animationViewer.isPlayingAnimation &&
+        animationViewer.currentClip === originalClips![0] &&
+        animationViewer.animationTime === 0,
+      `animated -> ${kind} animation-free -> animated restarts new clip from t=0`,
+    );
+    (animationViewer as any).update(0.5);
+    assert(
+      Math.abs(animationViewer.meshes[0].transform[12] - 1) < 1e-6,
+      `animated -> ${kind} animation-free -> animated advances resumed clip to midpoint`,
+    );
   }
   animationViewer.destroy();
 

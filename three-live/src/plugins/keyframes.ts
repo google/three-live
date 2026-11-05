@@ -447,6 +447,22 @@ export const keyframeAnimationPlugin: ThreeLivePlugin & {
     glbData.animationsParsed = true;
   },
 
+  onLoadModel(viewer: any): void {
+    const stack = viewerMixers.get(viewer);
+    if (!stack) return;
+    const valid = new Set(viewer?.animations || []);
+    const next = stack.filter((s) => valid.has(s.clip));
+    if (next.length === 0) {
+      viewerMixers.delete(viewer);
+    } else if (next.length !== stack.length) {
+      viewerMixers.set(viewer, next);
+    }
+  },
+
+  onDestroy(_gl: WebGL2RenderingContext, viewer: any): void {
+    viewerMixers.delete(viewer);
+  },
+
   onUpdate(viewer: any, dt: number): void {
     if (!viewer.isPlayingAnimation) return;
 

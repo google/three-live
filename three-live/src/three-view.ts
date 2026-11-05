@@ -1892,18 +1892,16 @@ function buildGpuSceneUnchecked(
     meshes.push(meshGpu);
   }
 
-  const bounds = finalizeBoundsFromMinMax(min, max);
-  let animations = data.animations;
-  if (data.animationsParsed === false || !animations) {
+  if (data.animationsParsed === false || !data.animations) {
     for (const plugin of registeredPlugins) {
       plugin.onParseGLB?.(data);
       if (data.animationsParsed !== false && data.animations) {
-        animations = data.animations;
         break;
       }
     }
   }
-  if (!animations) animations = [];
+  const bounds = finalizeBoundsFromMinMax(min, max);
+  const animations = data.animations || [];
 
   return {
     meshes,
@@ -2661,6 +2659,9 @@ export class ThreeView {
     this.updateTurntableMatrix();
     this.lights = lights;
     this.animations = animations || [];
+    this.currentClip = null;
+    this.isPlayingAnimation = false;
+    this.animationTime = 0;
     this.worldMatrices = worldMatrices || [];
     this.gpuTextures = gpuTextures || [];
     this.availableVariants = availableVariants || [];
@@ -2758,6 +2759,7 @@ export class ThreeView {
     this.animations = [];
     this.currentClip = null;
     this.isPlayingAnimation = false;
+    this.animationTime = 0;
     this.worldMatrices = [];
     this.gltf = null;
     this.initialNodeTransforms = [];
@@ -3083,16 +3085,28 @@ export class ThreeView {
   }
 
   public playAnimation(name?: string): void {
-    if (this.animations.length === 0) return;
+    if (this.animations.length === 0) {
+      this.currentClip = null;
+      this.isPlayingAnimation = false;
+      return;
+    }
     if (name) {
       const found = this.animations.find((a) => a.name === name);
       if (found) {
         this.currentClip = found;
+      } else if (
+        !this.currentClip ||
+        !this.animations.includes(this.currentClip)
+      ) {
+        this.currentClip = this.animations[0];
       }
-    } else if (!this.currentClip) {
+    } else if (
+      !this.currentClip ||
+      !this.animations.includes(this.currentClip)
+    ) {
       this.currentClip = this.animations[0];
     }
-    this.isPlayingAnimation = true;
+    this.isPlayingAnimation = Boolean(this.currentClip);
   }
 
   public pauseAnimation(): void {
