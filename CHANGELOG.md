@@ -24,6 +24,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+-   **Targeted scene editing (`ThreeView` and `<three-live>`)**:
+    `previewEdit(options)` stages a replacement of named meshes or glTF nodes
+    (a node target covers its descendant meshes) as a preview;
+    `acceptEdit()`, `rejectEdit()`, and `undoEdit()` commit, discard, or revert
+    it; `getEditHistory()` and `setMaxUndoSteps()` (default `8`) expose and
+    bound the undo stack. Options: `replacementTarget`, `allowDuplicateTargets`
+    (ambiguous names are rejected by default), `preserveTransform`,
+    `preserveTargetName`, `copyMaterialFrom`, `constraints` (`preserveHeight`,
+    `preserveBounds`, `preserveFootprint`, `maxBounds`, `matchMaterialOf`),
+    `rejectOnConstraintViolation` (default `true`), `limits`, and `warnings`.
+-   **Staged edits on `<three-live>`**: `previewEdit` is async and accepts a
+    GLB, buffer, URL, or sandboxed `script` / `scriptSrc`. A result superseded
+    by a newer scene revision is rejected instead of applied. Each edit call
+    dispatches a `scene-edit` event with its receipt.
+    `getLastCompileDiagnostics()` returns the warnings from the last sandboxed
+    compile.
+-   **Structured edit receipts**: every edit call returns a `SceneEditReceipt`
+    (`editId`, `revision`, `status` = `preview` / `accepted` / `rejected` /
+    `undone`, `applied`, targets, replaced and replacement mesh names, previous
+    and candidate bounds, constraint checks, warnings, errors, `undoDepth`).
+    New exports: `createEditReceipt`, `createAuthorFidelityCheck`,
+    `getAuthorWarnings`, and the types `SceneEditOptions`,
+    `ElementSceneEditOptions`, `SceneEditReceipt`, `SceneEditConstraints`,
+    `SceneConstraintCheck`, `SceneBoundingBox`, and `AuthorFidelityLoss`.
+-   **Shared GPU handle tracking**: textures, buffers, VAOs, and programs shared
+    by the scene, the active preview, and the undo stack are reference-tracked;
+    reject, undo, and undo-stack eviction delete only unreferenced handles.
+
+### Changed
+
+-   **`parseGLB` animation fields**: `parseGLB` no longer returns
+    `animations: []`. Without a registered animation parser it returns
+    `animationsParsed: false` and no `animations`; with the animation add-on's
+    `keyframeAnimationPlugin` registered, it returns the parsed clips and
+    `animationsParsed: true`. A GLB parsed before the add-on was registered has
+    its clips parsed when it is loaded. `GLBData` gains the optional
+    `animationsParsed` field.
+-   **Bundle budgets raised** (gzip level 9, `1 KB = 1024 B`; measured sizes
+    from this release's build):
+
+    Bundle                     | Previous budget | New budget    | Measured
+    :------------------------- | :-------------: | :-----------: | --------:
+    `three-live-viewer.min.js` | `< 29 KB gz`    | `< 33 KB gz`  | 32.98 KB
+    `three-live.min.js`        | `< 61 KB gz`    | `< 65 KB gz`  | 64.76 KB
+    `three-live-full.min.js`   | `< 97 KB gz`    | `< 102 KB gz` | 101.47 KB
+    `xr-live-viewer.min.js`    | `< 51 KB gz`    | `< 55 KB gz`  | 54.62 KB
+    `xr-live.min.js`           | `< 72 KB gz`    | `< 77 KB gz`  | 76.15 KB
+    `xr-live-spatial.min.js`   | `< 56 KB gz`    | `< 57 KB gz`  | 56.54 KB
+    `xr-live-full.min.js`      | `< 184 KB gz`   | `< 190 KB gz` | 189.07 KB
+
+    The other five bundle budgets are unchanged.
+
+### Removed
+
+-   **`window.ThreeLiveBundle` assignment in `three-live/src/full.ts`**: the
+    ESM (`three-live-full.js`) and CJS (`three-live-full.cjs`) builds no longer
+    set `window.ThreeLiveBundle`. The IIFE `three-live-full.min.js` still
+    defines the `ThreeLiveBundle` global through its bundle global name.
+
 --------------------------------------------------------------------------------
 
 ## [1.2.4] - 2026-11-05
