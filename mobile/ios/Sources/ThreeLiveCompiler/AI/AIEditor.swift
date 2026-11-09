@@ -320,8 +320,15 @@ public struct AISpatialPriors: Sendable, Equatable {
         let worldC = m * localC
         let normal = SIMD3<Float>(m.columns.1.x, m.columns.1.y, m.columns.1.z)
         let orientation = pa.alignment == .vertical ? "vertical" : "horizontal"
-        let w = Double(pa.planeExtent.width)
-        let h = Double(pa.planeExtent.height)
+        let w: Double
+        let h: Double
+        if #available(iOS 16.0, *) {
+          w = Double(pa.planeExtent.width)
+          h = Double(pa.planeExtent.height)
+        } else {
+          w = Double(pa.extent.x)
+          h = Double(pa.extent.z)
+        }
         let extent: [Double]? = (w.isFinite && w > 0 && h.isFinite && h > 0) ? [w, h] : nil
         let label: String?
         switch pa.classification {
