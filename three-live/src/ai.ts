@@ -28,6 +28,13 @@ import {
   setSelectOnTap,
   startVoiceEdit,
 } from './plugins/ai-voice';
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './plugins/ai-select';
+
+import {describeSelection, getSelection, setSelection} from './plugins/ai-select';
 
 registerPlugin(aiPlugin);
 
@@ -38,7 +45,10 @@ export {
   createAIChatProvider,
   createWebSpeechRecognizer,
   describeEditResult,
+  describeSelection,
   editScene,
+  getSelection,
+  setSelection,
   extractScript,
   geminiLiveAdapter,
   realtimeAdapter,
@@ -66,3 +76,8 @@ export type {
   AIVoiceState,
   AIVoiceTransport,
 } from './plugins/ai-voice';
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './plugins/ai-select';

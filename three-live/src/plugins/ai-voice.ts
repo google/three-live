@@ -27,6 +27,12 @@
  */
 
 import type {EditSceneResult, ThreeLiveAIProvider} from './ai';
+import {
+  type AISelectableElement,
+  describeSelection,
+  getSelection,
+  setSelection,
+} from './ai-select';
 
 /** Voice protocols supported by {@link connectVoice}. */
 export type AIVoiceProviderName = 'ai-realtime' | 'gemini-live';
@@ -203,8 +209,12 @@ export interface AIVoiceElement {
   undoEdit?: () => Promise<boolean>;
   __tlVoiceSession?: AIVoiceSession | null;
   __tlTapHandler?: ((e: Event) => void) | null;
+  __tlTapDown?: ((e: Event) => void) | null;
   __tlVoiceButton?: HTMLElement | null;
 }
+
+/** Press duration that turns a tap into an add-to-selection. */
+const LONG_PRESS_MS = 500;
 
 /** Longest instruction or transcript forwarded. */
 export const MAX_VOICE_TEXT = 2000;
@@ -714,12 +724,9 @@ export class AIVoiceSession {
   private userText = '';
   private modelText = '';
   private readonly onSelect = (e: Event) => {
-    const mesh = (e as CustomEvent<{mesh?: string | null}>).detail?.mesh;
-    this.sendContext(
-      mesh
-        ? `The user selected the mesh "${String(mesh).slice(0, 200)}". "This" or "it" now refers to it.`
-        : 'The user cleared the selection.',
-    );
+    const d = (e as CustomEvent<{mesh?: string | null; meshes?: readonly string[]}>).detail;
+    const meshes = Array.isArray(d?.meshes) ? d.meshes : d?.mesh ? [d.mesh] : [];
+    this.sendContext(describeSelection(meshes));
   };
 
   constructor(
@@ -767,11 +774,8 @@ export class AIVoiceSession {
     // session, so browsers do not keep it suspended (an empty chunk plays nothing).
     this.sink?.play('', 24000);
     this.el.addEventListener?.('three-live-select', this.onSelect);
-    if (this.el.selectedMesh) {
-      this.sendContext(
-        `The user selected the mesh "${String(this.el.selectedMesh).slice(0, 200)}".`,
-      );
-    }
+    const selected = getSelection(this.el as AISelectableElement);
+    if (selected.length) this.sendContext(describeSelection(selected));
     try {
       await this.mic?.start(this.adapter.inputRate, (b64) => {
         if (this.state !== 'closed') this.transport.send(this.adapter.audio(b64));
@@ -1088,16 +1092,37 @@ export async function startVoiceEdit(
 export function setSelectOnTap(el: AIVoiceElement, enabled: boolean): void {
   if (!enabled) {
     if (el.__tlTapHandler) el.removeEventListener?.('meshclick', el.__tlTapHandler);
+    if (el.__tlTapDown) el.removeEventListener?.('pointerdown', el.__tlTapDown);
     el.__tlTapHandler = null;
+    el.__tlTapDown = null;
     return;
   }
   if (el.__tlTapHandler) return;
+  // Shift / Ctrl / Cmd-tap or a long press (>= 500 ms) adds or removes a mesh; a plain
+  // tap selects just that mesh (or clears it when it is the only one selected).
+  let additive = false;
+  let downAt = 0;
+  const onDown = (e: Event) => {
+    const p = e as PointerEvent;
+    additive = Boolean(p.shiftKey || p.ctrlKey || p.metaKey);
+    downAt = Date.now();
+  };
+  el.__tlTapDown = onDown;
+  el.addEventListener?.('pointerdown', onDown);
   el.__tlTapHandler = (e: Event) => {
     const name = (e as CustomEvent<{meshName?: string}>).detail?.meshName;
     if (typeof name !== 'string' || !name) return;
-    const next = el.selectedMesh === name ? null : name;
-    el.selectedMesh = next;
-    el.fireEvent?.('three-live-select', {mesh: next});
+    const longPress = downAt > 0 && Date.now() - downAt >= LONG_PRESS_MS;
+    const current = getSelection(el as AISelectableElement);
+    if (additive || longPress) {
+      setSelection(el as AISelectableElement, [name], {mode: 'toggle', source: 'tap'});
+    } else if (current.length === 1 && current[0] === name) {
+      setSelection(el as AISelectableElement, [], {mode: 'clear', source: 'tap'});
+    } else {
+      setSelection(el as AISelectableElement, [name], {mode: 'replace', source: 'tap'});
+    }
+    additive = false;
+    downAt = 0;
   };
   el.addEventListener?.('meshclick', el.__tlTapHandler);
 }

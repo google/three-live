@@ -150,7 +150,7 @@ mesh.userData.xr = { grab: '1-hand', billboard: 'capsule' };
 scene.add(mesh);
 ```
 
-Add `three-live-ai.min.js` (`< 10 KB gz`; built into the full bundles) to let users reshape a scene
+Add `three-live-ai.min.js` (`< 11 KB gz`; built into the full bundles) to let users reshape a scene
 with **any LLM**: every edit is compiled in the sandbox first, auto-repaired
 once on failure, and only then hot-swapped, so a bad generation never breaks the
 live scene.
@@ -317,7 +317,7 @@ The following table compares the two runtime tiers across Android, iOS, and Web:
 | **Three.js JIT compiler** | Yes (sandboxed Rust `Boa`/QuickJS VM on Android/iOS/CLI, Web Worker on Web) | Yes (inherits `three-author` JIT compiler plus `userData.xr` spatial traits) |
 | **Android & iOS runtime** | Google Filament (`FilamentHelper`), Apple RealityKit (`RealityKitHelper`), and `.glb`/`.usdz` export | Native Android (`Filament` + Jetpack XR `SceneCore` + `XRLiveRuntimeSession`) and native iOS/visionOS (`RealityKit` + `XRLiveRealityKitSession`) |
 | **Spatial interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`, `audioEmitter`), 15 spatial plugins, 6 `xr-live-sim` simulation plugins, 25-joint hands, and `KHR_interactivity` |
-| **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 73 KB gz`** (`three-live.min.js`) | **`< 54 KB gz`** (viewer), **`< 84 KB gz`** (`xr-live.min.js`), **`< 251 KB gz`** (`xr-live-full.min.js`) |
+| **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 73 KB gz`** (`three-live.min.js`) | **`< 55 KB gz`** (viewer), **`< 84 KB gz`** (`xr-live.min.js`), **`< 251 KB gz`** (`xr-live-full.min.js`) |
 <!-- mdformat on -->
 
 ### HTML attribute compatibility with `<model-viewer>`
@@ -356,7 +356,7 @@ live Three.js scenes:
 *   **Compact core (`< 30 KB` to `< 84 KB gz` on Web):** The 3D viewer
     (`three-live-viewer.min.js`) is `< 30 KB gz` (`< 73 KB gz` with the live
     Three.js compiler in `three-live.min.js`), and the WebXR viewer
-    (`xr-live-viewer.min.js`) is `< 54 KB gz` (`< 84 KB gz` with the live
+    (`xr-live-viewer.min.js`) is `< 55 KB gz` (`< 84 KB gz` with the live
     Three.js compiler in `xr-live.min.js`).
 *   **Core 3D, CAD, procedural, and animation plugins (`three-live`, 17 plugins):** Optional
     domain bundles (`three-live-studio.min.js` at `< 29 KB gz`,
@@ -477,10 +477,10 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live-studio.min.js`** | **`< 29 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
 |  | **`three-live-procedural.min.js`** | **`< 28 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
-|  | **`three-live-ai.min.js`** | **`< 10 KB gz`** | Opt-in bring-your-own-LLM scene editing: `el.editScene(instruction)` with sandbox validation, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak voice editing: tap-to-select, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. Also included in the full bundles. |
+|  | **`three-live-ai.min.js`** | **`< 11 KB gz`** | Opt-in bring-your-own-LLM scene editing: `el.editScene(instruction)` with sandbox validation, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak voice editing: tap-to-select, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. Also included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-full.min.js`** | **`< 151 KB gz`** | All-in-one 3D bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai`, all 17 plugins auto-registered). |
-| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 54 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
+| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 55 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
 |  | **`xr-live.min.js`** | **`< 84 KB gz`** | Standard `<xr-live>` + **`three-author`** (live Three.js compiler) + runtime USDZ and GLB compiler. |
 |  | **`xr-live-sensors.min.js`** | **`< 10 KB gz`** | Add-on plugin: Hardware XR sensors (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
 |  | **`xr-live-spatial.min.js`** | **`< 63 KB gz`** | Add-on plugin bundle registering all 15 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`, `spatial-audio`). |

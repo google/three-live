@@ -26,6 +26,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Talk-to-Select (B2b-4), multi-select:** `el.selectedMeshes` holds the
+    selection (`selected-mesh` stays its first entry); `setSelection(el,
+    names, {mode: 'replace' | 'add' | 'remove' | 'toggle' | 'clear'})` changes
+    it; the viewer highlights every selected mesh; `three-live-select` now
+    carries `{mesh, meshes, added, removed, source, query?}`. With
+    `ai-select-on-tap`, Shift / Ctrl / Cmd-tap or a long press adds to the
+    selection. `editScene` (web and the shared Rust core) accepts several
+    selected meshes and rejects edits that lose any of them. Removing
+    `selected-mesh` now also clears the highlight. `xr-live-viewer.min.js`
+    budget: `< 55 KB gz` (was `< 54`).
+
 -   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;

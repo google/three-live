@@ -173,6 +173,13 @@ export {
   setSelectOnTap,
   startVoiceEdit,
 } from './three-live/src/plugins/ai-voice';
+/** Multi-select for Tap & Speak / Talk-to-Select (part of `three-live-ai.min.js`). */
+export {describeSelection, getSelection, setSelection} from './three-live/src/plugins/ai-select';
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './three-live/src/plugins/ai-select';
 export type {
   AIAudioSink,
   AIMicrophoneSource,
@@ -284,7 +291,7 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
-  /** `three-live-ai`: tapping a mesh sets `selected-mesh` (tap again to clear) for voice and text edits. */
+  /** `three-live-ai`: tapping a mesh selects it (tap again to clear; Shift/Ctrl/Cmd-tap or long-press adds to `el.selectedMeshes`). */
   'ai-select-on-tap'?: boolean | string;
   /** `three-live-ai`: show a mic button (push-to-talk, or a realtime session when `ai-voice-url` is set). */
   'ai-voice-button'?: boolean | string;
