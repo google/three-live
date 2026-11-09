@@ -92,6 +92,18 @@ pub struct SceneNode {
     /// Whether this node is initially visible (`KHR_node_visibility`). Defaults to `true`.
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// Optional surface shadow flags (`nodes[i].extras.shadow`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<NodeShadowConfig>,
+}
+
+/// Surface shadow-casting and shadow-receiving flags (`nodes[i].extras.shadow`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeShadowConfig {
+    #[serde(default)]
+    pub cast: bool,
+    #[serde(default = "default_true")]
+    pub receive: bool,
 }
 
 fn default_true() -> bool {
@@ -116,6 +128,7 @@ impl Default for SceneNode {
             interactivity_events: Vec::new(),
             interactivity: None,
             visible: true,
+            shadow: None,
         }
     }
 }
@@ -226,6 +239,49 @@ impl Default for Material3D {
     }
 }
 
+/// Punctual light shadow-map parameters (`extras.shadow`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct LightShadowConfig {
+    #[serde(default = "default_true")]
+    pub cast: bool,
+    #[serde(default = "default_shadow_map_size", rename = "mapSize", alias = "map_size")]
+    pub map_size: u32,
+    #[serde(default = "default_shadow_bias")]
+    pub bias: f32,
+    #[serde(default = "default_shadow_normal_bias", rename = "normalBias", alias = "normal_bias")]
+    pub normal_bias: f32,
+    #[serde(default = "default_shadow_radius")]
+    pub radius: f32,
+}
+
+fn default_shadow_map_size() -> u32 {
+    1024
+}
+
+fn default_shadow_bias() -> f32 {
+    -0.0005
+}
+
+fn default_shadow_normal_bias() -> f32 {
+    0.015
+}
+
+fn default_shadow_radius() -> f32 {
+    1.5
+}
+
+impl Default for LightShadowConfig {
+    fn default() -> Self {
+        Self {
+            cast: true,
+            map_size: default_shadow_map_size(),
+            bias: default_shadow_bias(),
+            normal_bias: default_shadow_normal_bias(),
+            radius: default_shadow_radius(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Light3D {
     #[serde(alias = "type")]
@@ -246,6 +302,33 @@ pub struct Light3D {
     pub inner_cone_angle: f32,
     #[serde(default, alias = "outerConeAngle")]
     pub outer_cone_angle: f32,
+    #[serde(
+        default,
+        rename = "nodeIndex",
+        alias = "node_index",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub node_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<LightShadowConfig>,
+}
+
+impl Default for Light3D {
+    fn default() -> Self {
+        Self {
+            light_type: "directional".to_string(),
+            color: [1.0, 1.0, 1.0],
+            ground_color: None,
+            intensity: 1.0,
+            position: [0.0, 0.0, 0.0],
+            direction: None,
+            range: 0.0,
+            inner_cone_angle: 0.0,
+            outer_cone_angle: 0.0,
+            node_index: None,
+            shadow: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

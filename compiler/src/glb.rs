@@ -784,6 +784,15 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                     merged_node_exts.insert(k, v);
                 }
             }
+            if let Some(sh) = node.shadow {
+                if !node_json.get("extras").is_some_and(|e| e.is_object()) {
+                    node_json["extras"] = json!({});
+                }
+                node_json["extras"]["shadow"] = json!({
+                    "cast": sh.cast,
+                    "receive": sh.receive,
+                });
+            }
             if !node.visible {
                 add_ext("KHR_node_visibility");
                 merged_node_exts
@@ -1032,6 +1041,89 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
         extensions_used.push("KHR_audio_emitter");
     }
 
+    let quat_from_minus_z = |ray: [f32; 3]| -> [f32; 4] {
+        let len = (ray[0] * ray[0] + ray[1] * ray[1] + ray[2] * ray[2]).sqrt();
+        if !len.is_finite() || len <= 1e-6 {
+            return [-std::f32::consts::FRAC_1_SQRT_2, 0.0, 0.0, std::f32::consts::FRAC_1_SQRT_2];
+        }
+        let x = ray[0] / len;
+        let y = ray[1] / len;
+        let z = ray[2] / len;
+        if -z > 0.999_999 {
+            return [0.0, 0.0, 0.0, 1.0];
+        }
+        if -z < -0.999_999 {
+            return [0.0, 1.0, 0.0, 0.0];
+        }
+        let w = 1.0 - z;
+        let q_len = (y * y + x * x + w * w).sqrt();
+        if q_len <= 1e-6 {
+            [0.0, 0.0, 0.0, 1.0]
+        } else {
+            [y / q_len, -x / q_len, 0.0, w / q_len]
+        }
+    };
+
+    let mut khr_lights: Vec<serde_json::Value> = Vec::new();
+    let has_any_shadow_light = scene.lights.iter().any(|l| {
+        matches!(l.light_type.as_str(), "directional" | "spot" | "point")
+            && l.shadow.is_some_and(|s| s.cast)
+    });
+    if has_any_shadow_light {
+        for light in &scene.lights {
+            let t = light.light_type.as_str();
+            if t != "directional" && t != "spot" && t != "point" {
+                continue;
+            }
+            let khr_idx = khr_lights.len();
+            let mut l_def = json!({
+                "type": t,
+                "color": [jnum(light.color[0]), jnum(light.color[1]), jnum(light.color[2])],
+                "intensity": jnum(light.intensity),
+            });
+            if let Some(sh) = light.shadow.filter(|s| s.cast) {
+                l_def["extras"] = json!({ "shadow": sh });
+            }
+            if (t == "point" || t == "spot") && light.range > 0.0 && light.range.is_finite() {
+                l_def["range"] = jnum(light.range);
+            }
+            if t == "spot" {
+                l_def["spot"] = json!({
+                    "innerConeAngle": jnum(light.inner_cone_angle),
+                    "outerConeAngle": jnum(light.outer_cone_angle),
+                });
+            }
+            khr_lights.push(l_def);
+
+            if let Some(n_idx) = light.node_index.filter(|&idx| idx < nodes.len()) {
+                let node_val = &mut nodes[n_idx];
+                if node_val.get("rotation").is_none() && (t == "directional" || t == "spot") {
+                    let ray = if t == "spot" {
+                        light.direction.unwrap_or([0.0, -1.0, 0.0])
+                    } else if let Some(d) = light.direction {
+                        [-d[0], -d[1], -d[2]]
+                    } else if light.position != [0.0, 0.0, 0.0] {
+                        [-light.position[0], -light.position[1], -light.position[2]]
+                    } else {
+                        [-0.5, -1.0, -0.8]
+                    };
+                    let q = quat_from_minus_z(ray);
+                    if q != [0.0, 0.0, 0.0, 1.0] {
+                        node_val["rotation"] =
+                            json!([jnum(q[0]), jnum(q[1]), jnum(q[2]), jnum(q[3])]);
+                    }
+                }
+                if !node_val.get("extensions").is_some_and(|e| e.is_object()) {
+                    node_val["extensions"] = json!({});
+                }
+                node_val["extensions"]["KHR_lights_punctual"] = json!({ "light": khr_idx });
+            }
+        }
+    }
+    if !khr_lights.is_empty() && !extensions_used.contains(&"KHR_lights_punctual") {
+        extensions_used.push("KHR_lights_punctual");
+    }
+
     // The glTF 2.0 schema sets `minItems: 1` on every top-level array and requires
     // `buffer.byteLength >= 1`, so an empty collection has to be omitted rather than
     // written as `[]`. A script that threw early, produced no geometry, or was just a
@@ -1107,6 +1199,9 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             khr_audio.insert("sources".to_string(), json!(audio_sources));
             khr_audio.insert("emitters".to_string(), json!(audio_emitters));
             root_exts.insert("KHR_audio_emitter".to_string(), serde_json::Value::Object(khr_audio));
+        }
+        if !khr_lights.is_empty() {
+            root_exts.insert("KHR_lights_punctual".to_string(), json!({ "lights": khr_lights }));
         }
         if !root_exts.is_empty() {
             root.insert("extensions".to_string(), serde_json::Value::Object(root_exts));
@@ -1511,6 +1606,12 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
             let xr_normalized = gn["extras"]["xr"].as_object().map(|_| gn["extras"]["xr"].clone());
             let visible =
                 gn["extensions"]["KHR_node_visibility"]["visible"].as_bool().unwrap_or(true);
+            let shadow = gn["extras"]["shadow"].as_object().and_then(|_| {
+                serde_json::from_value::<crate::scene::NodeShadowConfig>(
+                    gn["extras"]["shadow"].clone(),
+                )
+                .ok()
+            });
             nodes.push(SceneNode {
                 name,
                 parent: parents[i],
@@ -1520,13 +1621,76 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 mesh,
                 xr_normalized,
                 visible,
+                shadow,
                 ..Default::default()
             });
         }
     }
 
-    let lights: Vec<crate::scene::Light3D> =
+    let mut lights: Vec<crate::scene::Light3D> =
         serde_json::from_value(gltf["asset"]["extras"]["lights"].clone()).unwrap_or_default();
+    if lights.is_empty() {
+        if let Some(khr_defs) = gltf["extensions"]["KHR_lights_punctual"]["lights"].as_array() {
+            for (li, kl) in khr_defs.iter().enumerate() {
+                let light_type = kl["type"].as_str().unwrap_or("directional").to_string();
+                let color = kl["color"]
+                    .as_array()
+                    .map(|a| {
+                        [
+                            a.first().and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                            a.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                            a.get(2).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                        ]
+                    })
+                    .unwrap_or([1.0, 1.0, 1.0]);
+                let intensity = kl["intensity"].as_f64().unwrap_or(1.0) as f32;
+                let range = kl["range"].as_f64().unwrap_or(0.0) as f32;
+                let inner_cone_angle = kl["spot"]["innerConeAngle"].as_f64().unwrap_or(0.0) as f32;
+                let outer_cone_angle =
+                    kl["spot"]["outerConeAngle"].as_f64().unwrap_or(std::f64::consts::FRAC_PI_3)
+                        as f32;
+                let shadow = kl["extras"]["shadow"].as_object().and_then(|_| {
+                    serde_json::from_value::<crate::scene::LightShadowConfig>(
+                        kl["extras"]["shadow"].clone(),
+                    )
+                    .ok()
+                });
+                let node_index = gltf["nodes"].as_array().and_then(|gn_arr| {
+                    gn_arr.iter().position(|gn| {
+                        gn["extensions"]["KHR_lights_punctual"]["light"].as_u64() == Some(li as u64)
+                    })
+                });
+                let node_ref = node_index.and_then(|ni| nodes.get(ni));
+                let position = node_ref.map(|n| n.translation).unwrap_or([0.0; 3]);
+                let direction = if light_type == "directional" || light_type == "spot" {
+                    node_ref.map(|n| {
+                        let q = n.rotation;
+                        let s = if light_type == "directional" { 1.0 } else { -1.0 };
+                        [
+                            s * 2.0 * (q[0] * q[2] + q[3] * q[1]),
+                            s * 2.0 * (q[1] * q[2] - q[3] * q[0]),
+                            s * (1.0 - 2.0 * (q[0] * q[0] + q[1] * q[1])),
+                        ]
+                    })
+                } else {
+                    None
+                };
+                lights.push(crate::scene::Light3D {
+                    light_type,
+                    color,
+                    ground_color: None,
+                    intensity,
+                    position,
+                    direction,
+                    range,
+                    inner_cone_angle,
+                    outer_cone_angle,
+                    node_index,
+                    shadow,
+                });
+            }
+        }
+    }
 
     Ok(SceneGraph {
         meshes,

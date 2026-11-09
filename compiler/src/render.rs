@@ -220,6 +220,8 @@ fn shade_pbr_ext(
             range: 0.0,
             inner_cone_angle: 0.0,
             outer_cone_angle: 0.0,
+            node_index: None,
+            shadow: None,
         },
         Light3D {
             light_type: "directional".to_string(),
@@ -231,6 +233,8 @@ fn shade_pbr_ext(
             range: 0.0,
             inner_cone_angle: 0.0,
             outer_cone_angle: 0.0,
+            node_index: None,
+            shadow: None,
         },
     ];
     let active_lights: &[Light3D] = if lights.is_empty() { &default_lights } else { lights };

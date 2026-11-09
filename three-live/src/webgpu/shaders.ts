@@ -20,8 +20,11 @@
  * utilities for the `three-live-webgpu` `GPURenderBundle` scene accelerator.
  */
 
-/** Byte size of the per-frame `SceneUniforms` buffer (29 x 16B = 464B). */
-export const SCENE_UNIFORM_BYTES = 464;
+/** Byte size of the per-frame `SceneUniforms` buffer (50 x 16B = 800B). */
+export const SCENE_UNIFORM_BYTES = 800;
+
+/** Byte size of one per-slice `ShadowSliceUniforms` buffer (11 x 16B = 176B). */
+export const SHADOW_SLICE_UNIFORM_BYTES = 176;
 
 /** Stride in 32-bit words of one `PartInstance` entry in the storage buffer. */
 export const PART_STRIDE_WORDS = 32;
@@ -53,6 +56,10 @@ export const PART_FLAG_NO_SECTION_CLIP = 64;
 export const PART_FLAG_HIDDEN = 128;
 /** Part flag shift for inline stereo UV mode (`0=none`, `1=sbs`, `2=ou`). */
 export const PART_STEREO_SHIFT = 8;
+/** Part flag: instance casts depth into multi-light shadow maps. */
+export const PART_FLAG_CAST_SHADOW = 1024;
+/** Part flag: instance samples multi-light shadow maps in `fsMain`. */
+export const PART_FLAG_RECEIVE_SHADOW = 2048;
 
 /** Scene flag bit: equirectangular `environment-image` texture is bound. */
 export const SCENE_FLAG_HAS_ENV_MAP = 1;
@@ -69,8 +76,25 @@ export interface SceneLightInput {
   readonly intensity?: number;
   readonly position?: readonly number[];
   readonly direction?: readonly number[];
+  readonly range?: number;
   readonly innerConeAngle?: number;
   readonly outerConeAngle?: number;
+  readonly shadow?: {
+    readonly cast?: boolean;
+    readonly mapSize?: number;
+    readonly bias?: number;
+    readonly normalBias?: number;
+    readonly radius?: number;
+  };
+}
+
+/** Per-light shadow slice uniform input for `writeSceneUniforms`. */
+export interface SceneShadowSliceInput {
+  readonly slot: number;
+  readonly viewProj: ArrayLike<number>;
+  readonly depthBias: number;
+  readonly normalBiasWorld: number;
+  readonly uvRadius: number;
 }
 
 /** Input parameters for packing the per-frame `SceneUniforms` buffer. */
@@ -98,6 +122,11 @@ export interface SceneUniformInput {
     readonly intensity: number;
     readonly softness: number;
   } | null;
+  readonly shadowMap?: {
+    readonly slices: readonly SceneShadowSliceInput[];
+    readonly dirSlots: readonly [number, number];
+    readonly ptSlots: readonly [number, number];
+  } | null;
 }
 
 /**
@@ -121,15 +150,16 @@ export function remapClipDepthToZeroOne(
 }
 
 /**
- * Packs per-frame camera, lighting, tone-mapping, section-plane, and contact
- * shadow uniforms into `buf` (`SCENE_UNIFORM_BYTES` = 464 bytes).
+ * Packs per-frame camera, lighting, tone-mapping, section-plane, contact
+ * shadow, and multi-light shadow-map uniforms into `buf` (`800` bytes).
  */
 export function writeSceneUniforms(
   buf: ArrayBuffer,
   input: SceneUniformInput,
 ): void {
-  const f32 = new Float32Array(buf, 0, 116);
-  const u32 = new Uint32Array(buf, 0, 116);
+  const f32 = new Float32Array(buf, 0, 200);
+  const u32 = new Uint32Array(buf, 0, 200);
+  const i32 = new Int32Array(buf, 0, 200);
   f32.fill(0);
 
   remapClipDepthToZeroOne(f32.subarray(0, 16), input.vp);
@@ -269,6 +299,61 @@ export function writeSceneUniforms(
   u32[113] = numDir >>> 0;
   u32[114] = numPt >>> 0;
   u32[115] = sceneBits >>> 0;
+
+  i32[196] = -1;
+  i32[197] = -1;
+  i32[198] = -1;
+  i32[199] = -1;
+  if (input.shadowMap && input.shadowMap.slices.length > 0) {
+    for (const s of input.shadowMap.slices) {
+      if (s.slot < 0 || s.slot >= 4) continue;
+      remapClipDepthToZeroOne(
+        f32.subarray(116 + s.slot * 16, 132 + s.slot * 16),
+        s.viewProj,
+      );
+      const pb = 180 + s.slot * 4;
+      f32[pb] = s.depthBias;
+      f32[pb + 1] = s.normalBiasWorld * 0.5;
+      f32[pb + 2] = s.uvRadius;
+    }
+    i32[196] = input.shadowMap.dirSlots[0] | 0;
+    i32[197] = input.shadowMap.dirSlots[1] | 0;
+    i32[198] = input.shadowMap.ptSlots[0] | 0;
+    i32[199] = input.shadowMap.ptSlots[1] | 0;
+  }
+}
+
+/** Packs per-slice uniforms (`176` bytes) for `SCENE_SHADOW_DEPTH_WGSL`. */
+export function writeShadowSliceUniforms(
+  buf: ArrayBuffer,
+  lightVP: ArrayLike<number>,
+  modelRoot: ArrayLike<number>,
+  rayDir: readonly [number, number, number],
+  normalBiasWorld: number,
+  sectionPlane: {
+    readonly enabled: boolean;
+    readonly normal: readonly [number, number, number];
+    readonly constant: number;
+  } | null,
+): void {
+  const f32 = new Float32Array(buf, 0, 44);
+  const u32 = new Uint32Array(buf, 0, 44);
+  f32.fill(0);
+  remapClipDepthToZeroOne(f32.subarray(0, 16), lightVP);
+  for (let i = 0; i < 16; i++) {
+    f32[16 + i] = modelRoot[i] ?? (i % 5 === 0 ? 1 : 0);
+  }
+  f32[32] = rayDir[0];
+  f32[33] = rayDir[1];
+  f32[34] = rayDir[2];
+  f32[35] = normalBiasWorld;
+  if (sectionPlane?.enabled) {
+    f32[36] = sectionPlane.normal[0];
+    f32[37] = sectionPlane.normal[1];
+    f32[38] = sectionPlane.normal[2];
+    f32[39] = sectionPlane.constant;
+    u32[40] = 1;
+  }
 }
 
 const SHARED_SCENE_STRUCTS_WGSL = /* wgsl */ `
@@ -296,6 +381,15 @@ struct SceneUniforms {
   shadowBox: vec4<f32>,
   shadowParams: vec4<f32>,
   flags: vec4<u32>,
+  shdVP0: mat4x4<f32>,
+  shdVP1: mat4x4<f32>,
+  shdVP2: mat4x4<f32>,
+  shdVP3: mat4x4<f32>,
+  shdParams0: vec4<f32>,
+  shdParams1: vec4<f32>,
+  shdParams2: vec4<f32>,
+  shdParams3: vec4<f32>,
+  shdSlots: vec4<i32>,
 };
 
 struct PartInstance {
@@ -312,6 +406,8 @@ struct PartInstance {
 @group(0) @binding(1) var<storage, read> parts: array<PartInstance>;
 @group(0) @binding(2) var linSampler: sampler;
 @group(0) @binding(3) var envTex: texture_2d<f32>;
+@group(0) @binding(4) var shadowSampler: sampler_comparison;
+@group(0) @binding(5) var shadowTex: texture_depth_2d_array;
 `;
 
 /**
@@ -481,6 +577,65 @@ fn evalLight(lDir: vec3<f32>, vDir: vec3<f32>, nDir: vec3<f32>, baseRgb: vec3<f3
     + vec3<f32>(pow(h, specExp) * specW + cc.x * pow(h, mix(64.0, 512.0, 1.0 - cc.y)) * 0.35);
 }
 
+const VOGEL_DISK = array<vec2<f32>, 8>(
+  vec2<f32>(0.1768, 0.0),
+  vec2<f32>(-0.2265, 0.2078),
+  vec2<f32>(0.0355, -0.4150),
+  vec2<f32>(0.3204, 0.3888),
+  vec2<f32>(-0.5562, -0.1455),
+  vec2<f32>(0.4916, -0.3806),
+  vec2<f32>(-0.1419, 0.6596),
+  vec2<f32>(-0.5177, -0.5150),
+);
+
+fn evalShadow(slot: i32, recv: bool, wp: vec3<f32>, nDir: vec3<f32>, lDir: vec3<f32>, fragXY: vec2<f32>) -> f32 {
+  if (!recv || slot < 0) {
+    return 1.0;
+  }
+  let nl = dot(nDir, lDir);
+  if (nl <= 0.0) {
+    return 0.0;
+  }
+  var vp: mat4x4<f32>;
+  var sp: vec4<f32>;
+  if (slot == 0) {
+    vp = sc.shdVP0;
+    sp = sc.shdParams0;
+  } else if (slot == 1) {
+    vp = sc.shdVP1;
+    sp = sc.shdParams1;
+  } else if (slot == 2) {
+    vp = sc.shdVP2;
+    sp = sc.shdParams2;
+  } else {
+    vp = sc.shdVP3;
+    sp = sc.shdParams3;
+  }
+  let scPos = vp * vec4<f32>(wp + nDir * (sp.y * (1.0 - nl)), 1.0);
+  if (scPos.w <= 1e-6) {
+    return 1.0;
+  }
+  let ndc = scPos.xyz / scPos.w;
+  let suv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  if (suv.x <= 0.002 || suv.x >= 0.998 || suv.y <= 0.002 || suv.y >= 0.998 || ndc.z > 1.0 || ndc.z < 0.0) {
+    return 1.0;
+  }
+  let refZ = clamp(ndc.z + sp.x, 0.0, 1.0);
+  if (sp.z <= 1e-6) {
+    return textureSampleCompareLevel(shadowTex, shadowSampler, suv, slot, refZ);
+  }
+  let ang = fract(52.9829189 * fract(dot(fragXY, vec2<f32>(0.06711056, 0.00583715)))) * 6.2831853;
+  let ca = cos(ang);
+  let sa = sin(ang);
+  var sum = 0.0;
+  for (var k = 0; k < 8; k = k + 1) {
+    let t = VOGEL_DISK[k];
+    let rot = vec2<f32>(ca * t.x - sa * t.y, sa * t.x + ca * t.y) * sp.z;
+    sum += textureSampleCompareLevel(shadowTex, shadowSampler, suv + rot, slot, refZ);
+  }
+  return sum * 0.125;
+}
+
 @fragment
 fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4<f32> {
   let p1 = dpdx(in.worldPos);
@@ -569,13 +724,18 @@ fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) v
   let specWeight = mix(0.22 * gloss, 1.0, metallic);
   let cc = p.pbr.zw;
 
+  let recvShd = (pFlags & 2048u) != 0u;
   var directLight = vec3<f32>(0.0);
   let numDir = sc.flags.y;
   if (numDir > 0u) {
-    directLight += evalLight(normalize(sc.dirDir0.xyz), V, N, base.rgb, specExp, specWeight, cc) * sc.dirCol0.xyz;
+    let dL0 = normalize(sc.dirDir0.xyz);
+    let sh0 = evalShadow(sc.shdSlots.x, recvShd, in.worldPos, N, dL0, in.clipPos.xy);
+    directLight += evalLight(dL0, V, N, base.rgb, specExp, specWeight, cc) * sc.dirCol0.xyz * sh0;
   }
   if (numDir > 1u) {
-    directLight += evalLight(normalize(sc.dirDir1.xyz), V, N, base.rgb, specExp, specWeight, cc) * sc.dirCol1.xyz;
+    let dL1 = normalize(sc.dirDir1.xyz);
+    let sh1 = evalShadow(sc.shdSlots.y, recvShd, in.worldPos, N, dL1, in.clipPos.xy);
+    directLight += evalLight(dL1, V, N, base.rgb, specExp, specWeight, cc) * sc.dirCol1.xyz * sh1;
   }
 
   let numPt = sc.flags.z;
@@ -585,7 +745,8 @@ fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) v
     let L = toL / max(dist, 0.0001);
     var spotAtt = clamp((dot(-L, sc.ptSpotDir0.xyz) - sc.ptSpotCone0.y) / max(sc.ptSpotCone0.x - sc.ptSpotCone0.y, 0.0001), 0.0, 1.0);
     spotAtt *= spotAtt;
-    directLight += evalLight(L, V, N, base.rgb, specExp, specWeight, cc) * sc.ptCol0.xyz * spotAtt / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+    let shP0 = evalShadow(sc.shdSlots.z, recvShd, in.worldPos, N, L, in.clipPos.xy);
+    directLight += evalLight(L, V, N, base.rgb, specExp, specWeight, cc) * sc.ptCol0.xyz * spotAtt / (1.0 + 0.09 * dist + 0.032 * dist * dist) * shP0;
   }
   if (numPt > 1u) {
     let toL = sc.ptPos1.xyz - in.worldPos;
@@ -593,7 +754,8 @@ fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) v
     let L = toL / max(dist, 0.0001);
     var spotAtt = clamp((dot(-L, sc.ptSpotDir1.xyz) - sc.ptSpotCone1.y) / max(sc.ptSpotCone1.x - sc.ptSpotCone1.y, 0.0001), 0.0, 1.0);
     spotAtt *= spotAtt;
-    directLight += evalLight(L, V, N, base.rgb, specExp, specWeight, cc) * sc.ptCol1.xyz * spotAtt / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+    let shP1 = evalShadow(sc.shdSlots.w, recvShd, in.worldPos, N, L, in.clipPos.xy);
+    directLight += evalLight(L, V, N, base.rgb, specExp, specWeight, cc) * sc.ptCol1.xyz * spotAtt / (1.0 + 0.09 * dist + 0.032 * dist * dist) * shP1;
   }
 
   let R = reflect(-V, N);
@@ -720,5 +882,82 @@ fn fsPick(in: PickVsOut) -> @location(0) vec4<f32> {
     f32((id >> 16u) & 255u) / 255.0,
     1.0,
   );
+}
+`;
+
+/**
+ * Multi-light shadow depth pass WGSL shader recorded into per-slice
+ * `GPURenderBundle`s (`colorFormats: []`, `depthStencilFormat: 'depth24plus'`).
+ */
+export const SCENE_SHADOW_DEPTH_WGSL = /* wgsl */ `
+struct ShadowSliceUniforms {
+  lightVP: mat4x4<f32>,
+  modelRoot: mat4x4<f32>,
+  biasRay: vec4<f32>,
+  sectionPlane: vec4<f32>,
+  flags: vec4<u32>,
+};
+
+struct PartInstance {
+  model: mat4x4<f32>,
+  baseColor: vec4<f32>,
+  pbr: vec4<f32>,
+  emissive: vec4<f32>,
+  aux: vec2<f32>,
+  flags: u32,
+  pickId: u32,
+};
+
+@group(0) @binding(0) var<uniform> shd: ShadowSliceUniforms;
+@group(0) @binding(1) var<storage, read> parts: array<PartInstance>;
+
+struct ShadowDepthOut {
+  @builtin(position) clipPos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) @interpolate(flat) instIdx: u32,
+};
+
+@vertex
+fn vsShadowDepth(
+  @location(0) aPos: vec3<f32>,
+  @location(1) aNormal: vec3<f32>,
+  @builtin(instance_index) instIdx: u32,
+) -> ShadowDepthOut {
+  let p = parts[instIdx];
+  var out: ShadowDepthOut;
+  if ((p.flags & 128u) != 0u || (p.flags & 1024u) == 0u) {
+    out.clipPos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.worldPos = vec3<f32>(0.0);
+    out.instIdx = instIdx;
+    return out;
+  }
+  var m: mat4x4<f32>;
+  if ((p.flags & 1u) != 0u) {
+    m = p.model;
+  } else {
+    m = shd.modelRoot * p.model;
+  }
+  var wp = m * vec4<f32>(aPos, 1.0);
+  let wn = m[0].xyz * aNormal.x + m[1].xyz * aNormal.y + m[2].xyz * aNormal.z;
+  let nl = length(wn);
+  if (nl > 1e-5 && shd.biasRay.w > 0.0) {
+    let un = wn / nl;
+    wp = vec4<f32>(
+      wp.xyz + un * (shd.biasRay.w * max(1.0 - abs(dot(un, shd.biasRay.xyz)), 0.15)),
+      1.0,
+    );
+  }
+  out.clipPos = shd.lightVP * wp;
+  out.worldPos = wp.xyz;
+  out.instIdx = instIdx;
+  return out;
+}
+
+@fragment
+fn fsShadowDepth(in: ShadowDepthOut) {
+  let p = parts[in.instIdx];
+  if (shd.flags.x != 0u && (p.flags & 64u) == 0u && dot(in.worldPos, shd.sectionPlane.xyz) > shd.sectionPlane.w) {
+    discard;
+  }
 }
 `;

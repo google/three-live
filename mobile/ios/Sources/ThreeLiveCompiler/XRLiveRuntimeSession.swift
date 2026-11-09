@@ -97,6 +97,44 @@ public struct XRMaterialState: Sendable, Equatable {
   public var alphaCutoff: Float
 }
 
+/// Shadow map configuration parsed from `KHR_lights_punctual` `extras.shadow`.
+public struct XRShadowSpec: Sendable, Equatable {
+  public var cast: Bool
+  public var mapSize: Int
+  public var bias: Float
+  public var normalBias: Float
+  public var radius: Float
+
+  public init(
+    cast: Bool = true,
+    mapSize: Int = 1024,
+    bias: Float = -0.0005,
+    normalBias: Float = 0.015,
+    radius: Float = 1.5
+  ) {
+    self.cast = cast
+    self.mapSize = mapSize
+    self.bias = bias
+    self.normalBias = normalBias
+    self.radius = radius
+  }
+}
+
+/// Punctual light parsed from `KHR_lights_punctual` (or `asset.extras.lights`).
+public struct XRPunctualLight: Sendable, Equatable {
+  public var nodeIndex: Int?
+  public var name: String?
+  public var type: String
+  public var color: SIMD3<Float>
+  public var intensity: Float
+  public var position: SIMD3<Float>
+  public var direction: SIMD3<Float>
+  public var range: Float
+  public var innerConeAngle: Float
+  public var outerConeAngle: Float
+  public var shadow: XRShadowSpec?
+}
+
 /// Receives scene changes produced by an `XRLiveRuntimeSession`. All methods have no-op
 /// default implementations. Transform / visibility / material callbacks are batched and
 /// delivered at the end of each `start()`, `dispatchSelect`, `dispatchHover`, `sendEvent`
@@ -218,6 +256,10 @@ public final class XRLiveRuntimeSession {
     var visible = true
     var mesh: Int?
     var traits: XRLiveNodeTraits?
+    var rawCastShadow: Bool?
+    var rawReceiveShadow: Bool?
+    var castShadow = true
+    var receiveShadow = true
   }
 
   struct MaterialData {
@@ -264,6 +306,9 @@ public final class XRLiveRuntimeSession {
 
   /// Currently selected `KHR_materials_variants` variant name, or `nil` for default.
   public private(set) var activeVariantName: String?
+
+  /// Punctual lights declared via `KHR_lights_punctual` (or `asset.extras.lights`).
+  public private(set) var punctualLights: [XRPunctualLight] = []
 
   struct VariantMapping {
     let material: Int
@@ -412,7 +457,12 @@ public final class XRLiveRuntimeSession {
       if let mesh = XRJSON.number(n["mesh"]), let mi = Int(exactly: mesh), mi >= 0 {
         state.mesh = mi
       }
-      state.traits = XRLiveTraitParser.normalize(XRJSON.object(n["extras"])?["xr"])
+      let nodeExtras = XRJSON.object(n["extras"])
+      if let shObj = XRJSON.object(nodeExtras?["shadow"]) {
+        state.rawCastShadow = XRJSON.bool(shObj["cast"])
+        state.rawReceiveShadow = XRJSON.bool(shObj["receive"])
+      }
+      state.traits = XRLiveTraitParser.normalize(nodeExtras?["xr"])
       if state.traits?.lod == nil, XRJSON.object(ext?["MSFT_lod"]) != nil {
         if state.traits == nil { state.traits = XRLiveNodeTraits() }
         state.traits?.lod = XRLiveLod()
@@ -448,6 +498,95 @@ public final class XRLiveRuntimeSession {
     for (_, ch) in lodChildren {
       for (idx, ci) in ch.enumerated() where ci >= 0 && ci < nodes.count {
         nodes[ci].visible = (idx == 0)
+      }
+    }
+
+    let hasExplicitCaster = nodes.contains { $0.rawCastShadow == true }
+    for i in 0..<nodes.count {
+      nodes[i].castShadow = nodes[i].rawCastShadow ?? !hasExplicitCaster
+      nodes[i].receiveShadow = nodes[i].rawReceiveShadow ?? true
+    }
+
+    if let rootExts = XRJSON.object(root["extensions"]),
+      let khrRoot = XRJSON.object(rootExts["KHR_lights_punctual"]),
+      let khrDefs = XRJSON.array(khrRoot["lights"]),
+      !khrDefs.isEmpty
+    {
+      for (i, raw) in rawNodes.enumerated() {
+        guard let n = XRJSON.object(raw),
+          let ext = XRJSON.object(n["extensions"]),
+          let khrNode = XRJSON.object(ext["KHR_lights_punctual"]),
+          let lIdx = XRJSON.number(khrNode["light"]).flatMap({ Int(exactly: $0) }),
+          lIdx >= 0, lIdx < khrDefs.count,
+          let def = XRJSON.object(khrDefs[lIdx])
+        else { continue }
+        let lType = XRJSON.string(def["type"]) ?? "directional"
+        guard lType == "directional" || lType == "spot" || lType == "point" else { continue }
+        let col = Self.doubles(def["color"], defaults: [1, 1, 1])
+        let intensity = Float(max(0, XRJSON.number(def["intensity"]) ?? 1))
+        let range = Float(max(0, XRJSON.number(def["range"]) ?? 0))
+        let spot = XRJSON.object(def["spot"])
+        let outerCone = Float(
+          min(.pi / 2, max(0.01, XRJSON.number(spot?["outerConeAngle"]) ?? (.pi / 3))))
+        let innerCone = Float(
+          min(Double(outerCone), max(0, XRJSON.number(spot?["innerConeAngle"]) ?? 0)))
+        let t = nodes[i].translation
+        let q = simd_quatf(
+          ix: Float(nodes[i].rotation.x), iy: Float(nodes[i].rotation.y),
+          iz: Float(nodes[i].rotation.z), r: Float(nodes[i].rotation.w))
+        let dir = simd_normalize(q.act(SIMD3<Float>(0, 0, -1)))
+        let pos: SIMD3<Float> =
+          lType == "directional"
+            && simd_length_squared(SIMD3<Float>(Float(t.x), Float(t.y), Float(t.z))) < 1e-6
+          ? -dir * 5.0
+          : SIMD3<Float>(Float(t.x), Float(t.y), Float(t.z))
+        let shObj = XRJSON.object(XRJSON.object(def["extras"])?["shadow"])
+        punctualLights.append(
+          XRPunctualLight(
+            nodeIndex: i,
+            name: XRJSON.string(def["name"]) ?? nodes[i].name,
+            type: lType,
+            color: SIMD3<Float>(Float(col[0]), Float(col[1]), Float(col[2])),
+            intensity: intensity,
+            position: pos,
+            direction: lType == "directional" ? -dir : dir,
+            range: range,
+            innerConeAngle: innerCone,
+            outerConeAngle: outerCone,
+            shadow: Self.parseShadowSpec(shObj)
+          ))
+      }
+    }
+    if punctualLights.isEmpty,
+      let assetExtras = XRJSON.object(XRJSON.object(root["asset"])?["extras"]),
+      let rawLights = XRJSON.array(assetExtras["lights"])
+    {
+      for raw in rawLights {
+        guard let l = XRJSON.object(raw),
+          let lType = XRJSON.string(l["type"]),
+          lType == "directional" || lType == "spot" || lType == "point"
+        else { continue }
+        let col = Self.doubles(l["color"], defaults: [1, 1, 1])
+        let pos = Self.doubles(l["position"], defaults: [0, 5, 5])
+        let dir = Self.doubles(l["direction"], defaults: [0, -1, 0])
+        let outerCone = Float(
+          min(.pi / 2, max(0.01, XRJSON.number(l["outerConeAngle"]) ?? (.pi / 3))))
+        let innerCone = Float(
+          min(Double(outerCone), max(0, XRJSON.number(l["innerConeAngle"]) ?? 0)))
+        punctualLights.append(
+          XRPunctualLight(
+            nodeIndex: nil,
+            name: XRJSON.string(l["name"]),
+            type: lType,
+            color: SIMD3<Float>(Float(col[0]), Float(col[1]), Float(col[2])),
+            intensity: Float(max(0, XRJSON.number(l["intensity"]) ?? 1)),
+            position: SIMD3<Float>(Float(pos[0]), Float(pos[1]), Float(pos[2])),
+            direction: SIMD3<Float>(Float(dir[0]), Float(dir[1]), Float(dir[2])),
+            range: Float(max(0, XRJSON.number(l["range"]) ?? 0)),
+            innerConeAngle: innerCone,
+            outerConeAngle: outerCone,
+            shadow: Self.parseShadowSpec(XRJSON.object(l["shadow"]))
+          ))
       }
     }
 
@@ -660,6 +799,43 @@ public final class XRLiveRuntimeSession {
   /// Canonical XR traits of node `index`, if any.
   public func traits(at index: Int) -> XRLiveNodeTraits? {
     index >= 0 && index < nodes.count ? nodes[index].traits : nil
+  }
+
+  /// Effective shadow-casting flag for node `index` (accounts for explicit and auto-caster modes).
+  public func castsShadow(at index: Int) -> Bool {
+    index >= 0 && index < nodes.count ? nodes[index].castShadow : false
+  }
+
+  /// Effective shadow-receiving flag for node `index` (defaults to `true` unless opted out).
+  public func receivesShadow(at index: Int) -> Bool {
+    index >= 0 && index < nodes.count ? nodes[index].receiveShadow : false
+  }
+
+  /// Whether node `index` carries an explicit `extras.shadow` override in the GLB.
+  public func hasExplicitShadow(at index: Int) -> Bool {
+    guard index >= 0, index < nodes.count else { return false }
+    return nodes[index].rawCastShadow != nil || nodes[index].rawReceiveShadow != nil
+  }
+
+  private static func parseShadowSpec(_ shObj: [String: Any]?) -> XRShadowSpec? {
+    guard let shObj = shObj, XRJSON.bool(shObj["cast"]) == true else { return nil }
+    let rawSize = Int(XRJSON.number(shObj["mapSize"] ?? shObj["map_size"]) ?? 1024)
+    let mapSize: Int
+    if rawSize <= 384 {
+      mapSize = 256
+    } else if rawSize <= 768 {
+      mapSize = 512
+    } else if rawSize <= 1536 {
+      mapSize = 1024
+    } else {
+      mapSize = 2048
+    }
+    let bias = Float(min(0.05, max(-0.05, XRJSON.number(shObj["bias"]) ?? -0.0005)))
+    let normalBias = Float(
+      min(0.2, max(0, XRJSON.number(shObj["normalBias"] ?? shObj["normal_bias"]) ?? 0.015)))
+    let radius = Float(min(8, max(0, XRJSON.number(shObj["radius"]) ?? 1.5)))
+    return XRShadowSpec(
+      cast: true, mapSize: mapSize, bias: bias, normalBias: normalBias, radius: radius)
   }
 
   /// Material index per primitive of node `index`'s mesh (`-1` for the default material).

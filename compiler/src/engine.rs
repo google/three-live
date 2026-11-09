@@ -1230,6 +1230,74 @@ impl ThreeEngine {
                                 Some(extract_f32_3(&gnd_val, [0.2, 0.2, 0.2], &mut self.context))
                             };
 
+                            let node_index =
+                                match read_index(&light_obj, "node_index", &mut self.context) {
+                                    IndexField::Some(idx) => Some(idx),
+                                    _ => None,
+                                };
+
+                            let shadow = light_obj
+                                .get(js_string!("shadow"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_object())
+                                .and_then(|sh_obj| {
+                                    let cast = sh_obj
+                                        .get(js_string!("cast"), &mut self.context)
+                                        .ok()
+                                        .and_then(|v| v.as_boolean())
+                                        .unwrap_or(false);
+                                    if !cast {
+                                        return None;
+                                    }
+                                    let map_size = sh_obj
+                                        .get(js_string!("map_size"), &mut self.context)
+                                        .ok()
+                                        .and_then(|v| v.as_number())
+                                        .or_else(|| {
+                                            sh_obj
+                                                .get(js_string!("mapSize"), &mut self.context)
+                                                .ok()
+                                                .and_then(|v| v.as_number())
+                                        })
+                                        .filter(|v| v.is_finite())
+                                        .map(|v| (v.round() as i64).clamp(256, 2048) as u32)
+                                        .unwrap_or(1024);
+                                    let bias = sh_obj
+                                        .get(js_string!("bias"), &mut self.context)
+                                        .ok()
+                                        .and_then(|v| v.as_number())
+                                        .filter(|v| v.is_finite())
+                                        .map(|v| v.clamp(-0.05, 0.05) as f32)
+                                        .unwrap_or(-0.0005);
+                                    let normal_bias = sh_obj
+                                        .get(js_string!("normal_bias"), &mut self.context)
+                                        .ok()
+                                        .and_then(|v| v.as_number())
+                                        .or_else(|| {
+                                            sh_obj
+                                                .get(js_string!("normalBias"), &mut self.context)
+                                                .ok()
+                                                .and_then(|v| v.as_number())
+                                        })
+                                        .filter(|v| v.is_finite())
+                                        .map(|v| v.clamp(0.0, 0.5) as f32)
+                                        .unwrap_or(0.015);
+                                    let radius = sh_obj
+                                        .get(js_string!("radius"), &mut self.context)
+                                        .ok()
+                                        .and_then(|v| v.as_number())
+                                        .filter(|v| v.is_finite())
+                                        .map(|v| v.clamp(0.0, 16.0) as f32)
+                                        .unwrap_or(1.5);
+                                    Some(crate::scene::LightShadowConfig {
+                                        cast: true,
+                                        map_size,
+                                        bias,
+                                        normal_bias,
+                                        radius,
+                                    })
+                                });
+
                             rust_lights.push(Light3D {
                                 light_type,
                                 color,
@@ -1240,6 +1308,8 @@ impl ThreeEngine {
                                 range,
                                 inner_cone_angle,
                                 outer_cone_angle,
+                                node_index,
+                                shadow,
                             });
                         }
                     }
@@ -1433,6 +1503,35 @@ impl ThreeEngine {
                 .and_then(|v| v.as_boolean())
                 .unwrap_or(true);
 
+            let shadow_cast = node_obj
+                .get(js_string!("cast_shadow"), &mut self.context)
+                .ok()
+                .and_then(|v| v.as_boolean())
+                .or_else(|| {
+                    node_obj
+                        .get(js_string!("shadow_cast"), &mut self.context)
+                        .ok()
+                        .and_then(|v| v.as_boolean())
+                });
+            let shadow_receive = node_obj
+                .get(js_string!("receive_shadow"), &mut self.context)
+                .ok()
+                .and_then(|v| v.as_boolean())
+                .or_else(|| {
+                    node_obj
+                        .get(js_string!("shadow_receive"), &mut self.context)
+                        .ok()
+                        .and_then(|v| v.as_boolean())
+                });
+            let shadow = if shadow_cast.is_some() || shadow_receive.is_some() {
+                Some(crate::scene::NodeShadowConfig {
+                    cast: shadow_cast.unwrap_or(false),
+                    receive: shadow_receive.unwrap_or(true),
+                })
+            } else {
+                None
+            };
+
             nodes.push(SceneNode {
                 name,
                 parent,
@@ -1449,6 +1548,7 @@ impl ThreeEngine {
                 interactivity_events,
                 interactivity,
                 visible,
+                shadow,
             });
         }
         Ok(nodes)

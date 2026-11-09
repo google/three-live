@@ -44,6 +44,32 @@ export function mat4Perspective(
   return out;
 }
 
+/**
+ * Computes a column-major 4x4 orthographic projection matrix into `out`.
+ */
+export function mat4Ortho(
+  out: Float32Array,
+  left: number,
+  right: number,
+  bottom: number,
+  top: number,
+  near: number,
+  far: number,
+): Float32Array {
+  const lr = 1 / (left - right);
+  const bt = 1 / (bottom - top);
+  const nf = 1 / (near - far);
+  out.fill(0);
+  out[0] = -2 * lr;
+  out[5] = -2 * bt;
+  out[10] = 2 * nf;
+  out[12] = (left + right) * lr;
+  out[13] = (top + bottom) * bt;
+  out[14] = (far + near) * nf;
+  out[15] = 1;
+  return out;
+}
+
 export function mat4LookAt(
   out: Float32Array,
   eye: [number, number, number],
@@ -245,8 +271,13 @@ export function mat3NormalFromMat4<T extends Float32Array | Float64Array>(
   const b21 = a21 * a10 - a11 * a20;
 
   let det = a00 * b01 + a01 * b11 + a02 * b21;
-  if (!det || (minDeterminant > 0 &&
-      (!Number.isFinite(det) || Math.abs(det) <= minDeterminant))) return out;
+  if (
+    !det ||
+    (minDeterminant > 0 &&
+      (!Number.isFinite(det) || Math.abs(det) <= minDeterminant))
+  ) {
+    return out;
+  }
   det = 1.0 / det;
 
   out[0] = b01 * det;

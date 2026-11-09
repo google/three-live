@@ -122,6 +122,7 @@ export interface ViewOptions {
   exposure?: number;
   shadowIntensity?: number;
   shadowSoftness?: number;
+  shadowMaps?: ShadowMapsMode;
   toneMapping?: ToneMappingMode;
   environmentImage?: string | HTMLImageElement | ImageBitmap | null;
   autoplay?: boolean;
@@ -180,7 +181,17 @@ export {
 // 2. glTF 2.0 Binary (.glb) Parser
 // =========================================================================
 
+/** Shadow map parameters parsed from `KHR_lights_punctual` or `sceneToCanvas3D` lights. */
+export interface LightShadowGpu {
+  cast: boolean;
+  mapSize?: number;
+  bias?: number;
+  normalBias?: number;
+  radius?: number;
+}
+
 export interface LightGpu {
+  name?: string;
   type: 'ambient' | 'directional' | 'point' | 'spot' | 'hemisphere';
   color: [number, number, number];
   groundColor?: [number, number, number];
@@ -190,6 +201,7 @@ export interface LightGpu {
   range?: number;
   innerConeAngle?: number;
   outerConeAngle?: number;
+  shadow?: LightShadowGpu;
 }
 
 export interface GLBData {
@@ -211,6 +223,7 @@ import {
   getSharedRegistry,
   registerPlugin,
   registeredPlugins,
+  type ShadowMapsMode,
   type ThreeLivePlugin,
 } from './plugin';
 export {getRegisteredPlugins, registerPlugin, type ThreeLivePlugin};
@@ -314,6 +327,67 @@ export function parseGLB(input: ArrayBuffer | ArrayBufferView): GLBData {
   return glbData;
 }
 
+/** Extracts `KHR_lights_punctual` lights resolved with node world transforms. */
+export function extractKhrLights(
+  // tslint:disable-next-line:no-any
+  gltf: any,
+  nodeWorldMatrices = resolveNodeWorldMatrices(gltf),
+): LightGpu[] {
+  const rawLights = gltf?.extensions?.KHR_lights_punctual?.lights;
+  if (!Array.isArray(rawLights)) return [];
+  const lights: LightGpu[] = [];
+  const seen = new Set<number>();
+  const pushKhr = (
+    // tslint:disable-next-line:no-any
+    rl: any,
+    wm?: Float32Array,
+    nShadow?: LightShadowGpu,
+    nName?: string,
+  ) => {
+    const t = rl.type;
+    const type =
+      t === 'directional' || t === 'point' || t === 'spot' ? t : 'ambient';
+    const zx = wm ? wm[8] : -0.5;
+    const zy = wm ? wm[9] : -1;
+    const zz = wm ? wm[10] : -0.8;
+    const zl = Math.hypot(zx, zy, zz) || 1;
+    const shadow = rl.extras?.shadow ?? nShadow;
+    const name = rl.name || nName;
+    const out: LightGpu = {
+      type,
+      color: rl.color || [1, 1, 1],
+      intensity: rl.intensity ?? 1,
+    };
+    if (name) out.name = name;
+    if (wm) out.position = [wm[12], wm[13], wm[14]];
+    if (type === 'directional' && wm) {
+      out.direction = [zx / zl, zy / zl, zz / zl];
+    } else if (type === 'spot') {
+      out.direction = wm ? [-zx / zl, -zy / zl, -zz / zl] : [0, -1, 0];
+      out.innerConeAngle = rl.spot?.innerConeAngle ?? 0;
+      out.outerConeAngle = rl.spot?.outerConeAngle ?? Math.PI / 4;
+      out.range = rl.range;
+    } else {
+      out.range = rl.range;
+    }
+    if (shadow) out.shadow = shadow;
+    lights.push(out);
+  };
+  // tslint:disable-next-line:no-any
+  (gltf.nodes || []).forEach((nd: any, ni: number) => {
+    const li = nd?.extensions?.KHR_lights_punctual?.light;
+    if (typeof li === 'number' && rawLights[li]) {
+      seen.add(li);
+      pushKhr(rawLights[li], nodeWorldMatrices[ni], nd.extras?.shadow, nd.name);
+    }
+  });
+  // tslint:disable-next-line:no-any
+  rawLights.forEach((rl: any, li: number) => {
+    if (!seen.has(li)) pushKhr(rl);
+  });
+  return lights;
+}
+
 export function readFloat32Array(
   bin: ArrayBuffer,
   byteOffset: number,
@@ -414,7 +488,7 @@ uniform mat3 uHemi;
 uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap,uEmissiveTexture;
 uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap,uHasEmissiveTexture;
 uniform float uNormalScale,uOcclusionStrength;
-/*XRD_U*/
+/*XRD_U*//*SHD_U*/
 uniform vec2 uViewportSize;
 uniform vec4 uSectionPlane;
 uniform int uToneMapping,uNumDirLights,uNumPointLights,uSectionEnabled;
@@ -515,7 +589,7 @@ float specWeight=mix(0.22*gloss,1.0,metallic);
 vec3 directLight=vec3(0.0);
 for(int i=0;i<2;i++){
 if(i>=uNumDirLights)break;
-directLight+=evalLight(normalize(uDirLightDir[i]),V,N,base.rgb,specExp,specWeight)*uDirLightColor[i];
+directLight+=evalLight(normalize(uDirLightDir[i]),V,N,base.rgb,specExp,specWeight)*uDirLightColor[i]/*SHD_D*/;
 }
 for(int i=0;i<2;i++){
 if(i>=uNumPointLights)break;
@@ -524,7 +598,7 @@ float dist=length(toLight);
 vec3 L=toLight/max(dist,0.0001);
 float spotAtt=clamp((dot(-L,uPointLightSpotDir[i])-uPointLightSpotCone[i].y)/max(uPointLightSpotCone[i].x-uPointLightSpotCone[i].y,0.0001),0.0,1.0);
 spotAtt*=spotAtt;
-directLight+=evalLight(L,V,N,base.rgb,specExp,specWeight)*uPointLightColor[i]*spotAtt/(1.0+0.09*dist+0.032*dist*dist);
+directLight+=evalLight(L,V,N,base.rgb,specExp,specWeight)*uPointLightColor[i]*spotAtt/(1.0+0.09*dist+0.032*dist*dist)/*SHD_P*/;
 }
 
 vec3 R=reflect(-V,N);
@@ -652,51 +726,10 @@ function getUniforms<T extends string>(
   return res;
 }
 
-const RENDER_UNIFORMS = [
-  'uMVP',
-  'uModel',
-  'uInstanced',
-  'uViewProj',
-  'uNormalMatrix',
-  'uUvTransform',
-  'uBaseColor',
-  'uMetallic',
-  'uRoughness',
-  'uClearcoat',
-  'uEmissive',
-  'uCameraPos',
-  'uBaseColorTexture',
-  'uHasTexture',
-  'uMetallicRoughnessTexture',
-  'uHasMetallicRoughnessTexture',
-  'uNormalTexture',
-  'uHasNormalTexture',
-  'uNormalScale',
-  'uOcclusionTexture',
-  'uHasOcclusionTexture',
-  'uOcclusionStrength',
-  'uEmissiveFactor',
-  'uEmissiveTexture',
-  'uHasEmissiveTexture',
-  'uToneMapping',
-  'uEnvironmentMap',
-  'uHasEnvironmentMap',
-  'uAmbientColor',
-  'uHemi',
-  'uNumDirLights',
-  'uDirLightDir',
-  'uDirLightColor',
-  'uNumPointLights',
-  'uPointLightPos',
-  'uPointLightColor',
-  'uPointLightSpotDir',
-  'uPointLightSpotCone',
-  'uEnvIntensity',
-  'uExposure',
-  'uViewportSize',
-  'uSectionPlane',
-  'uSectionEnabled',
-] as const;
+const RENDER_UNIFORMS =
+  'uMVP uModel uInstanced uViewProj uNormalMatrix uUvTransform uBaseColor uMetallic uRoughness uClearcoat uEmissive uCameraPos uBaseColorTexture uHasTexture uMetallicRoughnessTexture uHasMetallicRoughnessTexture uNormalTexture uHasNormalTexture uNormalScale uOcclusionTexture uHasOcclusionTexture uOcclusionStrength uEmissiveFactor uEmissiveTexture uHasEmissiveTexture uToneMapping uEnvironmentMap uHasEnvironmentMap uAmbientColor uHemi uNumDirLights uDirLightDir uDirLightColor uNumPointLights uPointLightPos uPointLightColor uPointLightSpotDir uPointLightSpotCone uEnvIntensity uExposure uViewportSize uSectionPlane uSectionEnabled'.split(
+    ' ',
+  );
 
 /**
  * Returns the render fragment shader and its uniform names, with WebXR depth
@@ -705,13 +738,20 @@ const RENDER_UNIFORMS = [
  * depth GLSL or binding code.
  */
 function renderShaderSpec(): {fs: string; uniforms: readonly string[]} {
-  const x = getSharedRegistry().xrDepthShader;
+  const r = getSharedRegistry();
+  const x = r.xrDepthShader;
+  const s = r.shadowMapShader;
   return {
-    fs: FS_RENDER.replace('/*XRD_U*/', x?.uniformsGLSL || '').replace(
-      '/*XRD_O*/',
-      x?.occlusionGLSL || '',
-    ),
-    uniforms: x ? [...RENDER_UNIFORMS, ...x.uniformNames] : RENDER_UNIFORMS,
+    fs: FS_RENDER.replace('/*XRD_U*/', x?.uniformsGLSL || '')
+      .replace('/*XRD_O*/', x?.occlusionGLSL || '')
+      .replace('/*SHD_U*/', s?.uniformsGLSL || '')
+      .replace('/*SHD_D*/', s?.dirGLSL || '')
+      .replace('/*SHD_P*/', s?.ptGLSL || ''),
+    uniforms: [
+      ...RENDER_UNIFORMS,
+      ...(x?.uniformNames || []),
+      ...(s?.uniformNames || []),
+    ],
   };
 }
 
@@ -764,6 +804,8 @@ interface MeshGpu {
   instanceMatrices?: Float32Array;
   instanceColors?: Float32Array;
   visible?: boolean;
+  castShadow?: boolean;
+  receiveShadow?: boolean;
 }
 
 /**
@@ -1064,11 +1106,15 @@ function deleteMeshListGl(
           gl.deleteBuffer(buf);
         }
       }
-      deleteTex(prim.texture);
-      deleteTex(prim.metallicRoughnessTexture);
-      deleteTex(prim.normalTexture);
-      deleteTex(prim.occlusionTexture);
-      deleteTex(prim.emissiveTexture);
+      for (const t of [
+        prim.texture,
+        prim.metallicRoughnessTexture,
+        prim.normalTexture,
+        prim.occlusionTexture,
+        prim.emissiveTexture,
+      ]) {
+        deleteTex(t);
+      }
       const programs = new Set<WebGLProgram>();
       if (prim.customProgram) programs.add(prim.customProgram);
       for (const entry of prim.programCache?.values() ?? []) {
@@ -1206,22 +1252,7 @@ function buildGpuSceneUnchecked(
       });
     }
   } else if (gltf.extensions?.KHR_lights_punctual?.lights) {
-    const rawLights = gltf.extensions.KHR_lights_punctual.lights;
-    for (const rl of rawLights) {
-      const type =
-        rl.type === 'directional'
-          ? 'directional'
-          : rl.type === 'point'
-            ? 'point'
-            : rl.type === 'spot'
-              ? 'spot'
-              : 'ambient';
-      lights.push({
-        type,
-        color: rl.color || [1, 1, 1],
-        intensity: rl.intensity !== undefined ? rl.intensity : 1.0,
-      });
-    }
+    lights.push(...extractKhrLights(gltf, nodeWorldMatrices));
   }
 
   // Default illumination if no lights specified
@@ -1326,8 +1357,8 @@ function buildGpuSceneUnchecked(
     }
   }
 
-  let min = [Infinity, Infinity, Infinity];
-  let max = [-Infinity, -Infinity, -Infinity];
+  let min: [number, number, number] = [Infinity, Infinity, Infinity];
+  let max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   let totalHostVertices = 0;
   let totalHostIndices = 0;
 
@@ -1338,6 +1369,7 @@ function buildGpuSceneUnchecked(
       item.nodeIdx >= 0 ? nodeWorldMatrices[item.nodeIdx] : mat4Create();
     const normMat = new Float32Array(9);
     mat3NormalFromMat4(normMat, trans);
+    const sh = item.node?.extras?.shadow;
     const meshGpu: MeshGpu = {
       name: item.node.name || m.name || `Mesh_${item.meshIdx}`,
       nodeIndex: item.nodeIdx,
@@ -1349,6 +1381,8 @@ function buildGpuSceneUnchecked(
       item.node?.extensions?.KHR_node_visibility?.visible === false
         ? {visible: false}
         : {}),
+      ...(typeof sh?.cast === 'boolean' ? {castShadow: sh.cast} : {}),
+      ...(typeof sh?.receive === 'boolean' ? {receiveShadow: sh.receive} : {}),
     };
     track.mesh = meshGpu;
 
@@ -1449,21 +1483,16 @@ function buildGpuSceneUnchecked(
         const instMatrices = new Float32Array(rawInstCount * 16);
         const tmpMat = mat4Create();
         for (let inst = 0; inst < rawInstCount; inst++) {
-          const t: [number, number, number] = tData
-            ? [tData[inst * 3], tData[inst * 3 + 1], tData[inst * 3 + 2]]
-            : [0, 0, 0];
-          const r: [number, number, number, number] = rData
-            ? [
-                rData[inst * 4],
-                rData[inst * 4 + 1],
-                rData[inst * 4 + 2],
-                rData[inst * 4 + 3],
-              ]
-            : [0, 0, 0, 1];
-          const s: [number, number, number] = sData
-            ? [sData[inst * 3], sData[inst * 3 + 1], sData[inst * 3 + 2]]
-            : [1, 1, 1];
-          mat4FromRotationTranslationScale(tmpMat, r, t, s);
+          const i3 = inst * 3;
+          const i4 = inst * 4;
+          mat4FromRotationTranslationScale(
+            tmpMat,
+            rData
+              ? [rData[i4], rData[i4 + 1], rData[i4 + 2], rData[i4 + 3]]
+              : [0, 0, 0, 1],
+            tData ? [tData[i3], tData[i3 + 1], tData[i3 + 2]] : [0, 0, 0],
+            sData ? [sData[i3], sData[i3 + 1], sData[i3 + 2]] : [1, 1, 1],
+          );
           instMatrices.set(tmpMat, inst * 16);
         }
         meshGpu.instanceMatrices = instMatrices;
@@ -1507,33 +1536,33 @@ function buildGpuSceneUnchecked(
       }
       totalHostVertices += primVertCount;
       if (posAcc?.min && posAcc?.max) {
-        const expandBounds = (mat: Float32Array) => {
+        const expand = (m: Float32Array) => {
           for (let c = 0; c < 3; c++) {
-            let wMin = mat[12 + c];
-            let wMax = mat[12 + c];
+            let lo = m[12 + c];
+            let hi = lo;
             for (let j = 0; j < 3; j++) {
-              const a = mat[j * 4 + c] * posAcc.min[j];
-              const b = mat[j * 4 + c] * posAcc.max[j];
-              wMin += a < b ? a : b;
-              wMax += a > b ? a : b;
+              const a = m[j * 4 + c] * posAcc.min[j];
+              const b = m[j * 4 + c] * posAcc.max[j];
+              lo += a < b ? a : b;
+              hi += a > b ? a : b;
             }
-            if (wMin < min[c]) min[c] = wMin;
-            if (wMax > max[c]) max[c] = wMax;
+            if (lo < min[c]) min[c] = lo;
+            if (hi > max[c]) max[c] = hi;
           }
         };
         if (meshGpu.instanceMatrices && meshGpu.instanceMatrices.length >= 16) {
           const instCount = meshGpu.instanceMatrices.length >> 4;
           const instWorld = mat4Create();
           for (let inst = 0; inst < instCount; inst++) {
-            const instMat = meshGpu.instanceMatrices.subarray(
-              inst * 16,
-              inst * 16 + 16,
+            mat4Multiply(
+              instWorld,
+              trans,
+              meshGpu.instanceMatrices.subarray(inst * 16, inst * 16 + 16),
             );
-            mat4Multiply(instWorld, trans, instMat);
-            expandBounds(instWorld);
+            expand(instWorld);
           }
         } else {
-          expandBounds(trans);
+          expand(trans);
         }
       }
       const posData = bindBufferAttribute(
@@ -1694,12 +1723,12 @@ function buildGpuSceneUnchecked(
     (min[1] + max[1]) / 2,
     (min[2] + max[2]) / 2,
   ];
-  const dx = max[0] - min[0];
-  const dy = max[1] - min[1];
-  const dz = max[2] - min[2];
-  const radius = Math.max(Math.hypot(dx, dy, dz) / 2, 0.5);
-  const minCoord: [number, number, number] = [min[0], min[1], min[2]];
-  const maxCoord: [number, number, number] = [max[0], max[1], max[2]];
+  const radius = Math.max(
+    Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2,
+    0.5,
+  );
+  const minCoord: [number, number, number] = [...min];
+  const maxCoord: [number, number, number] = [...max];
   let animations = data.animations;
   if (data.animationsParsed === false || !animations) {
     for (const plugin of registeredPlugins) {
@@ -1773,6 +1802,7 @@ export class ThreeView {
   private exposure = 1.0;
   public shadowIntensity = 0.0;
   public shadowSoftness = 0.5;
+  shadowMaps?: ShadowMapsMode;
   private toneMapping: ToneMappingMode = 'neutral';
   public environmentTexture: WebGLTexture | null = null;
   environmentSource: string | HTMLImageElement | ImageBitmap | null = null;
@@ -1944,6 +1974,9 @@ export class ThreeView {
     if (o.shadowIntensity !== undefined || o.shadowSoftness !== undefined) {
       this.setShadow(o.shadowIntensity ?? 0, o.shadowSoftness);
     }
+    if (o.shadowMaps !== undefined) {
+      this.shadowMaps = o.shadowMaps;
+    }
     if (o.toneMapping !== undefined) {
       this.toneMapping = normalizeToneMapping(o.toneMapping);
     }
@@ -2032,6 +2065,29 @@ export class ThreeView {
     this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
     this.uPick = getUniforms(gl, this.pickProg, ['uMVP', 'uColorId']);
     this.setupPickingFbo();
+  }
+
+  /** Recompiles render shaders when a shader-chunk plugin registers late. */
+  recompileRenderProgram(): void {
+    if (this.contextLost) return;
+    const gl = this.gl;
+    const spec = renderShaderSpec();
+    if (this.renderProg) gl.deleteProgram(this.renderProg);
+    this.renderProg = createProgram(gl, VS_RENDER, spec.fs)!;
+    this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
+    for (const m of this.meshes) {
+      for (const p of m.primitives) {
+        if (p.customProgram) {
+          gl.deleteProgram(p.customProgram);
+          p.programCache?.clear();
+          this.applyPrimitiveProgram(
+            p,
+            p.materialIndex,
+            this.gltf?.materials?.[p.materialIndex ?? -1] ?? null,
+          );
+        }
+      }
+    }
   }
 
   /** Re-creates GPU state after `webglcontextrestored` (public for tests). */
@@ -2150,20 +2206,21 @@ export class ThreeView {
       this.activeVariantName = null;
     }
 
-    this.initialNodeTransforms = [];
-    if (Array.isArray(glbData.gltf?.nodes)) {
-      for (const n of glbData.gltf.nodes) {
-        this.initialNodeTransforms.push({
-          t: n.translation
-            ? [n.translation[0], n.translation[1], n.translation[2]]
-            : [0, 0, 0],
-          r: n.rotation
-            ? [n.rotation[0], n.rotation[1], n.rotation[2], n.rotation[3]]
-            : [0, 0, 0, 1],
-          s: n.scale ? [n.scale[0], n.scale[1], n.scale[2]] : [1, 1, 1],
-        });
-      }
-    }
+    // tslint:disable-next-line:no-any
+    this.initialNodeTransforms = (glbData.gltf?.nodes || []).map((n: any) => ({
+      t: [
+        n.translation?.[0] ?? 0,
+        n.translation?.[1] ?? 0,
+        n.translation?.[2] ?? 0,
+      ],
+      r: [
+        n.rotation?.[0] ?? 0,
+        n.rotation?.[1] ?? 0,
+        n.rotation?.[2] ?? 0,
+        n.rotation?.[3] ?? 1,
+      ],
+      s: [n.scale?.[0] ?? 1, n.scale?.[1] ?? 1, n.scale?.[2] ?? 1],
+    }));
 
     if (this.autoplay && this.animations.length > 0) {
       this.playAnimation(this.animationName || undefined);
@@ -2301,18 +2358,20 @@ export class ThreeView {
   ): void {
     for (let i = 0; i < this.meshes.length; i++) {
       const m = this.meshes[i];
-      let t: Float32Array | number[] | undefined;
-      if (transforms instanceof Map) {
-        t = transforms.get(m.name) ?? transforms.get(i);
-      } else if (Array.isArray(transforms)) {
-        t = transforms[i];
-      } else if (transforms && typeof transforms === 'object') {
-        if (Object.prototype.hasOwnProperty.call(transforms, m.name)) {
-          t = (transforms as Record<string, Float32Array | number[]>)[m.name];
-        } else if (Object.prototype.hasOwnProperty.call(transforms, i)) {
-          t = (transforms as Record<number, Float32Array | number[]>)[i];
-        }
-      }
+      const t =
+        transforms instanceof Map
+          ? (transforms.get(m.name) ?? transforms.get(i))
+          : Array.isArray(transforms)
+            ? transforms[i]
+            : transforms && typeof transforms === 'object'
+              ? Object.prototype.hasOwnProperty.call(transforms, m.name)
+                ? (transforms as Record<string, Float32Array | number[]>)[
+                    m.name
+                  ]
+                : Object.prototype.hasOwnProperty.call(transforms, i)
+                  ? (transforms as Record<number, Float32Array | number[]>)[i]
+                  : undefined
+              : undefined;
       if (t && t.length === 16) {
         m.transform.set(t);
         mat3NormalFromMat4(m.normalMatrix, m.transform);
@@ -2558,17 +2617,16 @@ export class ThreeView {
         ? firstPrim.roughness
         : (gMat.pbrMetallicRoughness?.roughnessFactor ?? 0.5);
 
-      const setScalar = (
-        prop: 'metallicFactor' | 'roughnessFactor',
-        primProp: 'metallic' | 'roughness',
-        val: number,
-      ) => {
-        pbrProxy[prop] = val;
+      // tslint:disable-next-line:no-any
+      const setField = (prop: string, primProp: string, val: any) => {
+        // tslint:disable-next-line:no-any
+        (pbrProxy as any)[prop] = val;
         if (gMat.pbrMetallicRoughness) {
           gMat.pbrMetallicRoughness[prop] = val;
         }
         for (const p of matchingPrims) {
-          p[primProp] = val;
+          // tslint:disable-next-line:no-any
+          (p as any)[primProp] = val;
         }
         this.render();
       };
@@ -2576,26 +2634,17 @@ export class ThreeView {
         baseColorFactor,
         metallicFactor,
         roughnessFactor,
-        setBaseColorFactor: (rgba: [number, number, number, number]) => {
-          const next: [number, number, number, number] = [
+        setBaseColorFactor: (rgba: [number, number, number, number]) =>
+          setField('baseColorFactor', 'baseColor', [
             rgba[0],
             rgba[1],
             rgba[2],
             rgba[3] ?? 1.0,
-          ];
-          pbrProxy.baseColorFactor = next;
-          if (gMat.pbrMetallicRoughness) {
-            gMat.pbrMetallicRoughness.baseColorFactor = next;
-          }
-          for (const p of matchingPrims) {
-            p.baseColor = next;
-          }
-          this.render();
-        },
+          ]),
         setMetallicFactor: (val: number) =>
-          setScalar('metallicFactor', 'metallic', val),
+          setField('metallicFactor', 'metallic', val),
         setRoughnessFactor: (val: number) =>
-          setScalar('roughnessFactor', 'roughness', val),
+          setField('roughnessFactor', 'roughness', val),
       };
 
       return {
@@ -2779,17 +2828,15 @@ export class ThreeView {
   }
 
   public setOrbitLimits(limits: OrbitLimits): void {
-    if (limits.minTheta !== undefined) {
-      this.minTheta = (limits.minTheta * Math.PI) / 180;
-    }
-    if (limits.maxTheta !== undefined) {
-      this.maxTheta = (limits.maxTheta * Math.PI) / 180;
-    }
+    const r = Math.PI / 180;
+    const p = Math.PI * 0.48;
+    if (limits.minTheta !== undefined) this.minTheta = limits.minTheta * r;
+    if (limits.maxTheta !== undefined) this.maxTheta = limits.maxTheta * r;
     if (limits.minPhi !== undefined) {
-      this.minPhi = Math.max(-Math.PI * 0.48, (limits.minPhi * Math.PI) / 180);
+      this.minPhi = Math.max(-p, limits.minPhi * r);
     }
     if (limits.maxPhi !== undefined) {
-      this.maxPhi = Math.min(Math.PI * 0.48, (limits.maxPhi * Math.PI) / 180);
+      this.maxPhi = Math.min(p, limits.maxPhi * r);
     }
     if (limits.minDistance !== undefined) {
       this.minDistanceLimit = limits.minDistance;
@@ -2803,19 +2850,14 @@ export class ThreeView {
   }
 
   public getOrbitLimits(): OrbitLimits {
+    const d = 180 / Math.PI;
     return {
-      minTheta: isFinite(this.minTheta)
-        ? (this.minTheta * 180) / Math.PI
-        : undefined,
-      maxTheta: isFinite(this.maxTheta)
-        ? (this.maxTheta * 180) / Math.PI
-        : undefined,
-      minPhi: (this.minPhi * 180) / Math.PI,
-      maxPhi: (this.maxPhi * 180) / Math.PI,
-      minDistance:
-        this.minDistanceLimit !== null ? this.minDistanceLimit : undefined,
-      maxDistance:
-        this.maxDistanceLimit !== null ? this.maxDistanceLimit : undefined,
+      minTheta: isFinite(this.minTheta) ? this.minTheta * d : undefined,
+      maxTheta: isFinite(this.maxTheta) ? this.maxTheta * d : undefined,
+      minPhi: this.minPhi * d,
+      maxPhi: this.maxPhi * d,
+      minDistance: this.minDistanceLimit ?? undefined,
+      maxDistance: this.maxDistanceLimit ?? undefined,
     };
   }
 
@@ -2828,19 +2870,11 @@ export class ThreeView {
   }
 
   private clampDistance(distance: number): number {
-    const minDist =
-      this.minDistanceLimit !== null
-        ? this.minDistanceLimit
-        : this.bounds
-          ? this.bounds.radius * 0.5
-          : 0.1;
-    const maxDist =
-      this.maxDistanceLimit !== null
-        ? this.maxDistanceLimit
-        : this.bounds
-          ? this.bounds.radius * 8.0
-          : 100;
-    return Math.max(minDist, Math.min(maxDist, distance));
+    const r = this.bounds?.radius;
+    return Math.max(
+      this.minDistanceLimit ?? (r ? r * 0.5 : 0.1),
+      Math.min(this.maxDistanceLimit ?? (r ? r * 8.0 : 100), distance),
+    );
   }
 
   public setCamera(
@@ -2894,11 +2928,8 @@ export class ThreeView {
       this.targetDistance =
       this.currDistance =
         this.clampDistance(
-          distArg !== null
-            ? distArg
-            : this.distanceMode === 'absolute'
-              ? 3.0
-              : this.bounds.radius * 2.5,
+          distArg ??
+            (this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5),
         );
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
@@ -2909,16 +2940,12 @@ export class ThreeView {
   public resetCamera(): void {
     this.targetTheta = this.clampTheta(this.initialTheta);
     this.targetPhi = this.clampPhi(this.initialPhi);
-    if (this.initialDistance !== null) {
-      this.targetDistance = this.clampDistance(this.initialDistance);
-    } else {
-      this.targetDistance = this.clampDistance(this.bounds.radius * 2.5);
-    }
-    if (this.initialCustomTarget) {
-      this.customTarget = [...this.initialCustomTarget];
-    } else {
-      this.customTarget = null;
-    }
+    this.targetDistance = this.clampDistance(
+      this.initialDistance ?? this.bounds.radius * 2.5,
+    );
+    this.customTarget = this.initialCustomTarget
+      ? [...this.initialCustomTarget]
+      : null;
     this.turntableRotation = 0;
     this.updateTurntableMatrix();
   }
@@ -2929,38 +2956,24 @@ export class ThreeView {
   ): {x: number; y: number; z: number; visible: boolean} {
     const vp = mat4Create();
     mat4Multiply(vp, this.projMatrix, this.viewMatrix);
-
-    let [wx, wy, wz] = worldPos;
-    let nx = normal ? normal[0] : 0;
-    let ny = normal ? normal[1] : 0;
-    let nz = normal ? normal[2] : 0;
+    const xform = (
+      m: Float32Array,
+      v: [number, number, number],
+      w = 1,
+    ): [number, number, number, number] => [
+      m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12] * w,
+      m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13] * w,
+      m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14] * w,
+      m[3] * v[0] + m[7] * v[1] + m[11] * v[2] + m[15] * w,
+    ];
     const rm = this.modelRootMatrix;
-    if (rm) {
-      wx =
-        rm[0] * worldPos[0] +
-        rm[4] * worldPos[1] +
-        rm[8] * worldPos[2] +
-        rm[12];
-      wy =
-        rm[1] * worldPos[0] +
-        rm[5] * worldPos[1] +
-        rm[9] * worldPos[2] +
-        rm[13];
-      wz =
-        rm[2] * worldPos[0] +
-        rm[6] * worldPos[1] +
-        rm[10] * worldPos[2] +
-        rm[14];
-      if (normal) {
-        nx = rm[0] * normal[0] + rm[4] * normal[1] + rm[8] * normal[2];
-        ny = rm[1] * normal[0] + rm[5] * normal[1] + rm[9] * normal[2];
-        nz = rm[2] * normal[0] + rm[6] * normal[1] + rm[10] * normal[2];
-      }
-    }
-    const clipX = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
-    const clipY = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
-    const clipZ = vp[2] * wx + vp[6] * wy + vp[10] * wz + vp[14];
-    const clipW = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
+    const [wx, wy, wz] = rm ? xform(rm, worldPos) : worldPos;
+    const [nx, ny, nz] = normal
+      ? rm
+        ? xform(rm, normal, 0)
+        : normal
+      : [0, 0, 0];
+    const [clipX, clipY, clipZ, clipW] = xform(vp, [wx, wy, wz]);
 
     if (clipW <= 0.0001) {
       return {x: 0, y: 0, z: 1, visible: false};
@@ -3366,44 +3379,40 @@ export class ThreeView {
           normal: [0, 1, 0],
         };
 
-        const runRaycastPass = (eps: number) => {
-          for (const prim of hitMesh.primitives) {
-            if (!prim.positions) continue;
-            const pos = prim.positions;
-            const idx = prim.indices;
-            const numTriangles = idx
-              ? Math.floor(idx.length / 3)
-              : Math.floor(pos.length / 9);
+        for (const prim of hitMesh.primitives) {
+          if (!prim.positions) continue;
+          const pos = prim.positions;
+          const idx = prim.indices;
+          const numTriangles = idx
+            ? Math.floor(idx.length / 3)
+            : Math.floor(pos.length / 9);
 
-            for (let t = 0; t < numTriangles; t++) {
-              const i0 = idx ? idx[t * 3] : t * 3;
-              const i1 = idx ? idx[t * 3 + 1] : t * 3 + 1;
-              const i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
+          for (let t = 0; t < numTriangles; t++) {
+            const i0 = (idx ? idx[t * 3] : t * 3) * 3;
+            const i1 = (idx ? idx[t * 3 + 1] : t * 3 + 1) * 3;
+            const i2 = (idx ? idx[t * 3 + 2] : t * 3 + 2) * 3;
 
-              rayIntersectsTriangle(
-                nearP[0],
-                nearP[1],
-                nearP[2],
-                dirX,
-                dirY,
-                dirZ,
-                pos[i0 * 3],
-                pos[i0 * 3 + 1],
-                pos[i0 * 3 + 2],
-                pos[i1 * 3],
-                pos[i1 * 3 + 1],
-                pos[i1 * 3 + 2],
-                pos[i2 * 3],
-                pos[i2 * 3 + 1],
-                pos[i2 * 3 + 2],
-                outHit,
-                eps,
-              );
-            }
+            rayIntersectsTriangle(
+              nearP[0],
+              nearP[1],
+              nearP[2],
+              dirX,
+              dirY,
+              dirZ,
+              pos[i0],
+              pos[i0 + 1],
+              pos[i0 + 2],
+              pos[i1],
+              pos[i1 + 1],
+              pos[i1 + 2],
+              pos[i2],
+              pos[i2 + 1],
+              pos[i2 + 2],
+              outHit,
+              1e-4,
+            );
           }
-        };
-
-        runRaycastPass(1e-4);
+        }
 
         if (isFinite(outHit.distance)) {
           const lx = outHit.point[0],
@@ -3656,25 +3665,25 @@ export class ThreeView {
   private updateTurntableMatrix(): void {
     const cosA = Math.cos(this.turntableRotation);
     const sinA = Math.sin(this.turntableRotation);
-    const cx = this.bounds.center[0];
-    const cz = this.bounds.center[2];
-    const m = this.modelRootMatrix;
-    m[0] = cosA;
-    m[1] = 0;
-    m[2] = -sinA;
-    m[3] = 0;
-    m[4] = 0;
-    m[5] = 1;
-    m[6] = 0;
-    m[7] = 0;
-    m[8] = sinA;
-    m[9] = 0;
-    m[10] = cosA;
-    m[11] = 0;
-    m[12] = cx - (cosA * cx + sinA * cz);
-    m[13] = 0;
-    m[14] = cz - (-sinA * cx + cosA * cz);
-    m[15] = 1;
+    const [cx, , cz] = this.bounds.center;
+    this.modelRootMatrix.set([
+      cosA,
+      0,
+      -sinA,
+      0,
+      0,
+      1,
+      0,
+      0,
+      sinA,
+      0,
+      cosA,
+      0,
+      cx - (cosA * cx + sinA * cz),
+      0,
+      cz - (-sinA * cx + cosA * cz),
+      1,
+    ]);
   }
 
   public setVisible(visible: boolean): void {
@@ -3874,31 +3883,17 @@ export class ThreeView {
     }
 
     const gl = this.gl;
-    let vpX = 0;
-    let vpY = 0;
-    let vpW = this.canvas.width;
-    let vpH = this.canvas.height;
-    if (xrOverride?.viewport) {
-      vpX = xrOverride.viewport[0];
-      vpY = xrOverride.viewport[1];
-      vpW = xrOverride.viewport[2];
-      vpH = xrOverride.viewport[3];
-      gl.viewport(vpX, vpY, vpW, vpH);
-    } else {
-      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    }
+    const [vpX, vpY, vpW, vpH] = xrOverride?.viewport || [
+      0,
+      0,
+      this.canvas.width,
+      this.canvas.height,
+    ];
+    gl.viewport(vpX, vpY, vpW, vpH);
     gl.enable(gl.DEPTH_TEST);
     if (!xrOverride || xrOverride.clear !== false) {
-      if (xrOverride?.isAR) {
-        gl.clearColor(0, 0, 0, 0);
-      } else {
-        gl.clearColor(
-          this.clearColor[0],
-          this.clearColor[1],
-          this.clearColor[2],
-          this.clearColor[3],
-        );
-      }
+      const cc = xrOverride?.isAR ? [0, 0, 0, 0] : this.clearColor;
+      gl.clearColor(cc[0], cc[1], cc[2], cc[3]);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     }
 
@@ -3970,6 +3965,21 @@ export class ThreeView {
     let hasTransmissive = false;
     const renderList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
+    const bindTex2D = (
+      slot: number,
+      tex: WebGLTexture | null,
+      uSampler: WebGLUniformLocation | null,
+      uHas: WebGLUniformLocation | null,
+    ) => {
+      if (tex) {
+        gl.activeTexture(gl.TEXTURE0 + slot);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.uniform1i(uSampler, slot);
+        gl.uniform1i(uHas, 1);
+      } else {
+        gl.uniform1i(uHas, 0);
+      }
+    };
     const drawPass = (transmissivePass: boolean) => {
       for (let i = 0; i < renderList.length; i++) {
         const mesh = renderList[i];
@@ -4075,22 +4085,7 @@ export class ThreeView {
             Math.max(1, vpW),
             Math.max(1, vpH),
           ]);
-
-          const bindTex2D = (
-            slot: number,
-            tex: WebGLTexture | null,
-            uSampler: WebGLUniformLocation | null,
-            uHas: WebGLUniformLocation | null,
-          ) => {
-            if (tex) {
-              gl.activeTexture(gl.TEXTURE0 + slot);
-              gl.bindTexture(gl.TEXTURE_2D, tex);
-              gl.uniform1i(uSampler, slot);
-              gl.uniform1i(uHas, 1);
-            } else {
-              gl.uniform1i(uHas, 0);
-            }
-          };
+          reg.shadowMapShader?.bind(gl, u, this, mesh);
 
           bindTex2D(
             4,
@@ -4200,12 +4195,6 @@ export class ThreeView {
             const instColors = mesh.instanceColors;
             const instModel = mat4Create();
             const instNormal = new Float32Array(9);
-            const tintedColor: [number, number, number, number] = [
-              prim.baseColor[0],
-              prim.baseColor[1],
-              prim.baseColor[2],
-              prim.baseColor[3],
-            ];
             for (let inst = 0; inst < instCount; inst++) {
               mat4Multiply(
                 instModel,
@@ -4218,11 +4207,14 @@ export class ThreeView {
               gl.uniformMatrix4fv(u.uModel, false, instModel);
               gl.uniformMatrix3fv(u.uNormalMatrix, false, instNormal);
               if (instColors) {
-                tintedColor[0] = prim.baseColor[0] * instColors[inst * 3];
-                tintedColor[1] = prim.baseColor[1] * instColors[inst * 3 + 1];
-                tintedColor[2] = prim.baseColor[2] * instColors[inst * 3 + 2];
-                tintedColor[3] = prim.baseColor[3];
-                gl.uniform4fv(u.uBaseColor, tintedColor);
+                const b = prim.baseColor;
+                const k = inst * 3;
+                gl.uniform4fv(u.uBaseColor, [
+                  b[0] * instColors[k],
+                  b[1] * instColors[k + 1],
+                  b[2] * instColors[k + 2],
+                  b[3],
+                ]);
               }
               drawPrim(gl, prim);
             }
@@ -4246,9 +4238,9 @@ export class ThreeView {
         gl,
         this,
         vp,
-        xrOverride?.eye ?? 'none',
+        currentEye,
         [vpX, vpY, vpW, vpH],
-        xrOverride?.projMatrix ?? this.projMatrix,
+        activeProj,
       );
     }
   }

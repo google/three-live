@@ -18,6 +18,28 @@ package com.google.threelive
 
 import java.nio.ByteBuffer
 
+/** Shadow map configuration parsed from `KHR_lights_punctual` `extras.shadow`. */
+data class GltfShadowSpec(
+  val cast: Boolean,
+  val mapSize: Int,
+  val bias: Float,
+  val normalBias: Float,
+  val radius: Float,
+)
+
+/** Punctual light parsed from `KHR_lights_punctual` (or `asset.extras.lights`). */
+class GltfPunctualLight(
+  val nodeIndex: Int,
+  val name: String?,
+  val type: String,
+  val color: FloatArray,
+  val intensity: Float,
+  val range: Float,
+  val innerConeAngle: Float,
+  val outerConeAngle: Float,
+  val shadow: GltfShadowSpec?,
+)
+
 /**
  * Read-only index of a glTF document's node hierarchy, meshes and materials, used by renderers to
  * map glTF indices onto their own scene objects.
@@ -45,8 +67,8 @@ class GltfSceneIndex(gltfJson: String) {
   val meshPrimitiveMaterials: List<IntArray>
 
   /**
-   * Local bounds of every mesh (`[minX, minY, minZ, maxX, maxY, maxZ]`, the union of its primitives'
-   * `POSITION` accessor `min` / `max`), or `null` when the GLB does not declare them.
+   * Local bounds of every mesh (`[minX, minY, minZ, maxX, maxY, maxZ]`, the union of its
+   * primitives' `POSITION` accessor `min` / `max`), or `null` when the GLB does not declare them.
    */
   val meshBounds: List<DoubleArray?>
 
@@ -67,6 +89,18 @@ class GltfSceneIndex(gltfJson: String) {
 
   /** Material `roughnessFactor` values (defaults to `1`). */
   val materialRoughness: FloatArray
+
+  /** Whether node `i` has an explicit `extras.shadow` override in the GLB. */
+  val nodeHasExplicitShadow: BooleanArray
+
+  /** Effective shadow-casting flag for node `i` (accounts for explicit and auto-caster modes). */
+  val nodeCastShadow: BooleanArray
+
+  /** Effective shadow-receiving flag for node `i` (defaults to `true` unless opted out). */
+  val nodeReceiveShadow: BooleanArray
+
+  /** Punctual lights declared via `KHR_lights_punctual` (or `asset.extras.lights`). */
+  val punctualLights: List<GltfPunctualLight>
 
   init {
     val root = MiniJson.parseObjectOrNull(gltfJson) ?: emptyMap()
@@ -90,31 +124,31 @@ class GltfSceneIndex(gltfJson: String) {
     }
     children = kids.map { it.toIntArray() }
     meshNames = meshes.map { MiniJson.asString(MiniJson.asMap(it)?.get("name")) }
-    meshPrimitiveMaterials =
-      meshes.map { m ->
-        val prims = MiniJson.asList(MiniJson.asMap(m)?.get("primitives")) ?: emptyList()
-        IntArray(prims.size) { p -> index(MiniJson.asMap(prims[p])?.get("material"), Int.MAX_VALUE) }
-      }
+    meshPrimitiveMaterials = meshes.map { m ->
+      val prims = MiniJson.asList(MiniJson.asMap(m)?.get("primitives")) ?: emptyList()
+      IntArray(prims.size) { p -> index(MiniJson.asMap(prims[p])?.get("material"), Int.MAX_VALUE) }
+    }
     val accessors = MiniJson.asList(root["accessors"]) ?: emptyList()
-    meshBounds =
-      meshes.map { m ->
-        var out: DoubleArray? = null
-        for (prim in MiniJson.asList(MiniJson.asMap(m)?.get("primitives")) ?: emptyList()) {
-          val attrs = MiniJson.asMap(MiniJson.asMap(prim)?.get("attributes")) ?: continue
-          val acc = MiniJson.asMap(accessors.getOrNull(index(attrs["POSITION"], accessors.size))) ?: continue
-          val lo = MiniJson.asList(acc["min"])?.mapNotNull { MiniJson.asFiniteDouble(it) } ?: continue
-          val hi = MiniJson.asList(acc["max"])?.mapNotNull { MiniJson.asFiniteDouble(it) } ?: continue
-          if (lo.size < 3 || hi.size < 3) continue
-          val b = out ?: doubleArrayOf(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]).also { out = it }
-          for (k in 0 until 3) {
-            b[k] = minOf(b[k], lo[k])
-            b[3 + k] = maxOf(b[3 + k], hi[k])
-          }
+    meshBounds = meshes.map { m ->
+      var out: DoubleArray? = null
+      for (prim in MiniJson.asList(MiniJson.asMap(m)?.get("primitives")) ?: emptyList()) {
+        val attrs = MiniJson.asMap(MiniJson.asMap(prim)?.get("attributes")) ?: continue
+        val acc =
+          MiniJson.asMap(accessors.getOrNull(index(attrs["POSITION"], accessors.size))) ?: continue
+        val lo = MiniJson.asList(acc["min"])?.mapNotNull { MiniJson.asFiniteDouble(it) } ?: continue
+        val hi = MiniJson.asList(acc["max"])?.mapNotNull { MiniJson.asFiniteDouble(it) } ?: continue
+        if (lo.size < 3 || hi.size < 3) continue
+        val b = out ?: doubleArrayOf(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]).also { out = it }
+        for (k in 0 until 3) {
+          b[k] = minOf(b[k], lo[k])
+          b[3 + k] = maxOf(b[3 + k], hi[k])
         }
-        out
       }
+      out
+    }
     val scenes = MiniJson.asList(root["scenes"]) ?: emptyList()
-    val sceneIdx = index(root["scene"], scenes.size).let { if (it < 0 && scenes.isNotEmpty()) 0 else it }
+    val sceneIdx =
+      index(root["scene"], scenes.size).let { if (it < 0 && scenes.isNotEmpty()) 0 else it }
     val declaredRoots =
       MiniJson.asList(MiniJson.asMap(scenes.getOrNull(sceneIdx))?.get("nodes"))
         ?.map { index(it, n) }
@@ -156,6 +190,94 @@ class GltfSceneIndex(gltfJson: String) {
     materialEmissive = emissives
     materialMetallic = metallics
     materialRoughness = roughnesses
+
+    val rawCast = arrayOfNulls<Boolean>(n)
+    val rawReceive = arrayOfNulls<Boolean>(n)
+    for (i in 0 until n) {
+      val extras = MiniJson.asMap(MiniJson.asMap(nodes[i])?.get("extras"))
+      val sh = MiniJson.asMap(extras?.get("shadow")) ?: continue
+      (sh["cast"] as? Boolean)?.let { rawCast[i] = it }
+      (sh["receive"] as? Boolean)?.let { rawReceive[i] = it }
+    }
+    val hasExplicitCaster = (0 until n).any { rawCast[it] == true }
+    nodeHasExplicitShadow = BooleanArray(n) { rawCast[it] != null || rawReceive[it] != null }
+    nodeCastShadow = BooleanArray(n) { rawCast[it] ?: !hasExplicitCaster }
+    nodeReceiveShadow = BooleanArray(n) { rawReceive[it] ?: true }
+
+    val parsedLights = ArrayList<GltfPunctualLight>()
+    val rootExts = MiniJson.asMap(root["extensions"])
+    val khrRoot = MiniJson.asMap(rootExts?.get("KHR_lights_punctual"))
+    val khrDefs = MiniJson.asList(khrRoot?.get("lights"))
+    if (!khrDefs.isNullOrEmpty()) {
+      for (i in 0 until n) {
+        val nodeExts = MiniJson.asMap(MiniJson.asMap(nodes[i])?.get("extensions"))
+        val khrNode = MiniJson.asMap(nodeExts?.get("KHR_lights_punctual")) ?: continue
+        val lIdx = index(khrNode["light"], khrDefs.size)
+        if (lIdx < 0) continue
+        val def = MiniJson.asMap(khrDefs[lIdx]) ?: continue
+        val lType = MiniJson.asString(def["type"]) ?: "directional"
+        if (lType != "directional" && lType != "spot" && lType != "point") continue
+        val col = MiniJson.asList(def["color"])
+        val spot = MiniJson.asMap(def["spot"])
+        val outerCone =
+          finiteFloat(spot?.get("outerConeAngle"), (Math.PI / 3.0).toFloat())
+            .coerceIn(0.01f, (Math.PI / 2.0).toFloat())
+        val innerCone = finiteFloat(spot?.get("innerConeAngle"), 0f).coerceIn(0f, outerCone)
+        val shObj = MiniJson.asMap(MiniJson.asMap(def["extras"])?.get("shadow"))
+        parsedLights.add(
+          GltfPunctualLight(
+            nodeIndex = i,
+            name = MiniJson.asString(def["name"]) ?: nodeNames[i],
+            type = lType,
+            color =
+              floatArrayOf(
+                finiteFloat(col?.getOrNull(0), 1f),
+                finiteFloat(col?.getOrNull(1), 1f),
+                finiteFloat(col?.getOrNull(2), 1f),
+              ),
+            intensity = finiteFloat(def["intensity"], 1f).coerceAtLeast(0f),
+            range = finiteFloat(def["range"], 0f).coerceAtLeast(0f),
+            innerConeAngle = innerCone,
+            outerConeAngle = outerCone,
+            shadow = parseShadowSpec(shObj),
+          )
+        )
+      }
+    }
+    if (parsedLights.isEmpty()) {
+      val assetExtras = MiniJson.asMap(MiniJson.asMap(root["asset"])?.get("extras"))
+      val rawExtrasLights = MiniJson.asList(assetExtras?.get("lights")) ?: emptyList()
+      for (entry in rawExtrasLights) {
+        val l = MiniJson.asMap(entry) ?: continue
+        val lType = MiniJson.asString(l["type"]) ?: continue
+        if (lType != "directional" && lType != "spot" && lType != "point") continue
+        val col = MiniJson.asList(l["color"])
+        val shObj = MiniJson.asMap(l["shadow"])
+        val outerCone =
+          finiteFloat(l["outerConeAngle"], (Math.PI / 3.0).toFloat())
+            .coerceIn(0.01f, (Math.PI / 2.0).toFloat())
+        val innerCone = finiteFloat(l["innerConeAngle"], 0f).coerceIn(0f, outerCone)
+        parsedLights.add(
+          GltfPunctualLight(
+            nodeIndex = -1,
+            name = MiniJson.asString(l["name"]),
+            type = lType,
+            color =
+              floatArrayOf(
+                finiteFloat(col?.getOrNull(0), 1f),
+                finiteFloat(col?.getOrNull(1), 1f),
+                finiteFloat(col?.getOrNull(2), 1f),
+              ),
+            intensity = finiteFloat(l["intensity"], 1f).coerceAtLeast(0f),
+            range = finiteFloat(l["range"], 0f).coerceAtLeast(0f),
+            innerConeAngle = innerCone,
+            outerConeAngle = outerCone,
+            shadow = parseShadowSpec(shObj),
+          )
+        )
+      }
+    }
+    punctualLights = parsedLights
   }
 
   /** Number of nodes. */
@@ -163,7 +285,8 @@ class GltfSceneIndex(gltfJson: String) {
     get() = nodeNames.size
 
   /** The glTF mesh name of [nodeIndex]'s mesh (what web events report as `mesh`), or `null`. */
-  fun meshNameOfNode(nodeIndex: Int): String? = meshNames.getOrNull(nodeMesh.getOrElse(nodeIndex) { -1 })
+  fun meshNameOfNode(nodeIndex: Int): String? =
+    meshNames.getOrNull(nodeMesh.getOrElse(nodeIndex) { -1 })
 
   /** Material indices used by [nodeIndex]'s mesh primitives (empty for mesh-less nodes). */
   fun materialsOfNode(nodeIndex: Int): IntArray =
@@ -185,9 +308,9 @@ class GltfSceneIndex(gltfJson: String) {
   }
 
   /**
-   * Maps every glTF node to a renderer entity by walking both hierarchies from the roots.
-   * Siblings are paired by position when the counts and names agree, otherwise by name, so
-   * renderers that reorder or drop nodes still map what they can.
+   * Maps every glTF node to a renderer entity by walking both hierarchies from the roots. Siblings
+   * are paired by position when the counts and names agree, otherwise by name, so renderers that
+   * reorder or drop nodes still map what they can.
    *
    * @param rootEntities the renderer's top-level entities for the scene roots, in order.
    * @param childrenOf returns an entity's children in order.
@@ -233,7 +356,8 @@ class GltfSceneIndex(gltfJson: String) {
     val pairs = ArrayList<Pair<Int, Int>>()
     for (node in nodeList) {
       val name = nodeNames[node] ?: continue
-      val k = entityList.indices.firstOrNull { !used[it] && nameOf(entityList[it]) == name } ?: continue
+      val k =
+        entityList.indices.firstOrNull { !used[it] && nameOf(entityList[it]) == name } ?: continue
       used[k] = true
       pairs.add(node to entityList[k])
     }
@@ -269,6 +393,29 @@ class GltfSceneIndex(gltfJson: String) {
     private fun finiteFloat(v: Any?, fallback: Float): Float {
       val d = v as? Double ?: return fallback
       return if (d.isFinite()) d.toFloat() else fallback
+    }
+
+    private fun parseShadowSpec(shObj: Map<String, Any?>?): GltfShadowSpec? {
+      if (shObj == null || shObj["cast"] != true) return null
+      val rawSize = finiteFloat(shObj["mapSize"] ?: shObj["map_size"], 1024f).toInt()
+      val mapSize =
+        when {
+          rawSize <= 384 -> 256
+          rawSize <= 768 -> 512
+          rawSize <= 1536 -> 1024
+          else -> 2048
+        }
+      val bias = finiteFloat(shObj["bias"], -0.0005f).coerceIn(-0.05f, 0.05f)
+      val normalBias =
+        finiteFloat(shObj["normalBias"] ?: shObj["normal_bias"], 0.015f).coerceIn(0f, 0.2f)
+      val radius = finiteFloat(shObj["radius"], 1.5f).coerceIn(0f, 8f)
+      return GltfShadowSpec(
+        cast = true,
+        mapSize = mapSize,
+        bias = bias,
+        normalBias = normalBias,
+        radius = radius,
+      )
     }
   }
 }

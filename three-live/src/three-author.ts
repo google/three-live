@@ -130,6 +130,22 @@ export class Vector2 {
   public setScalar(s: number): this {
     return this.set(s, s);
   }
+
+  get width(): number {
+    return this.x;
+  }
+
+  set width(v: number) {
+    this.x = Number(v);
+  }
+
+  get height(): number {
+    return this.y;
+  }
+
+  set height(v: number) {
+    this.y = Number(v);
+  }
 }
 
 export class Vector3 {
@@ -2156,8 +2172,24 @@ export class Object3D {
   public matrixWorld: Matrix4;
   public matrixAutoUpdate: boolean = true;
   public visible: boolean = true;
-  public castShadow: boolean = false;
-  public receiveShadow: boolean = false;
+  _castShd = false;
+  _castShdSet = false;
+  _recvShd = false;
+  _recvShdSet = false;
+  get castShadow(): boolean {
+    return this._castShd;
+  }
+  set castShadow(v: boolean) {
+    this._castShd = Boolean(v);
+    this._castShdSet = true;
+  }
+  get receiveShadow(): boolean {
+    return this._recvShd;
+  }
+  set receiveShadow(v: boolean) {
+    this._recvShd = Boolean(v);
+    this._recvShdSet = true;
+  }
   public parent: Object3D | null = null;
   public children: Object3D[] = [];
   public userData: Record<string, any> = {};
@@ -2377,6 +2409,11 @@ export class Object3D {
     if (this instanceof Light) {
       c.color.copy(this.color);
       c.intensity = this.intensity;
+      c.shadow.copy(this.shadow);
+      const selfTarget = (this as {target?: {position?: Vector3}}).target;
+      if (selfTarget?.position && c.target?.position) {
+        c.target.position.copy(selfTarget.position);
+      }
       if (this instanceof HemisphereLight) c.groundColor.copy(this.groundColor);
     }
     c.name = this.name;
@@ -2384,8 +2421,8 @@ export class Object3D {
     c.quaternion.copy(this.quaternion);
     c.scale.copy(this.scale);
     c.visible = this.visible;
-    c.castShadow = this.castShadow;
-    c.receiveShadow = this.receiveShadow;
+    if (this._castShdSet) c.castShadow = this.castShadow;
+    if (this._recvShdSet) c.receiveShadow = this.receiveShadow;
     try {
       c.userData = JSON.parse(JSON.stringify(this.userData || {}));
     } catch (_) {
@@ -2541,10 +2578,51 @@ export class InstancedMesh extends Mesh {
   dispose(): void {}
 }
 
+/** Shadow map configuration attached to `THREE.Light` instances. */
+export class LightShadow {
+  mapSize = new Vector2(1024, 1024);
+  bias = -0.0005;
+  normalBias = 0.015;
+  radius = 1.5;
+  camera: {
+    near: number;
+    far: number;
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+    fov: number;
+    updateProjectionMatrix: () => void;
+  } = {
+    near: 0.1,
+    far: 100,
+    left: -5,
+    right: 5,
+    top: 5,
+    bottom: -5,
+    fov: 50,
+    updateProjectionMatrix: () => {},
+  };
+
+  copy(source: LightShadow): this {
+    this.mapSize.copy(source.mapSize);
+    this.bias = Number(source.bias);
+    this.normalBias = Number(source.normalBias);
+    this.radius = Number(source.radius);
+    return this;
+  }
+
+  clone(): LightShadow {
+    return new LightShadow().copy(this);
+  }
+}
+
 export class Light extends Object3D {
+  readonly isLight = true;
   public color: Color;
   public intensity: number;
   public type: 'ambient' | 'directional' | 'point' | 'spot' | 'hemisphere';
+  shadow = new LightShadow();
 
   constructor(color: any = 0xffffff, intensity: number = 1) {
     super();
@@ -5010,7 +5088,10 @@ const threeExports: Record<string, any> = {
   StaticDrawUsage: 35044,
   DynamicDrawUsage: 35048,
   ACESFilmicToneMapping: 4,
+  BasicShadowMap: 0,
+  PCFShadowMap: 1,
   PCFSoftShadowMap: 2,
+  VSMShadowMap: 3,
   Texture,
   DataTexture,
   TextureLoader,
@@ -5033,6 +5114,7 @@ const threeExports: Record<string, any> = {
   LineLoop,
   LineSegments,
   Points,
+  LightShadow,
   Light,
   AmbientLight,
   DirectionalLight,
@@ -5672,6 +5754,14 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         scale,
         mesh: meshIdx,
         visible: node.visible !== false,
+        ...(node instanceof Light || (!node._castShdSet && !node._recvShdSet)
+          ? {}
+          : {
+              cast_shadow: Boolean(node.castShadow),
+              receive_shadow: node._recvShdSet
+                ? Boolean(node.receiveShadow)
+                : Boolean(node.receiveShadow || node.castShadow),
+            }),
         xr_traits_json: hasXR ? JSON.stringify(safeXR) : null,
         interactivity_events_json:
           interEvents.length > 0 ? JSON.stringify(interEvents) : null,
@@ -5756,7 +5846,13 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             lightEntry.inner_cone_angle = Math.max(0, outerAngle * (1 - pen));
             lightEntry.range = Math.max(0, fin(node.distance, 0));
           } else {
-            lightEntry.position = [px - tx, py - ty, pz - tz];
+            const ox = px - tx;
+            const oy = py - ty;
+            const oz = pz - tz;
+            const oLen = Math.hypot(ox, oy, oz);
+            lightEntry.position = [ox, oy, oz];
+            lightEntry.direction =
+              oLen > 1e-6 ? [ox / oLen, oy / oLen, oz / oLen] : [0, 1, 0];
           }
         } else if (node instanceof PointLight) {
           lightEntry.range = Math.max(0, fin(node.distance, 0));
@@ -5766,6 +5862,30 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             node.groundColor.g,
             node.groundColor.b,
           ];
+        }
+        if (
+          node.castShadow &&
+          (node.type === 'directional' ||
+            node.type === 'spot' ||
+            node.type === 'point')
+        ) {
+          const sh = node.shadow;
+          const ms = Math.max(
+            256,
+            Math.min(
+              2048,
+              Math.round(fin(sh?.mapSize?.x ?? sh?.mapSize?.width, 1024)),
+            ),
+          );
+          lightEntry.node_index = nodeIdx;
+          lightEntry.shadow = {
+            cast: true,
+            map_size:
+              ms <= 384 ? 256 : ms <= 768 ? 512 : ms <= 1536 ? 1024 : 2048,
+            bias: Math.max(-0.05, Math.min(0.05, fin(sh?.bias, -0.0005))),
+            normal_bias: Math.max(0, Math.min(0.2, fin(sh?.normalBias, 0.015))),
+            radius: Math.max(0, Math.min(8, fin(sh?.radius, 1.5))),
+          };
         }
         lights.push(lightEntry);
       }

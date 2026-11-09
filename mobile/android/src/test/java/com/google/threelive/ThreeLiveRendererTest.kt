@@ -29,7 +29,8 @@ import org.junit.Test
 
 /**
  * JVM tests for the renderer-agnostic pieces: [OrbitCameraState] (web `ThreeView` camera parity),
- * [GltfSceneIndex] (hierarchy / entity matching) and [ThreeLiveRuntimeBinding] with a fake renderer.
+ * [GltfSceneIndex] (hierarchy / entity matching) and [ThreeLiveRuntimeBinding] with a fake
+ * renderer.
  */
 class ThreeLiveRendererTest {
 
@@ -43,7 +44,11 @@ class ThreeLiveRendererTest {
     assertNull(OrbitCameraState.parseAngleDeg("auto"))
     assertNull(OrbitCameraState.parseAngleDeg("abc"))
     assertEquals(2.5, OrbitCameraState.parseMeters("2.5m")!!, 1e-9)
-    assertArrayEquals(doubleArrayOf(1.0, 2.0, 3.0), OrbitCameraState.parseCameraTarget("1m 2m 3")!!, 1e-9)
+    assertArrayEquals(
+      doubleArrayOf(1.0, 2.0, 3.0),
+      OrbitCameraState.parseCameraTarget("1m 2m 3")!!,
+      1e-9,
+    )
     assertNull(OrbitCameraState.parseCameraTarget("1 2"))
     val lim = OrbitCameraState.parseOrbitLimit("auto 10deg 2m")
     assertNull(lim[0])
@@ -85,7 +90,9 @@ class ThreeLiveRendererTest {
     assertEquals(Math.PI * 0.48, cam.phi, 1e-6)
     assertEquals(1.0, cam.distance, 1e-6)
 
-    cam.applyOptions(ThreeLiveCameraOptions(minCameraOrbit = "-10deg -5deg 3m", maxCameraOrbit = "10deg 5deg 4m"))
+    cam.applyOptions(
+      ThreeLiveCameraOptions(minCameraOrbit = "-10deg -5deg 3m", maxCameraOrbit = "10deg 5deg 4m")
+    )
     cam.drag(-1e6, -1e6, 0)
     repeat(600) { cam.step(1.0 / 60, 0) }
     assertEquals(Math.toRadians(10.0), cam.theta, 1e-6)
@@ -127,7 +134,13 @@ class ThreeLiveRendererTest {
   @Test
   fun autoRotateSpinsTurntableAfterDelayAndInteractionPausesIt() {
     val cam = OrbitCameraState()
-    cam.applyOptions(ThreeLiveCameraOptions(autoRotate = true, autoRotateDelayMs = 1000, rotationPerSecond = "90deg"))
+    cam.applyOptions(
+      ThreeLiveCameraOptions(
+        autoRotate = true,
+        autoRotateDelayMs = 1000,
+        rotationPerSecond = "90deg",
+      )
+    )
     cam.setBounds(doubleArrayOf(1.0, 0.0, 0.0), 1.0)
     cam.touch(0)
     cam.step(0.25, 500)
@@ -212,15 +225,111 @@ class ThreeLiveRendererTest {
   fun matchEntitiesPairsByPositionOrFallsBackToNames() {
     val idx = GltfSceneIndex(HIERARCHY)
     // Entities: 100 (Group) -> [101 (Box), 102 (Ball)], 103 (Light).
-    val kids = mapOf(100 to intArrayOf(101, 102), 101 to intArrayOf(), 102 to intArrayOf(), 103 to intArrayOf())
+    val kids =
+      mapOf(
+        100 to intArrayOf(101, 102),
+        101 to intArrayOf(),
+        102 to intArrayOf(),
+        103 to intArrayOf(),
+      )
     val names = mapOf(100 to "Group", 101 to "Box", 102 to "Ball", 103 to "Light")
     val direct = idx.matchEntities(intArrayOf(100, 103), { kids.getValue(it) }, { names[it] })
     assertArrayEquals(intArrayOf(100, 101, 102, 103), direct)
 
     // A renderer that reorders siblings and drops the light still maps by name.
     val reordered = mapOf(100 to intArrayOf(102, 101), 101 to intArrayOf(), 102 to intArrayOf())
-    val byName = idx.matchEntities(intArrayOf(100), { reordered[it] ?: intArrayOf() }, { names[it] })
+    val byName =
+      idx.matchEntities(intArrayOf(100), { reordered[it] ?: intArrayOf() }, { names[it] })
     assertArrayEquals(intArrayOf(100, 101, 102, 0), byName)
+  }
+
+  @Test
+  fun sceneIndexParsesPunctualLightsAndShadowFlags() {
+    val explicitJson =
+      """{
+        "extensions": {
+          "KHR_lights_punctual": {
+            "lights": [
+              {
+                "type": "directional",
+                "color": [1, 0.9, 0.8],
+                "intensity": 2.4,
+                "extras": {"shadow": {"cast": true, "mapSize": 2048, "bias": -0.0008, "normalBias": 0.02, "radius": 2.5}}
+              },
+              {
+                "type": "spot",
+                "color": [0.5, 0.8, 1],
+                "intensity": 1.6,
+                "range": 12,
+                "spot": {"innerConeAngle": 0.2, "outerConeAngle": 0.785398},
+                "extras": {"shadow": {"cast": true, "mapSize": 1024}}
+              },
+              {
+                "type": "point",
+                "intensity": 0.8
+              }
+            ]
+          }
+        },
+        "nodes": [
+          {"name": "KeyLight", "extensions": {"KHR_lights_punctual": {"light": 0}}},
+          {"name": "RimSpot", "translation": [-2, 4, 3], "extensions": {"KHR_lights_punctual": {"light": 1}}},
+          {"name": "FillPt", "extensions": {"KHR_lights_punctual": {"light": 2}}},
+          {"name": "Tower", "mesh": 0, "extras": {"shadow": {"cast": true, "receive": true}}},
+          {"name": "Floor", "mesh": 0, "extras": {"shadow": {"receive": true}}},
+          {"name": "Gizmo", "mesh": 0, "extras": {"shadow": {"cast": false}}},
+          {"name": "Unflagged", "mesh": 0}
+        ],
+        "meshes": [{"name": "M", "primitives": [{}]}]
+      }"""
+    val idx = GltfSceneIndex(explicitJson)
+    assertEquals(3, idx.punctualLights.size)
+    val dir = idx.punctualLights[0]
+    assertEquals("directional", dir.type)
+    assertEquals(0, dir.nodeIndex)
+    assertNotNull(dir.shadow)
+    assertTrue(dir.shadow!!.cast)
+    assertEquals(2048, dir.shadow!!.mapSize)
+    assertEquals(-0.0008f, dir.shadow!!.bias, 1e-6f)
+    assertEquals(0.02f, dir.shadow!!.normalBias, 1e-6f)
+    assertEquals(2.5f, dir.shadow!!.radius, 1e-6f)
+
+    val spot = idx.punctualLights[1]
+    assertEquals("spot", spot.type)
+    assertEquals(1, spot.nodeIndex)
+    assertTrue(spot.shadow!!.cast)
+    assertEquals(1024, spot.shadow!!.mapSize)
+
+    assertNull(idx.punctualLights[2].shadow)
+
+    // Explicit per-node shadow flags disable auto-caster promotion on unflagged nodes.
+    assertTrue(idx.nodeHasExplicitShadow[3])
+    assertTrue(idx.nodeCastShadow[3] && idx.nodeReceiveShadow[3])
+    assertFalse(idx.nodeCastShadow[4])
+    assertTrue(idx.nodeReceiveShadow[4])
+    assertFalse(idx.nodeCastShadow[5])
+    assertFalse(idx.nodeHasExplicitShadow[6])
+    assertFalse(idx.nodeCastShadow[6])
+    assertTrue(idx.nodeReceiveShadow[6])
+
+    // Auto-caster promotion when a light casts shadows and no mesh node has explicit shadow flags.
+    val autoJson =
+      """{
+        "extensions": {
+          "KHR_lights_punctual": {
+            "lights": [{"type": "directional", "intensity": 2.0, "extras": {"shadow": {"cast": true}}}]
+          }
+        },
+        "nodes": [
+          {"name": "KeyLight", "extensions": {"KHR_lights_punctual": {"light": 0}}},
+          {"name": "AutoBox", "mesh": 0}
+        ],
+        "meshes": [{"name": "M", "primitives": [{}]}]
+      }"""
+    val autoIdx = GltfSceneIndex(autoJson)
+    assertFalse(autoIdx.nodeHasExplicitShadow[1])
+    assertTrue(autoIdx.nodeCastShadow[1])
+    assertTrue(autoIdx.nodeReceiveShadow[1])
   }
 
   // ---- ThreeLiveRuntimeBinding ------------------------------------------------------------------
@@ -232,7 +341,12 @@ class ThreeLiveRendererTest {
     val b = ThreeLiveRuntimeBinding(r, glbOf(HIERARCHY))
     b.callbacks =
       object : ThreeLiveRuntimeBinding.Callbacks {
-        override fun onMeshClick(nodeIndex: Int, nodeName: String?, meshName: String?, point: FloatArray?) {
+        override fun onMeshClick(
+          nodeIndex: Int,
+          nodeName: String?,
+          meshName: String?,
+          point: FloatArray?,
+        ) {
           clicks.add("$nodeIndex:$nodeName:$meshName")
         }
       }
@@ -265,7 +379,13 @@ class ThreeLiveRendererTest {
     // event/onStart started animation 0.
     assertEquals(listOf(0), r.animations)
     b.sendEvent("raise")
-    val cam = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
+    val cam =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[15] = 1f
+      }
     repeat(4) { r.listener!!.onFrame(0.25, cam) }
     assertArrayEquals(floatArrayOf(0f, 2f, 0f), r.transforms[3]!!, 1e-5f)
     assertEquals(listOf("raised"), events)
@@ -383,8 +503,16 @@ class ThreeLiveRendererTest {
         "pinky-finger-tip" to doubleArrayOf(0.0, 0.02, 0.0),
       )
     var rightJoints: Map<String, DoubleArray>? = fist
-    HandJointSources.register(HandJointSource { side -> if (side == "right") rightJoints else null })
-    val cam = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
+    HandJointSources.register(
+      HandJointSource { side -> if (side == "right") rightJoints else null }
+    )
+    val cam =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[15] = 1f
+      }
     // Disabled by default (`xrHands == "none"`).
     r.listener!!.onFrame(0.016, cam)
     assertTrue(gestures.isEmpty())
@@ -440,7 +568,12 @@ class ThreeLiveRendererTest {
 
     override fun setCameraOptions(options: ThreeLiveCameraOptions) {}
 
-    override fun setNodeTransform(nodeIndex: Int, translation: FloatArray, rotation: FloatArray, scale: FloatArray) {
+    override fun setNodeTransform(
+      nodeIndex: Int,
+      translation: FloatArray,
+      rotation: FloatArray,
+      scale: FloatArray,
+    ) {
       transforms[nodeIndex] = translation.copyOf()
     }
 

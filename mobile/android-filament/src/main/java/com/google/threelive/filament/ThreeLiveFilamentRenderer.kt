@@ -1058,6 +1058,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     for (node in 0 until index.nodeCount) {
       val ri = rm.getInstance(nodeEntities[node].takeIf { it != 0 } ?: continue)
       if (ri == 0) continue
+      rm.setCastShadows(ri, index.nodeCastShadow[node])
+      rm.setReceiveShadows(ri, index.nodeReceiveShadow[node])
       val mats = index.materialsOfNode(node)
       for (p in 0 until minOf(rm.getPrimitiveCount(ri), mats.size)) {
         val m = mats[p]
@@ -1077,6 +1079,39 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
         metallicFactor = index.materialMetallic[m],
         roughnessFactor = index.materialRoughness[m],
       )
+    }
+
+    val lm = engine.lightManager
+    val shadowLights = index.punctualLights.filter { it.shadow?.cast == true }.take(4)
+    val sunInstance = lm.getInstance(sunEntity)
+    if (sunInstance != 0) {
+      lm.setShadowCaster(sunInstance, shadowLights.isEmpty())
+    }
+    for (pl in index.punctualLights) {
+      val entity = nodeEntities.getOrElse(pl.nodeIndex) { 0 }
+      if (entity == 0) continue
+      val li = lm.getInstance(entity)
+      if (li == 0) continue
+      val sh = pl.shadow
+      val isCaster = sh?.cast == true && shadowLights.any { it.nodeIndex == pl.nodeIndex }
+      lm.setShadowCaster(li, isCaster)
+      if (isCaster && sh != null) {
+        val opts =
+          LightManager.ShadowOptions().apply {
+            mapSize = sh.mapSize.coerceIn(256, 2048)
+            constantBias = kotlin.math.abs(sh.bias).coerceIn(0.0001f, 0.05f)
+            normalBias = sh.normalBias.coerceIn(0f, 2f)
+          }
+        runCatching {
+          lm.javaClass
+            .getMethod(
+              "setShadowOptions",
+              Int::class.javaPrimitiveType,
+              LightManager.ShadowOptions::class.java,
+            )
+            .invoke(lm, li, opts)
+        }
+      }
     }
   }
 
@@ -1455,6 +1490,10 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       scene.removeEntities(it.entities)
       resourceLoader.evictResourceData()
       assetLoader.destroyAsset(it)
+    }
+    val sunInstance = engine.lightManager.getInstance(sunEntity)
+    if (sunInstance != 0) {
+      engine.lightManager.setShadowCaster(sunInstance, true)
     }
     asset = null
     sceneIndex = null

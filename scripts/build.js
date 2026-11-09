@@ -87,21 +87,28 @@ const WEBGL_CONSTANTS = {
   CLAMP_TO_EDGE: 33071,
   COLOR_ATTACHMENT0: 36064,
   COLOR_BUFFER_BIT: 16384,
+  COMPARE_REF_TO_TEXTURE: 34894,
   COMPILE_STATUS: 35713,
   DEPTH_ATTACHMENT: 36096,
   DEPTH_BUFFER_BIT: 256,
+  DEPTH_COMPONENT: 6402,
   DEPTH_COMPONENT16: 33189,
+  DEPTH_COMPONENT24: 33190,
   DEPTH_TEST: 2929,
   DYNAMIC_DRAW: 35048,
   ELEMENT_ARRAY_BUFFER: 34963,
   FLOAT: 5126,
   FRAGMENT_SHADER: 35632,
   FRAMEBUFFER: 36160,
+  FRAMEBUFFER_BINDING: 36006,
+  LEQUAL: 515,
   LINEAR: 9729,
   LINEAR_MIPMAP_LINEAR: 9987,
   LINK_STATUS: 35714,
   NEAREST: 9728,
+  NONE: 0,
   ONE_MINUS_SRC_ALPHA: 771,
+  POLYGON_OFFSET_FILL: 32823,
   RENDERBUFFER: 36161,
   REPEAT: 10497,
   RGBA: 6408,
@@ -117,7 +124,11 @@ const WEBGL_CONSTANTS = {
   TEXTURE6: 33990,
   TEXTURE7: 33991,
   TEXTURE8: 33992,
+  TEXTURE9: 33993,
   TEXTURE_2D: 3553,
+  TEXTURE_2D_ARRAY: 35866,
+  TEXTURE_COMPARE_FUNC: 34893,
+  TEXTURE_COMPARE_MODE: 34892,
   TEXTURE_MAG_FILTER: 10240,
   TEXTURE_MIN_FILTER: 10241,
   TEXTURE_WRAP_S: 10242,
@@ -127,6 +138,7 @@ const WEBGL_CONSTANTS = {
   UNSIGNED_INT: 5125,
   UNSIGNED_SHORT: 5123,
   VERTEX_SHADER: 35633,
+  VIEWPORT: 2978,
 };
 
 const WEBGL_REGEX = new RegExp(
@@ -993,22 +1005,22 @@ function reportSizes() {
   console.log('Asset                                      Raw Size     Gzip Size     Budget');
   console.log('------------------------------------------------------------------------------');
   const files = [
-    {name: 'three-live-viewer.min.js', budgetKb: '30'},
-    {name: 'three-live.min.js', budgetKb: '76'},
-    {name: 'three-live-studio.min.js', budgetKb: '29'},
+    {name: 'three-live-viewer.min.js', budgetKb: '31'},
+    {name: 'three-live.min.js', budgetKb: '77'},
+    {name: 'three-live-studio.min.js', budgetKb: '35'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-procedural.min.js', budgetKb: '30'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-ai.min.js', budgetKb: '29'},
-    {name: 'three-live-webgpu.min.js', budgetKb: '17'},
-    {name: 'three-live-full.min.js', budgetKb: '188'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '55'},
-    {name: 'xr-live.min.js', budgetKb: '87'},
+    {name: 'three-live-webgpu.min.js', budgetKb: '22'},
+    {name: 'three-live-full.min.js', budgetKb: '198'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '56'},
+    {name: 'xr-live.min.js', budgetKb: '89'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '63'},
     {name: 'xr-live-sim.min.js', budgetKb: '30'},
     {name: 'xr-live-webgpu.min.js', budgetKb: '12'},
-    {name: 'xr-live-full.min.js', budgetKb: '297'},
+    {name: 'xr-live-full.min.js', budgetKb: '307'},
   ];
   const failures = [];
   for (const f of files) {
@@ -1047,6 +1059,20 @@ function reportSizes() {
     if (fs.existsSync(filePath) &&
         fs.readFileSync(filePath, 'utf8').includes('uXrDepthTex')) {
       failures.push(`dist/${name} unexpectedly bundles WebXR depth occlusion`);
+    }
+  }
+  // Core <three-live> and <xr-live> viewer/author bundles must not carry
+  // shadowMapsPlugin unless studio, webgpu, or full is loaded.
+  for (const name
+           of ['three-live-viewer.min.js',
+               'three-live.min.js',
+               'xr-live-viewer.min.js',
+               'xr-live.min.js',
+  ]) {
+    const filePath = path.join(DIST_DIR, name);
+    if (fs.existsSync(filePath) &&
+        fs.readFileSync(filePath, 'utf8').includes('uShadowMap')) {
+      failures.push(`dist/${name} unexpectedly bundles shadowMapsPlugin`);
     }
   }
   if (failures.length > 0) {
