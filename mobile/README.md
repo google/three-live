@@ -146,13 +146,18 @@ or your own scanner. On ARCore phones without labels,
 `AISpatialPriors.fromWorldUnderstanding` still gives planes and detections.
 
 ```kotlin
+// `wall.pose` / `item.pose`: an ARCore-style Pose; your scan supplies sizes and labels.
+fun matrix(pose: Pose) = FloatArray(16).also { pose.toMatrix(it, 0) }
 val priors = AISpatialPriors.fromRoomScan(
-  surfaces = walls.map { AIRoomSurface("wall", it.pose.toColumnMajor(), listOf(it.width, it.height, 0.0)) },
-  objects = furniture.map { AIRoomObject(it.label, it.pose.toColumnMajor(), it.size) },
+  surfaces = walls.map { AIRoomSurface("wall", matrix(it.pose), floatArrayOf(it.width, it.height, 0f)) },
+  objects = furniture.map { AIRoomObject(it.label, matrix(it.pose), floatArrayOf(it.width, it.height, it.depth)) },
   camera = AICamera(eye, target),
 )
 editor.compileFromBitmap(photo, "this living room", priors)
 ```
+
+Surface kinds are case-insensitive (`Plane.Label.WALL.toString()` works), and
+object labels are normalized (`COFFEE_TABLE` → `coffee table`).
 
 ## AI Textures
 

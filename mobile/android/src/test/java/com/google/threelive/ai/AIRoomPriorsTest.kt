@@ -112,4 +112,38 @@ class AIRoomPriorsTest {
     assertTrue(priors.objects.isEmpty())
     assertEquals(0.0, priors.floorY!!, 0.0)
   }
+
+  @Test
+  fun kindsAreCaseInsensitiveAndOrientationFollowsTheKind() {
+    // A floor whose sides are on local X / Z and a wall whose local Z tilts slightly: the kind
+    // still decides orientation, and the wall normal stays level.
+    val tilted = pose(0.0, 1.2, -2.0).toMutableList().also { it[9] = 0.1 }
+    val priors =
+      AISpatialPriors.fromRoomScan(
+        surfaces =
+          listOf(
+            AIRoomSurface(" WALL ", tilted, listOf(3.0, 2.4, 0.0)),
+            AIRoomSurface("Floor", pose(0.0, -0.0001, 0.0), listOf(4.0, 0.0, 3.0)),
+          ),
+        objects =
+          listOf(
+            AIRoomObject(
+              "COFFEE_TABLE",
+              pose(0.0, 0.2, 0.0).map { it.toFloat() }.toFloatArray(),
+              floatArrayOf(1f, 0.4f, 0.6f),
+            )
+          ),
+      )
+    assertEquals(listOf("floor", "wall"), priors.planes.map { it.label })
+    assertEquals("horizontal", priors.planes[0].orientation)
+    assertEquals(listOf(0.0, 1.0, 0.0), priors.planes[0].normal)
+    assertEquals(listOf(4.0, 3.0), priors.planes[0].extent)
+    assertEquals("vertical", priors.planes[1].orientation)
+    assertEquals(listOf(0.0, 0.0, 1.0), priors.planes[1].normal)
+    // −0.0001 rounds to 0, never −0 (List.equals tells them apart).
+    assertEquals(listOf(0.0), listOf(priors.floorY))
+    val table = priors.objects.single()
+    assertEquals("coffee table", table.label)
+    assertEquals(listOf(1.0, 0.4, 0.6), table.size)
+  }
 }

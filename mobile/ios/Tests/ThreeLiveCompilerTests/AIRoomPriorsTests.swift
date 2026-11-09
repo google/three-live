@@ -112,5 +112,33 @@ final class AIRoomPriorsTests: XCTestCase {
   func testCategoryLabels() {
     XCTAssertEqual(AISpatialPriors.roomCategoryLabel("washerDryer"), "washer dryer")
     XCTAssertEqual(AISpatialPriors.roomCategoryLabel("sofa"), "sofa")
+    XCTAssertEqual(AISpatialPriors.roomCategoryLabel("TV"), "tv")
+    XCTAssertEqual(AISpatialPriors.objectLabel(" COFFEE_TABLE "), "coffee table")
+  }
+
+  func testKindsAreCaseInsensitiveAndOrientationFollowsTheKind() {
+    // A floor whose sides are on local X / Z (normal on local Y) and a wall whose local Z
+    // tilts slightly: the kind still decides orientation, and the wall normal stays level.
+    var tilted = pose([0, 1.2, -2])
+    tilted.columns.2 = SIMD4<Float>(0, 0.1, 1, 0)
+    let priors = AISpatialPriors.fromRoomScan(
+      surfaces: [
+        AIRoomSurface(kind: " WALL ", transform: tilted, dimensions: [3, 2.4, 0]),
+        AIRoomSurface(kind: "Floor", transform: pose([0, -0.0001, 0]), dimensions: [4, 0, 3]),
+      ],
+      objects: [
+        AIRoomObject(
+          category: "COFFEE_TABLE", transform: pose([0, 0.2, 0]), dimensions: [1, 0.4, 0.6])
+      ])
+    XCTAssertEqual(priors.planes.map(\.label), ["floor", "wall"])
+    XCTAssertEqual(priors.planes[0].orientation, "horizontal")
+    XCTAssertEqual(priors.planes[0].normal ?? [], [0, 1, 0])
+    XCTAssertEqual(priors.planes[0].extent, [4, 3])
+    XCTAssertEqual(priors.planes[1].orientation, "vertical")
+    XCTAssertEqual(priors.planes[1].normal ?? [], [0, 0, 1])
+    // −0.0001 rounds to 0, never −0.
+    XCTAssertEqual(priors.floorY, 0)
+    XCTAssertEqual(priors.floorY?.sign, .plus)
+    XCTAssertEqual(priors.objects.first?.label, "coffee table")
   }
 }

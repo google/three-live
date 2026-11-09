@@ -26,22 +26,32 @@ import kotlin.math.sqrt
  * One scanned room surface in world meters (+Y up), e.g. from Android XR labeled planes, a Meta
  * MRUK room, or your own scanner. Mirrors `AIRoomSurface` on iOS (RoomPlan conventions).
  *
- * @property kind `wall`, `floor`, `door`, `window`, or `opening` (other kinds are ignored).
- * @property transform 16 floats, column-major (like `Pose.toMatrix` / `android.opengl.Matrix`):
- *   places the surface center; the surface spans local X (`dimensions[0]`, width) and local Y
- *   (`dimensions[1]`, height) with its normal along local Z.
- * @property dimensions `[width, height, depth]` in meters (depth is ignored for surfaces).
+ * @property kind `wall`, `floor`, `door`, `window`, or `opening` (case-insensitive, so
+ *   `Plane.Label.WALL.toString()` works; other kinds are ignored).
+ * @property transform 16 values, column-major (like ARCore `Pose.toMatrix` /
+ *   `android.opengl.Matrix`): places the surface center. A wall-like surface spans local X
+ *   (`dimensions[0]`, width) and local Y (`dimensions[1]`, height) with its normal along local Z.
+ *   Floors are always horizontal; their extent is their two non-zero `dimensions`.
+ * @property dimensions `[width, height, depth]` in meters.
  */
 data class AIRoomSurface(
   val kind: String,
   val transform: List<Double>,
   val dimensions: List<Double>,
-)
+) {
+  /** From float arrays, e.g. `FloatArray(16).also { pose.toMatrix(it, 0) }`. */
+  constructor(
+    kind: String,
+    transform: FloatArray,
+    dimensions: FloatArray,
+  ) : this(kind, transform.map { it.toDouble() }, dimensions.map { it.toDouble() })
+}
 
 /**
  * One scanned piece of furniture or fixture in world meters (+Y up). Mirrors `AIRoomObject` on iOS.
  *
- * @property category label, e.g. `sofa`, `table`.
+ * @property category label, e.g. `sofa`, `table`; trimmed, lowercased, `_` → space (`COFFEE_TABLE`
+ *   → `coffee table`).
  * @property transform 16 floats, column-major: places the bounding-box center.
  * @property dimensions `[width (local X), height (local Y), depth (local Z)]` in meters.
  */
@@ -49,7 +59,14 @@ data class AIRoomObject(
   val category: String,
   val transform: List<Double>,
   val dimensions: List<Double>,
-)
+) {
+  /** From float arrays, e.g. `FloatArray(16).also { pose.toMatrix(it, 0) }`. */
+  constructor(
+    category: String,
+    transform: FloatArray,
+    dimensions: FloatArray,
+  ) : this(category, transform.map { it.toDouble() }, dimensions.map { it.toDouble() })
+}
 
 /** `AISpatialPriors.fromRoomScan`: the same mapping as the Swift version. */
 internal object RoomScanPriors {
@@ -62,44 +79,54 @@ internal object RoomScanPriors {
     camera: AICamera?,
     cameraFovDeg: Double?,
   ): AISpatialPriors {
+    // Kinds are matched case-insensitively (`WALL` from `Plane.Label` works too).
     val ordered =
       surfaces
-        .withIndex()
-        .filter { (_, s) -> s.kind in RANK && valid(s.transform, 16) && valid(s.dimensions, 3) }
-        .sortedWith(compareBy({ RANK.getValue(it.value.kind) }, { it.index }))
-        .map { it.value }
+        .mapIndexedNotNull { i, s ->
+          val kind = s.kind.trim().lowercase()
+          if (kind in RANK && valid(s.transform, 16) && valid(s.dimensions, 3)) Triple(i, kind, s)
+          else null
+        }
+        .sortedWith(compareBy({ RANK.getValue(it.second) }, { it.first }))
 
     var floorY: Double? = null
     val bottoms = mutableListOf<Double>()
     val planes = mutableListOf<AISpatialPlane>()
-    for (s in ordered) {
+    for ((_, kind, s) in ordered) {
       val m = s.transform
       val center = listOf(m[12], m[13], m[14])
-      val normal = normalize(m[8], m[9], m[10])
-      val horizontal = abs(normal[1]) > 0.7
-      if (s.kind == "floor") {
-        val y = center[1]
-        if (floorY == null || y < floorY) floorY = y
-      } else if (s.kind == "wall") {
-        bottoms += center[1] - abs(s.dimensions[1]) / 2
+      val dims = s.dimensions.take(3).map { abs(it) }
+      val isFloor = kind == "floor"
+      // The kind decides the orientation (floors are horizontal, everything else sits in a wall),
+      // so an unexpected local axis convention can't flip it.
+      val normal: List<Double>
+      val extent: List<Double>
+      if (isFloor) {
+        normal = listOf(0.0, 1.0, 0.0)
+        // Use the two non-zero sides, whichever local axes they are on.
+        extent = dims.filter { it > 0 }.take(2)
+        if (floorY == null || center[1] < floorY) floorY = center[1]
+      } else {
+        // Wall-like: normal along local Z, kept horizontal.
+        normal = normalize(m[8], 0.0, m[10])
+        extent = listOf(dims[0], dims[1])
+        if (kind == "wall") bottoms += center[1] - dims[1] / 2
       }
       if (planes.size >= MAX_PRIORS) continue
-      val w = abs(s.dimensions[0])
-      val h = abs(s.dimensions[1])
       planes +=
         AISpatialPlane(
-          orientation = if (horizontal) "horizontal" else "vertical",
+          orientation = if (isFloor) "horizontal" else "vertical",
           center = center.map(::round3),
-          extent = if (w > 0 && h > 0) listOf(round3(w), round3(h)) else null,
+          extent = if (extent.size == 2 && extent.all { it > 0 }) extent.map(::round3) else null,
           normal = if (normal.all { it == 0.0 }) null else normal.map(::round3),
-          label = s.kind,
+          label = kind,
         )
     }
 
     val mapped = mutableListOf<AISpatialObject>()
     for (o in objects) {
       if (!valid(o.transform, 16) || !valid(o.dimensions, 3)) continue
-      val label = o.category.trim()
+      val label = objectLabel(o.category)
       if (label.isEmpty()) continue
       val m = o.transform
       val center = listOf(m[12], m[13], m[14])
@@ -126,6 +153,9 @@ internal object RoomScanPriors {
     )
   }
 
+  /** Trimmed, lowercased, `_` → space (`"COFFEE_TABLE"` → `"coffee table"`). */
+  fun objectLabel(raw: String): String = raw.replace('_', ' ').trim().lowercase()
+
   private fun valid(v: List<Double>, n: Int) = v.size >= n && v.take(n).all { it.isFinite() }
 
   private fun normalize(x: Double, y: Double, z: Double): List<Double> {
@@ -134,6 +164,6 @@ internal object RoomScanPriors {
     else listOf(0.0, 0.0, 0.0)
   }
 
-  // Millimeters, half away from zero (Swift `rounded()`).
-  private fun round3(v: Double): Double = sign(v) * floor(abs(v) * 1000 + 0.5) / 1000
+  // Millimeters, half away from zero (Swift `rounded()`); `+ 0.0` turns −0 into 0.
+  private fun round3(v: Double): Double = sign(v) * floor(abs(v) * 1000 + 0.5) / 1000 + 0.0
 }
