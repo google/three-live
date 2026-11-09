@@ -121,6 +121,37 @@ let rate = try await session.start()
 try MicrophoneStreamer(sampleRate: rate) { session.sendAudio($0) }.start()
 ```
 
+## AI Textures
+
+`mesh.userData.xr = { material: { preset: 'brick', prompt: '…' } }` works the
+same as on the web: compiles read a **texture pack** (the preset shows until the
+pack has the texture), and generation only happens when you ask for it. Key
+derivation, image preparation, and pack validation run in the shared Rust core,
+so a pack baked on the web or with `three-live-cli textures bake` gives the same
+pixels here.
+
+```kotlin
+val textures = ThreeLiveAITextures(
+  AIImagesProvider("https://your-backend.example/v1/images/generations"),
+  cacheDir = File(context.cacheDir, "three-live-textures"),
+)
+textures.setPack(assets.open("scene.textures.json").reader().readText())  // optional
+val result = textures.generateTextures(script)   // pack → cache → provider
+renderer.loadGlb(ThreeCompiler.compileToBytes(script))  // recompile to show them
+saveForLater(result.packJson)
+```
+
+```swift
+let textures = AITextures(
+  provider: AIImagesProvider(endpoint: "https://your-backend.example/v1/images/generations"),
+  cacheDirectory: cachesURL.appendingPathComponent("three-live-textures"))
+let result = try await textures.generateTextures(script)
+try await reload(try await ThreeCompiler.compile(script))
+```
+
+`setPack` installs the pack for every later compile in the process (pass `nil` /
+`null` to clear it).
+
 ## Building Native Distribution Packages
 
 Run the automated scripts from the root directory:

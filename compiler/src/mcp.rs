@@ -1153,7 +1153,7 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
 
     // Optional AI texture pack for any compiling tool (`userData.xr.material.prompt`).
     let pack = match texture_pack_from_args(&args) {
-        Ok(p) => p.map(std::rc::Rc::new),
+        Ok(p) => p.map(std::sync::Arc::new),
         Err(e) => return jsonrpc_success_response(id, tool_error_result(e)),
     };
     // Without a per-call pack, keep the server-wide one (`three-live-cli --texture-pack … mcp`).
@@ -1298,14 +1298,14 @@ fn call_tool_bake_textures(args: &Value) -> Value {
         show_annotations: false,
         label_override: None,
     };
-    let render = |p: Option<std::rc::Rc<crate::ai_texture::TexturePack>>| {
+    let render = |p: Option<std::sync::Arc<crate::ai_texture::TexturePack>>| {
         with_texture_pack(p, || crate::validate_three_script(&script))
             .0
             .ok()
             .map(|sc| render_scene_rgba(&sc, &opts))
     };
     if let (Some((w, h, a)), Some((_, _, b))) =
-        (render(None), render(Some(std::rc::Rc::new(pack.clone()))))
+        (render(None), render(Some(std::sync::Arc::new(pack.clone()))))
     {
         let (w, h) = (w as usize, h as usize);
         let mut sheet = vec![0u8; w * 2 * h * 4];

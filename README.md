@@ -271,6 +271,9 @@ renders the same way without a network:
 *   Runtime generation gives each visitor different textures. For consistent
     results, save `await el.exportTexturePack()` and ship it with the scene.
     Exported `.glb` / `.usdz` files already contain the final textures.
+*   Android (`ThreeLiveAITextures`), iOS (`AITextures`), the CLI
+    (`three-live-cli textures bake`), and MCP (`three_live_bake_textures`) use
+    the same packs and give the same pixels.
 
 --------------------------------------------------------------------------------
 

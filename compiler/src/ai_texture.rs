@@ -27,7 +27,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{js_string, Context, JsResult, JsValue, NativeFunction};
@@ -420,7 +420,9 @@ pub struct TextureLookup {
 }
 
 thread_local! {
-    static ACTIVE_PACK: RefCell<Option<Rc<TexturePack>>> = const { RefCell::new(None) };
+    // `Some(pack)` inside `with_texture_pack` (even `Some(None)`); `None` outside, where the
+    // process-wide default pack (`set_default_texture_pack`) applies.
+    static ACTIVE_PACK: RefCell<Option<Option<Arc<TexturePack>>>> = const { RefCell::new(None) };
     // `None` outside `with_texture_pack`, so ordinary compiles never accumulate lookups.
     static LOOKUPS: RefCell<Option<Vec<TextureLookup>>> = const { RefCell::new(None) };
     // Per-compile token (0 outside `with_texture_pack`) so the JS side never reuses textures
@@ -430,10 +432,40 @@ thread_local! {
 
 static NEXT_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// Process-wide default pack (mobile apps set it once via `ai_call` `texture_pack_set`; every
+/// compile outside `with_texture_pack` uses it).
+static DEFAULT_PACK: Mutex<Option<(Arc<TexturePack>, u64)>> = Mutex::new(None);
+
+/// Sets (or clears) the process-wide default texture pack.
+pub fn set_default_texture_pack(pack: Option<TexturePack>) {
+    let next =
+        pack.map(|p| (Arc::new(p), NEXT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    if let Ok(mut slot) = DEFAULT_PACK.lock() {
+        *slot = next;
+    }
+}
+
+/// The process-wide default texture pack, if any.
+pub fn default_texture_pack() -> Option<Arc<TexturePack>> {
+    DEFAULT_PACK.lock().ok().and_then(|s| s.as_ref().map(|(p, _)| p.clone()))
+}
+
+/// The pack and memo token that apply to the current compile.
+fn active_pack() -> (Option<Arc<TexturePack>>, u64) {
+    match ACTIVE_PACK.with(|p| p.borrow().clone()) {
+        Some(scoped) => (scoped, ACTIVE_TOKEN.with(|t| t.get())),
+        None => DEFAULT_PACK
+            .lock()
+            .ok()
+            .and_then(|s| s.as_ref().map(|(p, t)| (Some(p.clone()), *t)))
+            .unwrap_or((None, 0)),
+    }
+}
+
 /// Runs `f` with `pack` as the active texture pack and returns the lookups the compile made
 /// (deduplicated by key, first-seen order). Nested calls restore the outer pack.
 pub fn with_texture_pack<R>(
-    pack: Option<Rc<TexturePack>>,
+    pack: Option<Arc<TexturePack>>,
     f: impl FnOnce() -> R,
 ) -> (R, Vec<TextureLookup>) {
     let token = if pack.is_some() {
@@ -442,7 +474,7 @@ pub fn with_texture_pack<R>(
         0
     };
     let prev_token = ACTIVE_TOKEN.with(|t| t.replace(token));
-    let prev_pack = ACTIVE_PACK.with(|p| p.replace(pack));
+    let prev_pack = ACTIVE_PACK.with(|p| p.replace(Some(pack)));
     let prev_lookups = LOOKUPS.with(|l| l.replace(Some(Vec::new())));
     let out = f();
     let lookups = LOOKUPS.with(|l| l.replace(prev_lookups)).unwrap_or_default();
@@ -486,8 +518,7 @@ pub fn native_texture_pack(
         return Ok(JsValue::null());
     };
     let key = spec.key();
-    let entry =
-        ACTIVE_PACK.with(|p| p.borrow().as_ref().and_then(|pk| pk.entries.get(&key).cloned()));
+    let entry = active_pack().0.and_then(|pk| pk.entries.get(&key).cloned());
     record_lookup(&spec, &key, entry.is_some());
     let Some(entry) = entry else {
         return Ok(JsValue::null());
@@ -509,7 +540,7 @@ pub fn native_texture_pack_token(
     _args: &[JsValue],
     _context: &mut Context,
 ) -> JsResult<JsValue> {
-    Ok(JsValue::from(ACTIVE_TOKEN.with(|t| t.get()) as f64))
+    Ok(JsValue::from(active_pack().1 as f64))
 }
 
 /// Registers `__three_live_native_texture_pack__` and `__three_live_native_texture_pack_token__`.
@@ -641,7 +672,7 @@ pub fn bake_textures<F>(
 where
     F: FnMut(&TextureSpec) -> Result<(Vec<u8>, Value), String>,
 {
-    let snapshot = Rc::new(pack.clone());
+    let snapshot = Arc::new(pack.clone());
     let (scene, lookups) =
         with_texture_pack(Some(snapshot), || crate::validate_three_script(script));
     let scene = scene?;
@@ -731,6 +762,50 @@ pub fn texture_pack_add_call(req: &Value) -> Value {
         Ok(json!({"key": key, "pack": pack.to_json()?}))
     };
     run().unwrap_or_else(|e| json!({"error": e}))
+}
+
+/// `{"op": "texture_pack_set", "pack": {...} | "..." | null}` → `{"ok", "keys"}`: sets the
+/// process-wide default pack used by every later compile (mobile renderers).
+pub fn texture_pack_set_call(req: &Value) -> Value {
+    let parsed = match req.get("pack") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => TexturePack::from_json_str(s).map(Some),
+        Some(v) => TexturePack::from_json(v).map(Some),
+    };
+    match parsed {
+        Ok(p) => {
+            let keys: Vec<String> =
+                p.as_ref().map(|p| p.entries.keys().cloned().collect()).unwrap_or_default();
+            set_default_texture_pack(p);
+            json!({"ok": true, "keys": keys})
+        }
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
+/// `{"op": "texture_requests", "code"}` → `{"requests": [{key, spec, hit, meshes}]}`: the AI
+/// textures the scene asks for, resolved against the default pack.
+pub fn texture_requests_call(req: &Value) -> Value {
+    let code = req.get("code").and_then(Value::as_str).unwrap_or("");
+    let (scene, lookups) =
+        with_texture_pack(default_texture_pack(), || crate::validate_three_script(code));
+    let scene = match scene {
+        Ok(s) => s,
+        Err(e) => return json!({"error": e}),
+    };
+    let meshes = texture_meshes(&scene);
+    let requests: Vec<Value> = lookups
+        .iter()
+        .map(|l| {
+            json!({
+                "key": l.key,
+                "spec": l.spec.to_json(),
+                "hit": l.hit,
+                "meshes": meshes.get(&l.key).cloned().unwrap_or_default(),
+            })
+        })
+        .collect();
+    json!({"requests": requests})
 }
 
 /// `{"op": "texture_image_request", "spec": {...}, "model"?}` → `{"body"}` (the Images API
@@ -944,7 +1019,7 @@ mod tests {
                 provenance: Value::Null,
             },
         );
-        let (_, lookups) = with_texture_pack(Some(Rc::new(pack)), || {
+        let (_, lookups) = with_texture_pack(Some(Arc::new(pack)), || {
             let mut ctx = Context::default();
             register_native_texture_callables(&mut ctx).unwrap();
             let hit = ctx
@@ -1047,6 +1122,31 @@ mod tests {
         let r = bake_textures(script, &mut pack, &force, &mut gen).unwrap();
         assert_eq!(r.generated.len(), 1);
         assert_eq!(calls, vec!["mossy stone", "terrazzo", "fails", "terrazzo"]);
+    }
+
+    #[test]
+    fn default_pack_applies_outside_scopes_and_requests_report_hits() {
+        let code = "const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());\nm.name = 'Wall';\nm.userData.xr = { material: { preset: 'brick', prompt: 'moss default pack', size: 256 } };\nscene.add(m);";
+        let spec = TextureSpec::new("moss default pack", Some(256.0), None).unwrap();
+        let png = crate::render::encode_png_rgba_compressed(8, 8, &synthetic_albedo(1, 8)).unwrap();
+        let mut pack = TexturePack::default();
+        add_generated_texture(&mut pack, &spec, &png, Value::Null).unwrap();
+        let before = texture_requests_call(&json!({"code": code}));
+        assert_eq!(before["requests"][0]["hit"], false, "{}", before);
+        let set = texture_pack_set_call(&json!({"pack": pack.to_json().unwrap()}));
+        assert_eq!(set["ok"], true);
+        let after = texture_requests_call(&json!({"code": code}));
+        assert_eq!(after["requests"][0]["hit"], true, "{}", after);
+        assert_eq!(after["requests"][0]["meshes"], json!(["Wall"]));
+        // A plain compile (no scope) uses the default pack.
+        let sg = crate::validate_three_script(code).unwrap();
+        let uri = sg.materials[0].base_color_texture.clone().unwrap();
+        // An explicit empty scope overrides it (preset fallback instead).
+        let (sg2, _) = with_texture_pack(None, || crate::validate_three_script(code));
+        assert_ne!(sg2.unwrap().materials[0].base_color_texture, Some(uri));
+        assert_eq!(texture_pack_set_call(&json!({"pack": null}))["ok"], true);
+        assert!(default_texture_pack().is_none());
+        assert_eq!(texture_pack_set_call(&json!({"pack": {"format": "x"}}))["ok"], false);
     }
 
     #[test]

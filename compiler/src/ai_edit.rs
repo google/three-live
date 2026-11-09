@@ -252,7 +252,7 @@ fn selection_arg(req: &Value) -> Vec<String> {
 ///
 /// Ops: `messages`, `repair`, `extract`, `validate`, `describe`, the image ops (`image_*`), the AI
 /// texture ops (`texture_key`, `texture_derive`, `texture_pack_validate`, `texture_pack_add`,
-/// `texture_image_request`, `texture_image_parse`), plus
+/// `texture_image_request`, `texture_image_parse`, `texture_pack_set`, `texture_requests`), plus
 /// the voice ops handled by
 /// [`crate::ai_voice::voice_call`] (`voice_setup`, `voice_parse`, `voice_audio`, `voice_text`,
 /// `voice_tool_result`, `voice_tools`).
@@ -312,6 +312,8 @@ pub fn ai_call(request: &str) -> String {
         "texture_pack_add" => crate::ai_texture::texture_pack_add_call(&req),
         "texture_image_request" => crate::ai_texture::texture_image_request_call(&req),
         "texture_image_parse" => crate::ai_texture::texture_image_parse_call(&req),
+        "texture_pack_set" => crate::ai_texture::texture_pack_set_call(&req),
+        "texture_requests" => crate::ai_texture::texture_requests_call(&req),
         _ if op.starts_with("voice_") => crate::ai_voice::voice_call(op, &req),
         _ => json!({"error": format!("unknown op '{}'", op)}),
     };

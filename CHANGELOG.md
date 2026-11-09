@@ -26,6 +26,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **AI textures on Android and iOS (B5d):** `ThreeLiveAITextures` (Android)
+    and `AITextures` (iOS) install a texture pack for every compile
+    (`setPack`), list a scene's texture requests, and generate missing textures
+    through `AIImagesProvider` (OpenAI-compatible Images endpoint) with an
+    on-disk cache of provider images. Requests, responses, image preparation,
+    and pack updates go through the shared Rust core (new `ai_call` ops
+    `texture_pack_set` and `texture_requests`; a process-wide default pack
+    applies to every compile outside an explicit scope).
+
 -   **AI texture baking in the CLI and MCP (B5c):** `three-live-cli textures
     bake scene.js [-o scene.textures.json] [--only A,B] [--force] [--glb]
     [--usdz] [--render]` generates missing textures through an
