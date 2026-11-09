@@ -45,6 +45,7 @@ import {
   sceneToCanvas3D,
   sceneToGLB,
   sceneToUSDZ,
+  withAITextureKey,
 } from './three-convert';
 import {
   type GLBData,
@@ -5640,7 +5641,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         });
       }
 
-      const safeXR = toSafeJson(node.userData?.xr);
+      const safeXR = withAITextureKey(toSafeJson(node.userData?.xr), node);
       // `sceneToCanvas3D` only serializes truthy `userData.xr`.
       const hasXR = Boolean(node.userData?.xr) && safeXR !== null;
       const inter = toSafeJson(node.userData?.interactivity);

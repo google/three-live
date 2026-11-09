@@ -38,7 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `ThreeLiveAITextures` / `AITextures` gain `mode` (auto when a provider is
     set, like `ai-textures` on the Web), `sceneLoaded(script)` background
     generation with update callbacks, and `ThreeLiveAIEditor.textures` /
-    `AIEditor.textures`, which re-apply the scene when textures arrive.
+    `AIEditor.textures`, which re-apply the scene when textures arrive. GLB
+    exports mark nodes whose material shows an AI texture with
+    `extras.xr.material.textureKey` (the pack key), so tools can tell it from
+    a preset fallback.
     Budgets: `three-live.min.js` `< 76 KB gz`, `three-live-full.min.js`
     `< 188 KB gz`, `xr-live.min.js` `< 87 KB gz`, `xr-live-full.min.js`
     `< 297 KB gz`.

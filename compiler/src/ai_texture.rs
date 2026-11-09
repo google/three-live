@@ -1178,6 +1178,20 @@ mod tests {
         }
         dims.sort();
         assert_eq!(dims, vec![512, 512, 1024], "albedo 1024, normal + ORM 512");
+        // Hits are marked with their pack key; preset fallbacks are not.
+        let key_of = |g: &Value| {
+            g["nodes"].as_array().unwrap().iter().find_map(|n| {
+                n["extras"]["xr"]["material"]["textureKey"].as_str().map(str::to_string)
+            })
+        };
+        assert_eq!(
+            key_of(&gltf),
+            Some(TextureSpec::new("big slate", Some(1024.0), None).unwrap().key())
+        );
+        let plain = crate::transcode_three_to_glb(code).unwrap();
+        let plain_len = u32::from_le_bytes([plain[12], plain[13], plain[14], plain[15]]) as usize;
+        let plain_gltf: Value = serde_json::from_slice(&plain[20..20 + plain_len]).unwrap();
+        assert_eq!(key_of(&plain_gltf), None);
         // The gradient albedo compresses far below its stored size (~4 MB).
         assert!(glb.len() < 1024 * 1024, "GLB is {} bytes", glb.len());
     }

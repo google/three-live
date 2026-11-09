@@ -460,6 +460,30 @@ function readAudioEmitter(xr: any): {
 }
 
 /**
+ * Pack key of the AI texture (B5) currently applied to `obj`'s material, or
+ * null when it shows a preset, a plain color, or an author-set map. Exporters
+ * record it as `extras.xr.material.textureKey`, so tools can tell an AI albedo
+ * from its preset fallback.
+ */
+// tslint:disable-next-line:no-any Dynamic Object3D.
+export function aiTextureKeyOf(obj: any): string | null {
+  const mat = obj?.material;
+  const map = mat?._presetMaps?.map;
+  if (!map || map !== mat.map) return null;
+  const m = /^ai_([0-9a-f]{16})_albedo$/.exec(String(map.name ?? ''));
+  return m ? m[1] : null;
+}
+
+/** Copy of `xr` with `material.textureKey` set when an AI texture is applied. */
+export function withAITextureKey<T>(xr: T, obj: unknown): T {
+  const key = aiTextureKeyOf(obj);
+  // tslint:disable-next-line:no-any Untyped trait bag.
+  const mat = (xr as any)?.material;
+  if (!key || !mat || typeof mat !== 'object' || Array.isArray(mat)) return xr;
+  return {...xr, material: {...mat, textureKey: key}};
+}
+
+/**
  * Serializes a Three.js Scene into in-memory GLBData ({ gltf, bin }) for WebGL2 rendering.
  * Automatically preserves `userData.xr` traits in `node.extras.xr` and bakes `animate(time)`
  * callbacks into standard glTF 2.0 animation tracks when present.
@@ -824,6 +848,16 @@ function serializeScene(
         // The canonical serializer (spatial plugins bundle / compiler engine) upgrades
         // `extras.xr` and `ANDROID_xr_scenecore` to the normalized trait set.
         getSharedRegistry().xrTraitSerializer?.gltfNode(node, obj.userData.xr);
+        const texKey = aiTextureKeyOf(obj);
+        const xrMat = node.extras?.xr?.material;
+        if (
+          texKey &&
+          xrMat &&
+          typeof xrMat === 'object' &&
+          !Array.isArray(xrMat)
+        ) {
+          xrMat.textureKey = texKey;
+        }
         nodeExtensionsUsed
           .add('MOZ_hubs_components')
           .add('ANDROID_xr_scenecore');

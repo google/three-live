@@ -1525,6 +1525,13 @@ function runProceduralTests(): void {
       ).length === 2 && hitNode?.extras?.xr?.material?.prompt === 'mossy stone',
       'AI textures export as ordinary glTF textures and keep the prompt spec in node extras.xr',
     );
+    const missNode = aiGltf.nodes.find((n: any) => n.name === 'BrickFallback');
+    assert(
+      hitNode?.extras?.xr?.material?.textureKey === mossSpec.key &&
+        missNode?.extras?.xr?.material?.textureKey === undefined &&
+        (hitMesh.userData.xr as any).material.textureKey === undefined,
+      'Exports mark AI hits with extras.xr.material.textureKey (not preset fallbacks, not userData)',
+    );
   } finally {
     delete g.__three_live_texture_pack__;
   }
