@@ -169,12 +169,36 @@ export {
   createWebSpeechRecognizer,
   describeEditResult,
   geminiLiveAdapter,
+  describeVoiceSelection,
   realtimeAdapter,
+  selectByVoice,
   setSelectOnTap,
+  speakableName,
   startVoiceEdit,
 } from './three-live/src/plugins/ai-voice';
 /** Multi-select for Tap & Speak / Talk-to-Select (part of `three-live-ai.min.js`). */
-export {describeSelection, getSelection, setSelection} from './three-live/src/plugins/ai-select';
+export {
+  describeSelection,
+  getSelection,
+  resolveSelection,
+  sceneSelectEntries,
+  selectCamera,
+  setSelection,
+} from './three-live/src/plugins/ai-select';
+/** Talk-to-Select tier-1 matcher and push-to-talk grammar (mirrors the Rust core). */
+export {
+  buildSelectIndex,
+  matchSelection,
+  parseVoiceCommand,
+} from './three-live/src/plugins/ai-select-match';
+export type {
+  SelectCamera,
+  SelectConfidence,
+  SelectIndexEntry,
+  SelectMatch,
+  SelectRawEntry,
+  VoiceCommand,
+} from './three-live/src/plugins/ai-select-match';
 export type {
   AISelectionEventDetail,
   AISelectionMode,
@@ -189,6 +213,7 @@ export type {
   AIVoiceEditResult,
   AIVoiceEventDetail,
   AIVoiceProviderName,
+  AIVoiceSelection,
   AIVoiceSessionOptions,
   AIVoiceState,
   AIVoiceTransport,

@@ -24,8 +24,11 @@ import {
   createWebSpeechRecognizer,
   describeEditResult,
   geminiLiveAdapter,
+  describeVoiceSelection,
   realtimeAdapter,
+  selectByVoice,
   setSelectOnTap,
+  speakableName,
   startVoiceEdit,
 } from './plugins/ai-voice';
 export type {
@@ -34,7 +37,23 @@ export type {
   AISelectionSource,
 } from './plugins/ai-select';
 
-import {describeSelection, getSelection, setSelection} from './plugins/ai-select';
+import {
+  describeSelection,
+  getSelection,
+  resolveSelection,
+  sceneSelectEntries,
+  selectCamera,
+  setSelection,
+} from './plugins/ai-select';
+import {buildSelectIndex, matchSelection, parseVoiceCommand} from './plugins/ai-select-match';
+export type {
+  SelectCamera,
+  SelectConfidence,
+  SelectIndexEntry,
+  SelectMatch,
+  SelectRawEntry,
+  VoiceCommand,
+} from './plugins/ai-select-match';
 
 registerPlugin(aiPlugin);
 
@@ -45,10 +64,19 @@ export {
   createAIChatProvider,
   createWebSpeechRecognizer,
   describeEditResult,
+  buildSelectIndex,
   describeSelection,
+  describeVoiceSelection,
   editScene,
   getSelection,
+  matchSelection,
+  parseVoiceCommand,
+  resolveSelection,
+  sceneSelectEntries,
+  selectByVoice,
+  selectCamera,
   setSelection,
+  speakableName,
   extractScript,
   geminiLiveAdapter,
   realtimeAdapter,
@@ -68,6 +96,7 @@ export type {
   AIMicrophoneSource,
   AISpeechRecognizer,
   AIVoiceAdapter,
+  AIVoiceSelection,
   AIVoiceEditOptions,
   AIVoiceEditResult,
   AIVoiceEventDetail,

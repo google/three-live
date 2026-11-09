@@ -37,6 +37,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `selected-mesh` now also clears the highlight. `xr-live-viewer.min.js`
     budget: `< 55 KB gz` (was `< 54`).
 
+-   **Talk-to-Select (B2b-4), voice selection without a model call:** say
+    "select the two red chairs on the left" and the tier-1 matcher resolves it
+    against the loaded scene: names (with synonyms and plurals), material
+    colors, camera-relative left / right / front / back, top / bottom,
+    biggest / smallest / tallest, ordinals ("the second mug"), counts
+    ("both", "three"), "all … except …", and lists ("the lamp and the sofa").
+    It also recognizes relations ("the cup next to the sofa") and leaves them
+    to a model. Push-to-talk (`startVoiceEdit`) understands "select / also
+    select / deselect … / clear the selection" and "select X and make it red",
+    which edits right away only when the reference was unambiguous; otherwise
+    it asks "Which one: A or B?" and changes nothing. New
+    `el.selectByVoice(query, {mode})`, `resolveSelection`, `matchSelection`,
+    `parseVoiceCommand`. The Rust core implements the same matcher
+    (`ai_call` ops `select` and `parse_command`); a shared fixture keeps the
+    two identical.
+
 -   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;

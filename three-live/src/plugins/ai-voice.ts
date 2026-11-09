@@ -29,10 +29,13 @@
 import type {EditSceneResult, ThreeLiveAIProvider} from './ai';
 import {
   type AISelectableElement,
+  type AISelectionMode,
   describeSelection,
   getSelection,
+  resolveSelection,
   setSelection,
 } from './ai-select';
+import {parseVoiceCommand, type SelectMatch} from './ai-select-match';
 
 /** Voice protocols supported by {@link connectVoice}. */
 export type AIVoiceProviderName = 'ai-realtime' | 'gemini-live';
@@ -57,7 +60,23 @@ export interface AIVoiceEventDetail {
   readonly reply?: string;
   readonly isFinal?: boolean;
   readonly result?: EditSceneResult;
+  /** Set when the utterance changed (or tried to change) the selection. */
+  readonly selection?: AIVoiceSelection;
   readonly error?: string;
+}
+
+/** Outcome of a spoken selection request (Talk-to-Select). */
+export interface AIVoiceSelection {
+  readonly mode: AISelectionMode;
+  readonly query: string;
+  /** Tier-1 match (`null` for a clear). */
+  readonly match: SelectMatch | null;
+  /** Whether the selection changed to what was asked. */
+  readonly applied: boolean;
+  /** The selection afterwards. */
+  readonly meshes: readonly string[];
+  /** What to say back: a confirmation, or a question when the reference was unclear. */
+  readonly say: string;
 }
 
 /** Bidirectional JSON message transport (a WebSocket by default). */
@@ -167,6 +186,11 @@ export interface AIAudioSink {
 
 /** Options for {@link startVoiceEdit}. */
 export interface AIVoiceEditOptions {
+  /**
+   * Treat "select …", "deselect …", "clear the selection" and "select X and make it red" as
+   * selection commands (Talk-to-Select; default true).
+   */
+  readonly talkToSelect?: boolean;
   /** BCP-47 language tag (default: the page language). */
   readonly lang?: string;
   /** Speak the result with `speechSynthesis` (default true). */
@@ -188,7 +212,10 @@ export interface AISpeechRecognizer {
 /** Result of {@link startVoiceEdit}. */
 export interface AIVoiceEditResult {
   readonly transcript: string;
-  readonly result: EditSceneResult;
+  /** The edit result, or `null` when the utterance only changed the selection. */
+  readonly result: EditSceneResult | null;
+  /** Set when the utterance changed (or tried to change) the selection. */
+  readonly selection?: AIVoiceSelection;
 }
 
 /** The element surface voice editing relies on. */
@@ -1021,6 +1048,88 @@ function speak(text: string, lang?: string): void {
   } catch {}
 }
 
+/** A mesh name as it should be spoken: `"FloorLamp_2"` → `"Floor Lamp 2"`. */
+export function speakableName(name: string): string {
+  return String(name)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])([0-9])/g, '$1 $2')
+    .replace(/[_\-.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function speakList(names: readonly string[], joiner = 'and'): string {
+  const shown = names.slice(0, 5).map(speakableName);
+  const more = names.length - shown.length;
+  if (more > 0) return `${shown.join(', ')} ${joiner} ${more} more`;
+  if (shown.length < 2) return shown.join('');
+  return `${shown.slice(0, -1).join(', ')} ${joiner} ${shown[shown.length - 1]}`;
+}
+
+/** What to say back after a selection request. */
+export function describeVoiceSelection(
+  mode: AISelectionMode,
+  match: SelectMatch | null,
+  meshes: readonly string[],
+  query: string,
+): string {
+  if (mode === 'clear') return 'Selection cleared.';
+  if (!match) return 'Which object?';
+  if (match.confidence === 'high') {
+    if (mode === 'remove') {
+      return meshes.length
+        ? `Removed ${speakList(match.names)}. ${meshes.length} selected.`
+        : `Removed ${speakList(match.names)}. Nothing is selected.`;
+    }
+    if (mode === 'add') return `Added ${speakList(match.names)}. ${meshes.length} selected.`;
+    return match.names.length === 1
+      ? `Selected ${speakableName(match.names[0])}.`
+      : `Selected ${match.names.length}: ${speakList(match.names)}.`;
+  }
+  if (match.confidence === 'ambiguous') {
+    if (match.reason === 'count_mismatch') {
+      return `I found ${match.candidates.length}: ${speakList(match.candidates)}. Which ones?`;
+    }
+    return `Which one: ${speakList(match.candidates, 'or')}?`;
+  }
+  const q = String(query).replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (match.reason === 'relation') {
+    return `I can't tell which one "${q}" is yet. Try its name or color, or tap it.`;
+  }
+  if (match.reason === 'empty') return 'Which object?';
+  return `I couldn't find "${q}".`;
+}
+
+/**
+ * Talk-to-Select: changes the selection from a spoken reference ("the two red chairs") with
+ * the tier-1 matcher. `mode: 'remove'` only looks inside the current selection. Nothing changes
+ * unless the match is confident; `say` then asks which one was meant.
+ */
+export async function selectByVoice(
+  el: AIVoiceElement,
+  query: string,
+  options: {mode?: AISelectionMode} = {},
+): Promise<AIVoiceSelection> {
+  const mode = options.mode ?? 'replace';
+  const q = String(query ?? '').slice(0, MAX_VOICE_TEXT);
+  if (mode === 'clear') {
+    setSelection(el, [], {mode: 'clear', source: 'voice', query: q || 'clear'});
+    return {mode, query: q, match: null, applied: true, meshes: [], say: describeVoiceSelection(mode, null, [], q)};
+  }
+  const within = mode === 'remove' ? getSelection(el) : null;
+  if (within && !within.length) {
+    return {mode, query: q, match: null, applied: false, meshes: [], say: 'Nothing is selected.'};
+  }
+  const match = resolveSelection(el, q, {within});
+  let applied = false;
+  if (match.confidence === 'high' && match.names.length) {
+    setSelection(el, match.names, {mode, source: 'voice', query: q});
+    applied = true;
+  }
+  const meshes = getSelection(el);
+  return {mode, query: q, match, applied, meshes, say: describeVoiceSelection(mode, match, meshes, q)};
+}
+
 /** Short spoken summary of an edit result. */
 export function describeEditResult(result: EditSceneResult): string {
   if (result.applied) return 'Done.';
@@ -1070,10 +1179,24 @@ export async function startVoiceEdit(
     if (options.speak !== false) speak(error, options.lang);
     throw new Error(`startVoiceEdit: ${error}`);
   }
-  emit(el, {state: 'editing', transcript, isFinal: true});
+  let instruction = transcript;
+  let selection: AIVoiceSelection | undefined;
+  const command = options.talkToSelect === false ? null : parseVoiceCommand(transcript);
+  if (command && command.kind !== 'edit') {
+    selection = await selectByVoice(el, command.kind === 'clear' ? '' : command.query, {
+      mode: command.mode,
+    });
+    if (command.kind !== 'mixed' || !selection.applied) {
+      emit(el, {state: 'idle', transcript, isFinal: true, selection});
+      if (options.speak !== false) speak(selection.say, options.lang);
+      return {transcript, result: null, selection};
+    }
+    instruction = command.instruction;
+  }
+  emit(el, {state: 'editing', transcript, isFinal: true, ...(selection ? {selection} : {})});
   let result: EditSceneResult;
   try {
-    result = await el.editScene(transcript, {signal: options.signal});
+    result = await el.editScene(instruction, {signal: options.signal});
   } catch (e: unknown) {
     result = {
       applied: false,
@@ -1083,9 +1206,12 @@ export async function startVoiceEdit(
       error: (e as Error)?.message || String(e),
     };
   }
-  emit(el, {state: 'idle', transcript, isFinal: true, result});
-  if (options.speak !== false) speak(describeEditResult(result), options.lang);
-  return {transcript, result};
+  emit(el, {state: 'idle', transcript, isFinal: true, result, ...(selection ? {selection} : {})});
+  if (options.speak !== false) {
+    const said = describeEditResult(result);
+    speak(selection ? `${selection.say} ${said}` : said, options.lang);
+  }
+  return {transcript, result, ...(selection ? {selection} : {})};
 }
 
 /** Enables or disables tap-to-select (`ai-select-on-tap`). */

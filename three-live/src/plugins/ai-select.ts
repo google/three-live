@@ -12,6 +12,15 @@
  * `{mesh, meshes, added, removed, source, query?}` and highlights the whole set.
  */
 
+import {
+  buildSelectIndex,
+  DEFAULT_SELECT_CAMERA,
+  matchSelection,
+  type SelectCamera,
+  type SelectMatch,
+  type SelectRawEntry,
+} from './ai-select-match';
+
 /** What changed the selection. */
 export type AISelectionSource = 'tap' | 'voice' | 'api';
 
@@ -145,4 +154,99 @@ export function describeSelection(meshes: readonly string[]): string {
   const shown = meshes.slice(0, 20).map((m) => `"${m}"`);
   const more = meshes.length > 20 ? ` and ${meshes.length - 20} more` : '';
   return `The user selected ${meshes.length} meshes: ${shown.join(', ')}${more}. "These", "them", or "it" refer to them.`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Talk-to-Select: the web scene index and camera for the tier-1 matcher.
+
+type Vec3 = [number, number, number];
+
+/** The viewer surface the scene index reads (`ThreeView`). */
+interface IndexableViewer {
+  meshes?: ReadonlyArray<{
+    name: string;
+    transform: ArrayLike<number>;
+    visible?: boolean;
+    primitives: ReadonlyArray<{positions?: ArrayLike<number>; baseColor?: readonly number[]}>;
+  }>;
+  getCameraOrbit?(): {theta: number; phi: number; radius: number};
+  getCameraTarget?(): {x: number; y: number; z: number};
+}
+
+/** Local-space boxes per positions array (computed once per geometry). */
+const localBoxes = new WeakMap<object, [Vec3, Vec3] | null>();
+
+function localBox(positions: ArrayLike<number>): [Vec3, Vec3] | null {
+  const key = positions as unknown as object;
+  if (localBoxes.has(key)) return localBoxes.get(key)!;
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const v = positions[i + k];
+      if (v < lo[k]) lo[k] = v;
+      if (v > hi[k]) hi[k] = v;
+    }
+  }
+  const box: [Vec3, Vec3] | null = Number.isFinite(lo[0]) ? [lo, hi] : null;
+  localBoxes.set(key, box);
+  return box;
+}
+
+/**
+ * One raw entry per visible named mesh: its world box (from the node transform) and its first
+ * primitive's linear base color.
+ */
+export function sceneSelectEntries(el: {viewer?: unknown}): SelectRawEntry[] {
+  const meshes = (el.viewer as IndexableViewer | null | undefined)?.meshes ?? [];
+  const out: SelectRawEntry[] = [];
+  for (const mesh of meshes.slice(0, 5000)) {
+    if (!mesh?.name || mesh.visible === false) continue;
+    const m = mesh.transform;
+    const lo: Vec3 = [Infinity, Infinity, Infinity];
+    const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+    for (const p of mesh.primitives ?? []) {
+      const box = p.positions ? localBox(p.positions) : null;
+      if (!box) continue;
+      for (let i = 0; i < 8; i++) {
+        const x = box[i & 1 ? 1 : 0][0];
+        const y = box[i & 2 ? 1 : 0][1];
+        const z = box[i & 4 ? 1 : 0][2];
+        for (let k = 0; k < 3; k++) {
+          const v = m ? m[k] * x + m[4 + k] * y + m[8 + k] * z + m[12 + k] : [x, y, z][k];
+          if (v < lo[k]) lo[k] = v;
+          if (v > hi[k]) hi[k] = v;
+        }
+      }
+    }
+    if (!Number.isFinite(lo[0])) continue;
+    const c = mesh.primitives?.[0]?.baseColor;
+    out.push({name: mesh.name, min: lo, max: hi, color: c ? [c[0], c[1], c[2]] : null});
+  }
+  return out;
+}
+
+/** The viewer's orbit camera as eye + target (the matcher's default when unavailable). */
+export function selectCamera(el: {viewer?: unknown}): SelectCamera {
+  const v = el.viewer as IndexableViewer | null | undefined;
+  const o = v?.getCameraOrbit?.();
+  const t = v?.getCameraTarget?.();
+  if (!o || !t || ![o.theta, o.phi, o.radius, t.x, t.y, t.z].every(Number.isFinite)) {
+    return DEFAULT_SELECT_CAMERA;
+  }
+  const flat = o.radius * Math.cos(o.phi);
+  return {
+    eye: [t.x + flat * Math.sin(o.theta), t.y + o.radius * Math.sin(o.phi), t.z + flat * Math.cos(o.theta)],
+    target: [t.x, t.y, t.z],
+  };
+}
+
+/** Resolves a spoken reference against the element's current scene (tier 1). */
+export function resolveSelection(
+  el: AISelectableElement & {viewer?: unknown},
+  query: string,
+  options: {within?: readonly string[] | null} = {},
+): SelectMatch {
+  const index = buildSelectIndex(sceneSelectEntries(el));
+  return matchSelection(index, query, selectCamera(el), options.within ?? null);
 }

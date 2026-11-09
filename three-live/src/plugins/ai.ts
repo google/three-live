@@ -28,6 +28,8 @@ import {getSharedRegistry, type ThreeLivePlugin} from '../plugin';
 import {
   type AIVoiceEditOptions,
   type AIVoiceEditResult,
+  type AIVoiceSelection,
+  selectByVoice,
   type AIVoiceElement,
   type AIVoiceSession,
   type AIVoiceSessionOptions,
@@ -36,7 +38,7 @@ import {
   setSelectOnTap,
   startVoiceEdit,
 } from './ai-voice';
-import {installSelectionState} from './ai-select';
+import {type AISelectionMode, installSelectionState} from './ai-select';
 
 /** One chat message sent to an AI provider. */
 export interface AIChatMessage {
@@ -118,6 +120,7 @@ export interface AIEditableElement {
   ) => Promise<EditSceneResult>;
   undoEdit?: () => Promise<boolean>;
   startVoiceEdit?: (options?: AIVoiceEditOptions) => Promise<AIVoiceEditResult>;
+  selectByVoice?: (query: string, options?: {mode?: AISelectionMode}) => Promise<AIVoiceSelection>;
   connectVoice?: (options: AIVoiceSessionOptions) => Promise<AIVoiceSession>;
   setSelectOnTap?: (enabled: boolean) => void;
   hasAttribute?(name: string): boolean;
@@ -590,6 +593,8 @@ export const aiPlugin: ThreeLivePlugin = {
     const voiceEl = el as AIVoiceElement;
     el.startVoiceEdit = (options?: AIVoiceEditOptions) =>
       startVoiceEdit(voiceEl, options);
+    el.selectByVoice = (query: string, options?: {mode?: AISelectionMode}) =>
+      selectByVoice(voiceEl, query, options);
     el.connectVoice = (options: AIVoiceSessionOptions) =>
       connectVoice(voiceEl, options);
     el.setSelectOnTap = (enabled: boolean) => setSelectOnTap(voiceEl, enabled);

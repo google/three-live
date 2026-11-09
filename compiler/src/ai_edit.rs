@@ -291,6 +291,10 @@ pub fn ai_call(request: &str) -> String {
                 str_arg(&req, "error"),
             )
         }),
+        "select" => crate::ai_select::select_call(&req),
+        "parse_command" => {
+            crate::ai_select::parse_voice_command(str_arg(&req, "text").unwrap_or("")).to_json()
+        }
         _ if op.starts_with("voice_") => crate::ai_voice::voice_call(op, &req),
         _ => json!({"error": format!("unknown op '{}'", op)}),
     };
@@ -437,6 +441,19 @@ mod tests {
             serde_json::from_str(&ai_call(&json!({"op": "repair", "error": "E"}).to_string()))
                 .unwrap();
         assert!(r["message"].as_str().unwrap().starts_with("That script was rejected"));
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "parse_command", "text": "select the lamp and make it red"}).to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["kind"], "mixed");
+        assert_eq!(r["instruction"], "make it red");
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "select", "query": "the lamp",
+                    "entries": [{"name": "Lamp", "min": [0, 0, 0], "max": [1, 1, 1]}]})
+            .to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["names"], json!(["Lamp"]));
         assert!(ai_call("{").contains("invalid request JSON"));
         assert!(ai_call("{\"op\":\"nope\"}").contains("unknown op"));
     }
