@@ -297,10 +297,12 @@ export type {
 export * from './xr-live/src/plugins/index';
 /** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
 export * from './xr-live/src/sim/index';
-/** Optional WebGPU `GPURenderBundle` scene accelerator (`three-live/webgpu`, `three-live-webgpu.min.js`). */
-export * from './three-live/src/webgpu';
 /** Optional WebGPU Gaussian Splatting compute & render accelerator (`xr-live/webgpu`, `xr-live-webgpu.min.js`). */
 export * from './xr-live/src/webgpu';
+/** Optional WebGPU `GPURenderBundle` scene accelerator (`three-live/webgpu`, `three-live-webgpu.min.js`). */
+export * from './three-live/src/webgpu';
+/** Optional Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`three-live/tsl`, `three-live-tsl.min.js`). */
+export * from './three-live/src/tsl';
 
 /**
  * Declarative JSX / HTML attributes supported by the <three-live> custom element.

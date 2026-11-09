@@ -186,6 +186,15 @@ export interface ThreeLiveElement {
   skyboxImage: string | null;
   autoplay: boolean;
   animationName: string | null;
+  /**
+   * Optional `three-live-tsl` (`tslPlugin`) method updating a named
+   * `TSL.uniform(initialValue, name)` at 60–120 Hz without recompiling shaders.
+   */
+  setMaterialUniform?(
+    materialName: string,
+    uniformName: string,
+    value: unknown,
+  ): boolean;
 }
 
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
@@ -499,7 +508,7 @@ export class ThreeLiveElement extends BaseElement {
 
       case 'selected-mesh':
         // Removing the attribute clears the highlight too.
-        this.viewer?.setSelectedMesh(newVal ?? '');
+        v?.setSelectedMesh(newVal ?? '');
         break;
 
       case 'exposure':

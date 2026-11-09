@@ -25,6 +25,7 @@ limitations under the License.
   <script src="./three-live-studio.min.js"></script>
   <script src="./three-live-cad.min.js"></script>
   <script src="./three-live-animation.min.js"></script>
+  <script src="./three-live-tsl.min.js"></script>
   <style>
     :root {
       --bg-primary: #090d16;
@@ -541,7 +542,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">76.6 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">76.7 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -585,6 +586,7 @@ limitations under the License.
         <div class="btn-row preset-grid">
           <button id="btn-artifact" class="primary">Quantum Core</button>
           <button id="btn-cad">⚙️ CAD CSG &amp; 3D Text</button>
+          <button id="btn-tsl">🌈 Holo TSL Shield</button>
           <button id="btn-instanced">💎 Instanced Field</button>
           <button id="btn-torus">Torus Knot</button>
           <button id="btn-crystal">Emerald Crystal</button>
@@ -957,6 +959,57 @@ for (let i = 0; i < boltCount; i++) {
 }
 scene.add(bolts);`,
 
+    tsl: `// Loop-Free TSL Node Materials (WebGL2 + WebGPU + USDZ MaterialX + Android Filamat)
+const TSL = THREE.TSL;
+const uScanSpeed = TSL.uniform(4.5, "uScanSpeed");
+const uShieldColor = TSL.uniform(new THREE.Color(0x38bdf8), "uShieldColor");
+
+// 1. Procedural Voronoi + Triplanar Alloy Core (0 bitmap textures!)
+const cell = TSL.voronoi2D(TSL.uv.mul(7.0), 0.85);
+const grain = TSL.triplanar(3.5, 4.0);
+const coreMat = new THREE.MeshStandardNodeMaterial({ name: "VoronoiAlloyMat", metalness: 0.9 });
+coreMat.colorNode = TSL.mix(TSL.color(0x1e293b), TSL.color(0xe2e8f0), cell.mul(0.75).add(grain.mul(0.25)));
+coreMat.roughnessNode = TSL.remap(cell, 0.0, 1.0, 0.12, 0.52);
+coreMat.bumpNode = TSL.bumpFromHeight(cell, 0.35);
+
+const core = new THREE.Mesh(new THREE.TorusKnotGeometry(0.62, 0.2, 96, 24), coreMat);
+core.name = "VoronoiCore";
+core.castShadow = true;
+scene.add(core);
+
+// 2. Animated Fresnel + Scanline Holographic Energy Shield with Vertex Ripple
+const rim = TSL.fresnel(2.2);
+const scan = TSL.sin(TSL.positionWorld.y.mul(22.0).sub(TSL.time.mul(uScanSpeed))).mul(0.5).add(0.5);
+const ripple = TSL.sin(TSL.positionLocal.y.mul(6.0).add(TSL.time.mul(2.5))).mul(0.035);
+const shieldMat = new THREE.MeshStandardNodeMaterial({
+  name: "HoloShieldMat",
+  roughness: 0.1,
+  metalness: 0.1
+});
+shieldMat.colorNode = uShieldColor;
+shieldMat.emissiveNode = TSL.hueShift(uShieldColor, TSL.time.mul(0.35)).mul(rim.mul(1.6).add(scan.mul(0.55)));
+shieldMat.opacityNode = rim.mul(0.72).add(scan.mul(0.18)).clamp(0.08, 0.88);
+shieldMat.positionNode = TSL.positionLocal.add(TSL.normalLocal.mul(ripple));
+
+const shield = new THREE.Mesh(new THREE.SphereGeometry(1.22, 48, 32), shieldMat);
+shield.name = "HoloEnergyShield";
+scene.add(shield);
+
+// 3. Shadow-Receiving Carbon Base Pedestal
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.55, 1.7, 0.22, 36),
+  new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.65, roughness: 0.35 })
+);
+base.name = "ShieldPedestal";
+base.position.set(0, -1.42, 0);
+base.receiveShadow = true;
+scene.add(base);
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+keyLight.position.set(3, 5, 4);
+keyLight.castShadow = true;
+scene.add(keyLight);`,
+
     instanced: `// Hardware GPU Instanced Crystal Lattice (125 instances in 1 draw call)
 const grid = 5;
 const total = grid * grid * grid;
@@ -1130,6 +1183,7 @@ scene.add(sat2);`,
     const presetButtons = {
       artifact: document.getElementById("btn-artifact"),
       cad: document.getElementById("btn-cad"),
+      tsl: document.getElementById("btn-tsl"),
       instanced: document.getElementById("btn-instanced"),
       torus: document.getElementById("btn-torus"),
       crystal: document.getElementById("btn-crystal"),
@@ -1248,6 +1302,7 @@ scene.add(sat2);`,
   // UI Button Handlers
   document.getElementById("btn-artifact").addEventListener("click", () => selectPreset("artifact"));
   document.getElementById("btn-cad").addEventListener("click", () => selectPreset("cad"));
+  document.getElementById("btn-tsl").addEventListener("click", () => selectPreset("tsl"));
   document.getElementById("btn-instanced").addEventListener("click", () => selectPreset("instanced"));
   document.getElementById("btn-torus").addEventListener("click", () => selectPreset("torus"));
   document.getElementById("btn-crystal").addEventListener("click", () => selectPreset("crystal"));

@@ -718,6 +718,9 @@ function buildThreeLive() {
       path.join(tlDist, 'three-live-webgpu.min.js'),
       path.join(THREE_LIVE_DIR, 'examples/three-live-webgpu.min.js'));
   fs.copyFileSync(
+      path.join(tlDist, 'three-live-tsl.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-tsl.min.js'));
+  fs.copyFileSync(
       sandboxHtmlSrc,
       path.join(THREE_LIVE_DIR, 'examples/three-live-sandbox.html'));
   fs.copyFileSync(
@@ -735,6 +738,9 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-webgpu.min.js'),
       path.join(ROOT_DIR, 'examples/three/three-live-webgpu.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-tsl.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-tsl.min.js'));
   fs.copyFileSync(
       sandboxHtmlSrc,
       path.join(ROOT_DIR, 'examples/three/three-live-sandbox.html'));
@@ -989,6 +995,9 @@ function buildXRLive() {
     fs.copyFileSync(
         path.join(DIST_DIR, 'three-live-webgpu.min.js'),
         path.join(xrExampleDir, 'three-live-webgpu.min.js'));
+    fs.copyFileSync(
+        path.join(DIST_DIR, 'three-live-tsl.min.js'),
+        path.join(xrExampleDir, 'three-live-tsl.min.js'));
     fs.copyFileSync(
         sandboxHtmlSrc, path.join(xrExampleDir, 'three-live-sandbox.html'));
   }

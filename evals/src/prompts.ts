@@ -42,6 +42,7 @@ export const GUIDED_SYSTEM_PROMPT = [
   '   `transmission`, `ior`, `thickness`, `attenuationColor`, `attenuationDistance`, `clearcoat`, `clearcoatRoughness`, `iridescence`, `iridescenceIOR`, `sheen`, `sheenColor`, `sheenRoughness`,',
   '   `dispersion`, `opacity`, `transparent`), plus procedural `THREE.DataTexture(data, width, height, THREE.RGBAFormat)` and `THREE.CanvasTexture(canvas)` (`document.createElement("canvas").getContext("2d")`).',
   "   - Seamless PBR material presets: spread `THREE.ProceduralTexture.<preset>({ color, scale, seed, roughness, normalStrength, size })` into `MeshStandardMaterial` (presets: `wood`, `marble`, `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`), or set `mesh.userData.xr = { material: 'wood' }` to bake a preset tinted by the material color.",
+  '   - Loop-Free Procedural Node Materials (`three-live-tsl` / `GOOGLE_material_tsl`): `new THREE.MeshStandardNodeMaterial({ ... })` with `colorNode`, `opacityNode`, `emissiveNode`, `roughnessNode`, `metalnessNode`, `normalScaleNode`, `bumpNode`, and `positionNode` built from `THREE.TSL` (`float`, `vec2`, `vec3`, `vec4`, `color`, `uniform`, `uv`, `time`, `positionLocal`, `positionWorld`, `normalLocal`, `normalWorld`, `viewDirection`, math/vector ops, `fresnel`, `simplexNoise2D`, `simplexNoise3D`, `voronoi2D`, `checker`, `triplanar`, `hueShift`, `bumpFromHeight`, `remap`). Graphs must remain acyclic (`<= 128` nodes, `<= 16` uniforms, never `TSL.Loop` or `ShaderMaterial`).',
   '4. Instancing, Animation, IK & LOD:',
   '   - `THREE.InstancedMesh` (`setMatrixAt`, `setColorAt`), `THREE.LOD` (`addLevel`), `THREE.IKSolver`, or declarative `node.userData.xr = { ik: { root, mid, effector, target, pole } }`.',
   '   - For procedural animation, define `function animate(t) { ... }` (where `t` is elapsed time in seconds) or `requestAnimationFrame(animate)`.',
@@ -70,8 +71,12 @@ export const GUIDED_SYSTEM_PROMPT = [
   '   - Pull `camera.position.set(x, y, z)` back to distance ~2.2x the full scene bounding radius (including ground/floor planes and peripheral props) and call `camera.lookAt(0, centerY, 0)` so 100% of meshes are inside the camera frustum.',
 ].join('\n');
 
-export function buildCodegenPrompts(promptEntry: PromptEntry, arm: string): PromptPair {
-  const systemPrompt = arm === 'guided' ? GUIDED_SYSTEM_PROMPT : VANILLA_SYSTEM_PROMPT;
+export function buildCodegenPrompts(
+  promptEntry: PromptEntry,
+  arm: string,
+): PromptPair {
+  const systemPrompt =
+    arm === 'guided' ? GUIDED_SYSTEM_PROMPT : VANILLA_SYSTEM_PROMPT;
   const userPrompt = [
     `Task ID: ${promptEntry.id} (${promptEntry.category} - ${promptEntry.title})`,
     '',
@@ -88,13 +93,16 @@ export function buildRepairPrompts(
   validationReport: RepairValidationInput,
   arm: string,
 ): PromptPair {
-  const systemPrompt = arm === 'guided' ? GUIDED_SYSTEM_PROMPT : VANILLA_SYSTEM_PROMPT;
+  const systemPrompt =
+    arm === 'guided' ? GUIDED_SYSTEM_PROMPT : VANILLA_SYSTEM_PROMPT;
   const allDiags = validationReport.diagnostics ?? [];
   const actionableDiags = allDiags.filter((d) => d.severity !== 'info');
   const selectedDiags = actionableDiags.length > 0 ? actionableDiags : allDiags;
   const diagsText = selectedDiags
     .map((d) => {
-      const loc = d.line ? ` (line ${d.line}${d.column ? `, col ${d.column}` : ''})` : '';
+      const loc = d.line
+        ? ` (line ${d.line}${d.column ? `, col ${d.column}` : ''})`
+        : '';
       const node = d.node ? ` [node: ${d.node}]` : '';
       const hint = d.hint ? `\n    Hint: ${d.hint}` : '';
       return `- [${d.code}] ${String(d.severity).toUpperCase()}${node}${loc}: ${d.message}${hint}`;
@@ -106,13 +114,16 @@ export function buildRepairPrompts(
     : 'Compilation failed to produce a valid scene graph.';
 
   const simHint =
-    validationReport.simEvaluation?.ran && !validationReport.simEvaluation.simActive
+    validationReport.simEvaluation?.ran &&
+    !validationReport.simEvaluation.simActive
       ? `\n- [SIM] TEMPORAL/INTERACTIVE INACTIVE: Scene is in category '${promptEntry.category}', but running 60Hz simulation for ${validationReport.simEvaluation.durationSec}s with select/explode/moveCharacter actions produced 0 moving bodies, 0 triggered events, and 0 audio cues. Add an animate(t) loop or declarative userData.xr / userData.interactivity / userData.sim traits so the scene responds dynamically.`
       : '';
 
   const ve = validationReport.visualEvaluation;
   const visualHint =
-    ve?.ran && (!ve.visualPass || (ve.overallScore ?? 5) < 4.5) && ve.visualCritique
+    ve?.ran &&
+    (!ve.visualPass || (ve.overallScore ?? 5) < 4.5) &&
+    ve.visualCritique
       ? `\n- [VISUAL JUDGE] 4-Up Contact Sheet Score ${ve.overallScore}/5.0 (semanticMatch=${ve.semanticMatch}, spatialCoherence=${ve.spatialCoherence}, cameraFraming=${ve.cameraFraming}, materialAndLighting=${ve.materialAndLighting}): ${ve.visualCritique}`
       : '';
 
@@ -134,6 +145,7 @@ export function buildRepairPrompts(
     '- For [TL205] missing `mesh.name` on interactive nodes, assign a unique `node.name = "..."` to every Mesh or Group before attaching `userData.xr`, `userData.interactivity`, or `userData.sim`.',
     '- For [TL201] / [TL202] `userData.xr` schema warnings, follow the diagnostic hint (e.g. use `grab: true` instead of `grabbable: true`, remove unrecognized keys, and keep numeric trait values within range).',
     '- For [TL303] meshes outside the camera frustum, pull `camera.position.set(x, y, z)` back further and adjust `camera.lookAt(0, centerY, 0)` so all meshes are inside the camera view.',
+    '- For [TL501]–[TL504] TSL node-material errors, keep `THREE.TSL` graphs acyclic within `<= 128` nodes and `<= 16` uniforms, replace `TSL.Loop` with closed-form math/noise, and never use fragment-only ops (`viewDirection`, `fresnel`, `bumpFromHeight`) inside `positionNode`.',
     'Return ONLY the corrected JavaScript source code inside a ```javascript ... ``` block.',
   ].join('\n');
 

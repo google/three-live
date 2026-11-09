@@ -135,6 +135,11 @@
       "import": "./three-live/dist/three-live-webgpu.js",
       "require": "./three-live/dist/three-live-webgpu.cjs"
     },
+    "./tsl": {
+      "types": "./three-live/dist/three-live-tsl.d.ts",
+      "import": "./three-live/dist/three-live-tsl.js",
+      "require": "./three-live/dist/three-live-tsl.cjs"
+    },
     "./element": {
       "types": "./three-live/dist/three-live-element.d.ts",
       "import": "./three-live/dist/three-live-element.js",

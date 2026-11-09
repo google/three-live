@@ -135,7 +135,7 @@ export const IMAGE_SYSTEM_PROMPT = [
   '- Decompose visible objects into `THREE.Group` and `THREE.Mesh` hierarchies with a unique, descriptive `.name` on every Mesh and Group (for example `Table`, `Chair_Left`, `Desk_Lamp`) before attaching `userData.xr` or `userData.interactivity`.',
   '- Use real-world meters (1 unit = 1 m), +Y up, with the floor or resting surface at y = 0 (or the given metric floorY).',
   '- When metric spatial priors (floor height, camera pose, planes, or 3D object boxes) are provided, place meshes at those exact metric [x, y, z] coordinates, dimensions, and yaw angles, and set `mesh.userData.xr = { grab: true }` on movable props.',
-  '- Supported: core geometries (`BoxGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `CapsuleGeometry`, `PlaneGeometry`, `TorusGeometry`, `LatheGeometry`, `ExtrudeGeometry`, `TubeGeometry`, `Shape`, `Path`), `THREE.CSG`, `MeshStandardMaterial` / `MeshPhysicalMaterial`, `THREE.CanvasTexture`, `THREE.ProceduralTexture` presets (`wood`, `marble`, `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`), lights (`AmbientLight`, `HemisphereLight`, `DirectionalLight`, `PointLight`, `SpotLight`), and canonical `node.userData.xr` traits (`grab`, `anchor`, `physics`, `joint`, `handles`, `dimensions`, `billboard`, `orbit`, `follow`).',
+  '- Supported: core geometries (`BoxGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `CapsuleGeometry`, `PlaneGeometry`, `TorusGeometry`, `LatheGeometry`, `ExtrudeGeometry`, `TubeGeometry`, `Shape`, `Path`), `THREE.CSG`, `MeshStandardMaterial` / `MeshPhysicalMaterial` / `MeshStandardNodeMaterial` (loop-free `THREE.TSL`), `THREE.CanvasTexture`, `THREE.ProceduralTexture` presets (`wood`, `marble`, `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`), lights (`AmbientLight`, `HemisphereLight`, `DirectionalLight`, `PointLight`, `SpotLight`), and canonical `node.userData.xr` traits (`grab`, `anchor`, `physics`, `joint`, `handles`, `dimensions`, `billboard`, `orbit`, `follow`).',
   '- Always include balanced lighting (`AmbientLight` or `HemisphereLight` plus a `DirectionalLight` or `PointLight`) and frame `camera.position.set(x, y, z)` and `camera.lookAt(tx, ty, tz)` so 100% of meshes are inside the camera frustum.',
 ].join('\n');
 
@@ -162,7 +162,8 @@ function cleanLabel(raw: unknown): string {
 
 function fmtMeters(v: number): string {
   const rounded = Math.round(v * 100) / 100;
-  const zeroNormalized = Object.is(rounded, -0) || Math.abs(rounded) < 1e-9 ? 0 : rounded;
+  const zeroNormalized =
+    Object.is(rounded, -0) || Math.abs(rounded) < 1e-9 ? 0 : rounded;
   return zeroNormalized.toFixed(2);
 }
 
@@ -177,7 +178,8 @@ function asVec3(raw: unknown): [number, number, number] | null {
   const x = Number(raw[0]);
   const y = Number(raw[1]);
   const z = Number(raw[2]);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z))
+    return null;
   return [x, y, z];
 }
 
@@ -185,7 +187,8 @@ function asPosVec2(raw: unknown): [number, number] | null {
   if (!Array.isArray(raw) || raw.length < 2) return null;
   const w = Number(raw[0]);
   const h = Number(raw[1]);
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0)
+    return null;
   return [w, h];
 }
 
@@ -573,7 +576,9 @@ export async function normalizeImageInput(
       return `${header},${b64}`;
     }
     if (/^(javascript|vbscript|file|ftp|ws|wss):/i.test(s)) {
-      throw new Error('compileFromImage: unsupported or unsafe image URL scheme.');
+      throw new Error(
+        'compileFromImage: unsupported or unsafe image URL scheme.',
+      );
     }
     if (/^http:/i.test(s) && !isAllowedImageUrl(s)) {
       throw new Error(
@@ -602,7 +607,9 @@ export async function normalizeImageInput(
     const doFetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (typeof doFetch !== 'function') {
       if (isDirectRemote) return s;
-      throw new Error('compileFromImage: no fetch() implementation is available.');
+      throw new Error(
+        'compileFromImage: no fetch() implementation is available.',
+      );
     }
     const res = await doFetch(resolvedUrl, {
       mode: 'cors',

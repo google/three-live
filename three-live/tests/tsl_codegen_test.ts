@@ -21,7 +21,9 @@
  */
 
 import * as assert from 'assert';
-import {registerPlugin} from '../src/plugin';
+import * as vm from 'vm';
+import {getSharedRegistry, registerPlugin} from '../src/plugin';
+import {aiPlugin, editScene, type ThreeLiveAIProvider} from '../src/plugins/ai';
 import {environmentMapPlugin} from '../src/plugins/envmap';
 import {materialsPlugin} from '../src/plugins/materials';
 import {morphPlugin} from '../src/plugins/morph';
@@ -34,6 +36,7 @@ import {
   compileTslToGlsl,
   compileTslToWgsl,
   fmtShaderFloat,
+  installTslExtension,
   serializeTslToUsda,
   setMaterialUniform,
   tslPlugin,
@@ -1046,4 +1049,185 @@ fragColor=vec4(N,1.0);
   );
 }
 
-console.log('=== All Loop-Free TSL B2/B3 Codegen Tests Passed! ===');
+// 6. Isolated V8 Worker-Realm Serialization & `three-live-ai` `editScene()` TSL Integration
+(async () => {
+  // 6a. Verify `installTslExtension.toString()` is 100% self-contained in an empty V8 realm
+  const emptyRealm = vm.createContext(Object.create(null));
+  const realmCheckScript = `
+    (function() {
+      const installer = (${installTslExtension.toString()});
+      class FakeColor {
+        constructor(v) {
+          this.isColor = true;
+          this.r = typeof v === 'number' ? ((v >> 16) & 255) / 255 : 0.2;
+          this.g = typeof v === 'number' ? ((v >> 8) & 255) / 255 : 0.7;
+          this.b = typeof v === 'number' ? (v & 255) / 255 : 0.9;
+        }
+        copy(other) { this.r = other.r; this.g = other.g; this.b = other.b; return this; }
+      }
+      class FakeVec2 {
+        constructor() { this.x = 1; this.y = 1; }
+        copy(other) { this.x = other.x; this.y = other.y; return this; }
+      }
+      class FakeMeshPhysicalMaterial {
+        constructor(opts = {}) {
+          this.name = opts.name || '';
+          this.color = new FakeColor(opts.color ?? 0xffffff);
+          this.emissive = new FakeColor(0x000000);
+          this.normalScale = new FakeVec2();
+          this.sheenColor = new FakeColor(0x000000);
+          this.attenuationColor = new FakeColor(0xffffff);
+          this.transparent = Boolean(opts.transparent);
+          this.alphaTest = Number(opts.alphaTest || 0);
+        }
+      }
+      const warnings = [];
+      const reg = { authorNamespace: {} };
+      const fakeThree = {
+        Color: FakeColor,
+        MeshPhysicalMaterial: FakeMeshPhysicalMaterial,
+        warnUnsupported: (d, f) => warnings.push(d + ' -> ' + f),
+      };
+      const ext = installer(fakeThree, reg);
+      const T = ext.TSL;
+      const mat = new ext.MeshStandardNodeMaterial({ name: 'WorkerShield' });
+      const uSpd = T.uniform(3.5, 'uSpd');
+      mat.colorNode = T.mix(T.color(0x0284c7), T.color(0x38bdf8), T.voronoi2D(T.uv.mul(5.0), 0.8));
+      mat.emissiveNode = T.color(0x38bdf8).mul(T.fresnel(2.0).add(T.sin(T.time.mul(uSpd)).mul(0.25)));
+      mat.opacityNode = T.fresnel(2.0).clamp(0.1, 0.9);
+      mat.positionNode = T.positionLocal.add(T.normalLocal.mul(0.02));
+      const cloned = mat.clone();
+      return {
+        transparent: mat.transparent,
+        clonedTransparent: cloned.transparent,
+        warningsCount: warnings.length,
+        ir: mat._serializeTslGraph(),
+      };
+    })()
+  `;
+  const realmOut = vm.runInContext(realmCheckScript, emptyRealm) as {
+    transparent: boolean;
+    clonedTransparent: boolean;
+    warningsCount: number;
+    ir: unknown;
+  };
+  assert.strictEqual(
+    realmOut.transparent,
+    true,
+    'Worker realm opacityNode auto-sets transparent=true',
+  );
+  assert.strictEqual(realmOut.clonedTransparent, true);
+  assert.strictEqual(realmOut.warningsCount, 0);
+  const realmValidated = validateTslGraph(realmOut.ir, 'WorkerShield');
+  assert.ok(
+    realmValidated.ok,
+    'Worker-realm serialized TSL graph passes validator cleanly',
+  );
+  if (realmValidated.ok) {
+    assert.strictEqual(realmValidated.graph.usesTime, true);
+    assert.strictEqual(realmValidated.graph.usesVertexPosition, true);
+    assert.strictEqual(realmValidated.graph.uniformSlots.length, 1);
+  }
+
+  // 6b. Verify `three-live-ai` `editScene()` system prompt & live TSL repair + hot-swap
+  const prevRunner = getSharedRegistry().scriptRunner;
+  try {
+    getSharedRegistry().scriptRunner = {
+      // tslint:disable-next-line:no-any
+      async execute(script: string, _sandbox: string, cb: any) {
+        try {
+          const s = new THREE.Scene();
+          // eslint-disable-next-line no-new-func
+          new Function('THREE', 'scene', 'camera', script)(THREE, s, {});
+          const glb = s.toGLB();
+          cb.onModelReady(
+            glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength),
+          );
+        } catch (err) {
+          cb.onError?.(err);
+        }
+        return {terminate() {}};
+      },
+    };
+
+    const baseScript = [
+      'const orb = new THREE.Mesh(new THREE.SphereGeometry(0.6, 24, 16), new THREE.MeshStandardMaterial({ color: 0x38bdf8 }));',
+      'orb.name = "HoloOrb";',
+      'scene.add(orb);',
+    ].join('\n');
+
+    const executedScripts: string[] = [];
+    // tslint:disable-next-line:no-any
+    const fakeEl: any = {
+      allowClientScripts: true,
+      sandbox: 'worker',
+      selectedMesh: 'HoloOrb',
+      querySelector: () => ({textContent: baseScript}),
+      getAttribute: () => null,
+      fireEvent: () => {},
+      async executeScript(code: string) {
+        executedScripts.push(code);
+      },
+    };
+    aiPlugin.onElementConnected?.(fakeEl);
+
+    const seenMessages: unknown[] = [];
+    const tslEditedReply = [
+      '```js',
+      'const TSL = THREE.TSL;',
+      'const uPulse = TSL.uniform(4.0, "uPulse");',
+      'const mat = new THREE.MeshStandardNodeMaterial({ name: "OrbHoloMat", roughness: 0.15 });',
+      'mat.colorNode = TSL.color(0x38bdf8);',
+      'mat.emissiveNode = TSL.color(0x38bdf8).mul(TSL.fresnel(2.2).add(TSL.sin(TSL.time.mul(uPulse)).mul(0.3)));',
+      'mat.opacityNode = TSL.fresnel(2.2).clamp(0.15, 0.9);',
+      'const orb = new THREE.Mesh(new THREE.SphereGeometry(0.6, 24, 16), mat);',
+      'orb.name = "HoloOrb";',
+      'scene.add(orb);',
+      '```',
+    ].join('\n');
+
+    let turn = 0;
+    const provider: ThreeLiveAIProvider = {
+      async complete(req) {
+        seenMessages.push(req.messages);
+        turn++;
+        if (turn === 1) {
+          // Deliberately broken syntax on turn 1 to exercise the repair turn!
+          return '```js\nconst orb = new THREE.Mesh(\n```';
+        }
+        return tslEditedReply;
+      },
+    };
+
+    const editRes = await editScene(
+      fakeEl,
+      'give HoloOrb an animated holographic Fresnel TSL material',
+      {provider, maxRepairs: 1},
+    );
+    assert.strictEqual(
+      editRes.applied,
+      true,
+      `editScene applied: ${editRes.error}`,
+    );
+    assert.strictEqual(editRes.repairs, 1, 'repaired after 1 failed turn');
+    assert.strictEqual(executedScripts.length, 1);
+    const firstTurnMsgs = seenMessages[0] as Array<{
+      role: string;
+      content: string;
+    }>;
+    assert.ok(
+      firstTurnMsgs[0].content.includes('MeshStandardNodeMaterial') &&
+        firstTurnMsgs[0].content.includes('THREE.TSL'),
+      'SYSTEM_PROMPT teaches LLM about MeshStandardNodeMaterial & loop-free THREE.TSL',
+    );
+    console.log(
+      '   [PASS] Isolated V8 Worker-realm serialization & three-live-ai editScene() TSL authoring',
+    );
+    console.log('=== All Loop-Free TSL B2/B3/B4 Codegen Tests Passed! ===');
+  } finally {
+    getSharedRegistry().scriptRunner = prevRunner;
+  }
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

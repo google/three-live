@@ -29,7 +29,9 @@ description: >-
         (`tone-mapping="neutral|aces|agx|reinhard|none"`), HDR emissive `bloom`,
         silhouette `outline`, `.hdr` environment lighting, ground contact
         shadows, multi-light depth shadow maps (`shadow-maps="auto|pcf|off"`,
-        `light.castShadow`, `mesh.castShadow`, `mesh.receiveShadow`), skeletal
+        `light.castShadow`, `mesh.castShadow`, `mesh.receiveShadow`), loop-free
+        `THREE.TSL` procedural node materials (`three-live-tsl.min.js` /
+        `MeshStandardNodeMaterial` + `el.setMaterialUniform()`), skeletal
         animations & 2-bone/FABRIK `ik`, or 2D screen-space hotspots
         (`slot="hotspot-*"`)
 - **Use `<xr-live>` (`xr-live-full.min.js`)** when you need:
@@ -77,6 +79,18 @@ description: >-
    - The structured `userData.xr` object supports all core and extended spatial traits and exports cleanly to `.glb` (`extras.xr` + `ANDROID_xr_scenecore`) and `.usdz` (`customData.xr`).
 5. **Always name interactive meshes (`mesh.name = '...'`):**
    - `meshclick` events, `selected-mesh`, `userData.xr.orbit.target`, `userData.interactivity` target references, `holdToAsk` prompts, and WebMCP `place_xr_object_at_gaze` all identify nodes by `mesh.name`.
+6.  **Use loop-free `THREE.MeshStandardNodeMaterial` + `THREE.TSL` for
+    procedural shaders (never `ShaderMaterial` or `TSL.Loop`):**
+    -   Load `three-live-tsl.min.js` (or `three-live-full.min.js` /
+        `xr-live-full.min.js`) and assign `colorNode`, `opacityNode`,
+        `emissiveNode`, `roughnessNode`, `metalnessNode`, `normalScaleNode`,
+        `bumpNode`, or `positionNode` using `THREE.TSL` (`uv`, `time`,
+        `positionLocal`, `positionWorld`, `normalLocal`, `normalWorld`,
+        `viewDirection`, `uniform(val, name)`, `fresnel`, `simplexNoise2D/3D`,
+        `voronoi2D`, `checker`, `triplanar`, `hueShift`, `bumpFromHeight`,
+        `remap`). Keep graphs acyclic (`<= 128` nodes, `<= 16` uniforms) and
+        avoid fragment-only ops (`viewDirection`, `fresnel`, `bumpFromHeight`)
+        inside `positionNode` (`TL501`–`TL504`).
 
 ---
 
@@ -164,12 +178,12 @@ Always verify authored `.js`, `.html`, or `.glb` scenes headlessly using
 3.  **Match a Reference (when given a photo, mockup, sketch, or blueprint):**
     `three-live-cli render scene.js -o compare.png --reference=ref.jpg
     --view=camera` (or `--view=front|right|top` for blueprints) — iterate until
-    `silhouetteIou >= 0.85` and `|aspectError| < 0.05` when
-    `silhouetteReliable` is true, otherwise compare the aligned OVERLAY panel.
+    `silhouetteIou >= 0.85` and `|aspectError| < 0.05` when `silhouetteReliable`
+    is true, otherwise compare the aligned OVERLAY panel.
 4.  **Simulate Interactivity & Temporal Motion:** `three-live-cli render
     scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=<node>` or
     `three-live-cli sim scene.js --duration=5.0 --actions='[...]' --json`. For
-    games, play the level closed-loop with `three-live-cli gym reset scene.js
-    --session ep.json` and `three-live-cli gym step --session ep.json
-    --actions='[...]'` (or the `three_live_gym_*` MCP tools) to check it is
-    winnable.
+    games, play the level closed-loop with
+    `three-live-cli gym reset scene.js --session ep.json` and
+    `three-live-cli gym step --session ep.json --actions='[...]'` (or the
+    `three_live_gym_*` MCP tools) to check it is winnable.
