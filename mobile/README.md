@@ -121,6 +121,24 @@ let rate = try await session.start()
 try MicrophoneStreamer(sampleRate: rate) { session.sendAudio($0) }.start()
 ```
 
+## Room Scans as Image-to-Scene Priors (iOS)
+
+`compileFromImage` gets real-world scale from metric priors. On LiDAR iPhones
+and iPads, a RoomPlan scan provides the whole room: walls, doors, windows,
+floors (iOS 17+), and furniture with sizes and orientations. Use the same
+`ARSession` for the scan and the photo so the camera pose lines up:
+
+```swift
+let room: CapturedRoom = try await roomBuilder.capturedRoom(from: roomData)
+var priors = AISpatialPriors.fromCapturedRoom(room)
+priors.camera = AISpatialPriors.fromARFrame(frame).camera  // where the photo was taken
+let result = await editor.compileFromImageData(jpeg, prompt: "this living room", priors: priors)
+```
+
+`AISpatialPriors.fromRoomScan(surfaces:objects:)` does the same mapping from your
+own scan data (`AIRoomSurface` / `AIRoomObject`). Android has no RoomPlan
+equivalent; use `AISpatialPriors.fromWorldUnderstanding` with ARCore planes.
+
 ## AI Textures
 
 `mesh.userData.xr = { material: { preset: 'brick', prompt: '…' } }` works the
