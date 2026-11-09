@@ -52,6 +52,10 @@
     var nonce = data.nonce;
     var script = typeof data.script === 'string' ? data.script : null;
     var scriptUrl = typeof data.scriptUrl === 'string' ? data.scriptUrl : null;
+    var texturePack =
+      data.texturePack && typeof data.texturePack === 'object'
+        ? data.texturePack
+        : null;
     var lockedDown = false;
     function ensureLockedDown() {
       if (lockedDown) return;
@@ -116,10 +120,16 @@
             type: 'EXECUTE_URL',
             nonce: nonce,
             scriptUrl: scriptUrl,
+            texturePack: texturePack,
           });
         } else {
           ensureLockedDown();
-          worker.postMessage({type: 'EXECUTE', nonce: nonce, script: script});
+          worker.postMessage({
+            type: 'EXECUTE',
+            nonce: nonce,
+            script: script,
+            texturePack: texturePack,
+          });
         }
         return;
       }
