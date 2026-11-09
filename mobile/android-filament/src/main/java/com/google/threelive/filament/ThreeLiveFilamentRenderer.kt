@@ -66,6 +66,8 @@ import com.google.threelive.ThreeLivePick
 import com.google.threelive.ThreeLivePointer
 import com.google.threelive.ThreeLiveRenderer
 import com.google.threelive.ThreeLiveRendererListener
+import com.google.threelive.TslMaterialCompiler
+import com.google.threelive.TslValidatedGraph
 import com.google.threelive.XRLiveSceneCoreHelper
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -123,6 +125,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private val entityToNode = HashMap<Int, Int>()
   private val hiddenEntities = HashSet<Int>()
   private var materialInstances: Array<MutableList<MaterialInstance>> = emptyArray()
+  private val ownedTslMaterials = ArrayList<Material>()
+  private val ownedTslInstances = ArrayList<MaterialInstance>()
+  private var tslGraphsByIndex: Array<TslValidatedGraph?> = emptyArray()
+  private var tslBuffersByIndex: Array<FloatArray?> = emptyArray()
+  private var tslUsesFilamat: BooleanArray = BooleanArray(0)
+  private var tslElapsedSec = 0f
 
   /** Whether [asset] was loaded instanced (and keeps its source data) for sim spawners. */
   private var instancedAsset = false
@@ -446,6 +454,65 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     for (mi in materialInstances.getOrNull(materialIndex) ?: return) {
       if (mi.material.blendingMode == Material.BlendingMode.MASKED) mi.setMaskThreshold(alphaCutoff)
     }
+  }
+
+  override fun setMaterialTslUniforms(materialIndex: Int, buf68: FloatArray) {
+    if (disposed || materialIndex !in tslBuffersByIndex.indices || buf68.size < 65) return
+    val dst = tslBuffersByIndex[materialIndex] ?: return
+    buf68.copyInto(dst, 0, 0, minOf(dst.size, buf68.size))
+    tslElapsedSec = dst[64]
+    applyTslBufferToMaterial(materialIndex, dst)
+  }
+
+  override fun setMaterialUniform(
+    materialName: String,
+    uniformName: String,
+    value: FloatArray,
+  ): Boolean {
+    if (disposed) return false
+    val idx = sceneIndex ?: return false
+    val wildcard = materialName == "*" || materialName.isEmpty()
+    var updated = false
+    for (m in tslGraphsByIndex.indices) {
+      if (!wildcard && idx.materialNames.getOrNull(m) != materialName) continue
+      val g = tslGraphsByIndex[m] ?: continue
+      val buf = tslBuffersByIndex[m] ?: continue
+      val slot = g.uniformSlotByName[uniformName] ?: continue
+      val vec4 = TslMaterialCompiler.packUniformVec4(slot.type, value) ?: continue
+      val b = slot.slot * 4
+      buf[b] = vec4[0]
+      buf[b + 1] = vec4[1]
+      buf[b + 2] = vec4[2]
+      buf[b + 3] = vec4[3]
+      applyTslBufferToMaterial(m, buf)
+      updated = true
+    }
+    return updated
+  }
+
+  private fun applyTslBufferToMaterial(materialIndex: Int, buf68: FloatArray) {
+    val g = tslGraphsByIndex.getOrNull(materialIndex) ?: return
+    if (tslUsesFilamat.getOrElse(materialIndex) { false }) {
+      for (mi in materialInstances.getOrNull(materialIndex) ?: return) {
+        TslFilamatBridge.bindUniformBuffer(mi, buf68)
+      }
+      return
+    }
+    val idx = sceneIndex ?: return
+    val eval = g.evaluateFallbackFactors(buf68)
+    val baseBc = idx.materialBaseColors.getOrElse(materialIndex) { floatArrayOf(1f, 1f, 1f, 1f) }
+    val bc =
+      floatArrayOf(
+        eval.baseColor?.get(0) ?: baseBc[0],
+        eval.baseColor?.get(1) ?: baseBc[1],
+        eval.baseColor?.get(2) ?: baseBc[2],
+        eval.opacity ?: baseBc[3],
+      )
+    val em =
+      eval.emissive ?: idx.materialEmissive.getOrElse(materialIndex) { floatArrayOf(0f, 0f, 0f) }
+    val met = eval.metalness ?: idx.materialMetallic.getOrElse(materialIndex) { 1f }
+    val rgh = eval.roughness ?: idx.materialRoughness.getOrElse(materialIndex) { 1f }
+    setMaterialFactors(materialIndex, bc, em, met, rgh)
   }
 
   override fun sceneRootMatrix(out: FloatArray): Boolean {
@@ -936,6 +1003,21 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     camera.getModelMatrix(cameraWorld)
 
     advanceAnimation(dt)
+    if (dt > 0.0 && tslGraphsByIndex.any { it?.usesTime == true }) {
+      tslElapsedSec =
+        TslMaterialCompiler.safeMod(
+          tslElapsedSec + dt.toFloat(),
+          TslMaterialCompiler.TIME_PERIOD_SEC,
+        )
+      for (m in tslGraphsByIndex.indices) {
+        val g = tslGraphsByIndex[m] ?: continue
+        val buf = tslBuffersByIndex[m] ?: continue
+        if (g.usesTime) {
+          buf[64] = tslElapsedSec
+          applyTslBufferToMaterial(m, buf)
+        }
+      }
+    }
     listener?.onFrame(dt, cameraWorld)
 
     val sc = swapChain ?: return
@@ -1053,8 +1135,38 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     for ((node, e) in nodeEntities.withIndex()) if (e != 0) entityToNode[e] = node
 
     val rm = engine.renderableManager
-    val lists =
-      Array(MAX_MATERIALS.coerceAtMost(materialCountOf(index))) { ArrayList<MaterialInstance>() }
+    val matCount = MAX_MATERIALS.coerceAtMost(materialCountOf(index))
+    val lists = Array(matCount) { ArrayList<MaterialInstance>() }
+    tslGraphsByIndex = Array(matCount) { index.materialTslGraphs.getOrNull(it) }
+    tslBuffersByIndex = Array(matCount) { tslGraphsByIndex[it]?.createDefaultBuffer() }
+    tslUsesFilamat = BooleanArray(matCount)
+    tslElapsedSec = 0f
+
+    val compiledFilamatByMat = arrayOfNulls<MaterialInstance>(matCount)
+    for (m in 0 until matCount) {
+      val g = tslGraphsByIndex[m] ?: continue
+      val compiled =
+        TslFilamatBridge.compileOrLoadMaterial(
+          context = appContext,
+          engine = engine,
+          graph = g,
+          isTransparent = index.materialAlphaBlend.getOrElse(m) { false },
+          doubleSided = index.materialDoubleSided.getOrElse(m) { false },
+          baseColor = index.materialBaseColors.getOrElse(m) { floatArrayOf(1f, 1f, 1f, 1f) },
+          emissive = index.materialEmissive.getOrElse(m) { floatArrayOf(0f, 0f, 0f) },
+          roughness = index.materialRoughness.getOrElse(m) { 0.5f },
+          metallic = index.materialMetallic.getOrElse(m) { 0f },
+        )
+      if (compiled != null) {
+        ownedTslMaterials.add(compiled)
+        val mi = compiled.createInstance()
+        ownedTslInstances.add(mi)
+        tslBuffersByIndex[m]?.let { TslFilamatBridge.bindUniformBuffer(mi, it) }
+        compiledFilamatByMat[m] = mi
+        tslUsesFilamat[m] = true
+      }
+    }
+
     for (node in 0 until index.nodeCount) {
       val ri = rm.getInstance(nodeEntities[node].takeIf { it != 0 } ?: continue)
       if (ri == 0) continue
@@ -1064,21 +1176,32 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       for (p in 0 until minOf(rm.getPrimitiveCount(ri), mats.size)) {
         val m = mats[p]
         if (m in lists.indices) {
-          val mi = rm.getMaterialInstanceAt(ri, p)
-          if (lists[m].none { it === mi }) lists[m].add(mi)
+          val overrideMi = compiledFilamatByMat[m]
+          if (overrideMi != null) {
+            rm.setMaterialInstanceAt(ri, p, overrideMi)
+            if (lists[m].none { it === overrideMi }) lists[m].add(overrideMi)
+          } else {
+            val mi = rm.getMaterialInstanceAt(ri, p)
+            if (lists[m].none { it === mi }) lists[m].add(mi)
+          }
         }
       }
     }
     @Suppress("UNCHECKED_CAST")
     materialInstances = lists as Array<MutableList<MaterialInstance>>
     for (m in 0 until minOf(materialInstances.size, index.materialBaseColors.size)) {
-      setMaterialFactors(
-        materialIndex = m,
-        baseColorFactor = index.materialBaseColors[m],
-        emissiveFactor = index.materialEmissive[m],
-        metallicFactor = index.materialMetallic[m],
-        roughnessFactor = index.materialRoughness[m],
-      )
+      val buf = tslBuffersByIndex.getOrNull(m)
+      if (buf != null) {
+        applyTslBufferToMaterial(m, buf)
+      } else {
+        setMaterialFactors(
+          materialIndex = m,
+          baseColorFactor = index.materialBaseColors[m],
+          emissiveFactor = index.materialEmissive[m],
+          metallicFactor = index.materialMetallic[m],
+          roughnessFactor = index.materialRoughness[m],
+        )
+      }
     }
 
     val lm = engine.lightManager
@@ -1491,6 +1614,21 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       resourceLoader.evictResourceData()
       assetLoader.destroyAsset(it)
     }
+    for (mi in ownedTslInstances) {
+      try {
+        engine.destroyMaterialInstance(mi)
+      } catch (_: Throwable) {}
+    }
+    ownedTslInstances.clear()
+    for (m in ownedTslMaterials) {
+      try {
+        engine.destroyMaterial(m)
+      } catch (_: Throwable) {}
+    }
+    ownedTslMaterials.clear()
+    tslGraphsByIndex = emptyArray()
+    tslBuffersByIndex = emptyArray()
+    tslUsesFilamat = BooleanArray(0)
     val sunInstance = engine.lightManager.getInstance(sunEntity)
     if (sunInstance != 0) {
       engine.lightManager.setShadowCaster(sunInstance, true)

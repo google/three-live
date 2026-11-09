@@ -2514,6 +2514,100 @@ class XRLiveRuntimeSessionTest {
     """{"nodes":[{"name":"A"},{"name":"B"}],"materials":[{}]$extra,
       "extensionsUsed":["KHR_interactivity"],"extensions":{"KHR_interactivity":$graph}}"""
 
+  @Test
+  fun tslMaterialCompilerParityFilamentCodegenAndLiveUniforms() {
+    val parityJson =
+      """{
+        "version": 1,
+        "uniforms": { "uGain": { "type": "float", "value": 2.0 } },
+        "nodes": [
+          { "op": "const", "type": "vec3", "value": [0.25, 0.5, 0.75] },
+          { "op": "uniform", "name": "uGain", "type": "float" },
+          { "op": "mul", "type": "vec3", "args": [0, 1] }
+        ],
+        "outputs": { "emissive": 2, "color": 0, "opacity": 1 }
+      }"""
+    val rawParity = MiniJson.parseObjectOrNull(parityJson)
+    val (parityGraph, parityErr) = TslMaterialCompiler.validateDetailed(rawParity, "ParityMat")
+    assertNull(parityErr)
+    assertNotNull(parityGraph)
+    assertEquals("69150e26", parityGraph!!.hash)
+
+    // Stage violation (`viewDirection` in `position` -> TL503) & loop rejection (`TL504`)
+    val (_, stageErr) =
+      TslMaterialCompiler.validateDetailed(
+        MiniJson.parseObjectOrNull(
+          """{"version":1,"nodes":[{"op":"builtin","name":"viewDirection","type":"vec3"}],"outputs":{"position":0}}"""
+        ),
+        "BadStage",
+      )
+    assertEquals("TL503", stageErr?.code)
+
+    val (_, loopErr) =
+      TslMaterialCompiler.validateDetailed(
+        MiniJson.parseObjectOrNull(
+          """{"version":1,"nodes":[{"op":"loop","type":"float"}],"outputs":{"opacity":0}}"""
+        ),
+        "BadLoop",
+      )
+    assertEquals("TL504", loopErr?.code)
+
+    // Filament `.mat` generation hygiene: zero user uniform identifiers & balanced braces
+    val matSrc = parityGraph.compileToFilamentMat(isTransparent = true, doubleSided = true)
+    assertTrue(matSrc.contains("shadingModel : lit"))
+    assertTrue(matSrc.contains("blending : fade"))
+    assertTrue(matSrc.contains("materialParams.uTslP0"))
+    assertFalse(matSrc.contains("uGain"))
+    assertEquals(matSrc.count { it == '{' }, matSrc.count { it == '}' })
+
+    // Live `XRLiveRuntimeSession.setMaterialUniform` + `TSL.time` step()
+    val gltf =
+      """{
+        "asset": {"version": "2.0"},
+        "extensionsUsed": ["GOOGLE_material_tsl"],
+        "nodes": [{"name": "Shield", "mesh": 0}],
+        "meshes": [{"primitives": [{"material": 0}]}],
+        "materials": [{
+          "name": "HoloShield",
+          "pbrMetallicRoughness": {"baseColorFactor": [0.1, 0.2, 0.3, 1.0]},
+          "extensions": {
+            "GOOGLE_material_tsl": {
+              "version": 1,
+              "uniforms": {"uSpeed": {"type": "float", "value": 2.0}},
+              "nodes": [
+                {"op": "builtin", "name": "time", "type": "float"},
+                {"op": "uniform", "name": "uSpeed", "type": "float"},
+                {"op": "mul", "type": "float", "args": [0, 1]},
+                {"op": "sin", "type": "float", "args": [2]},
+                {"op": "abs", "type": "float", "args": [3]}
+              ],
+              "outputs": {"roughness": 4}
+            }
+          }
+        }]
+      }"""
+    val s = XRLiveRuntimeSession(gltf)
+    var tslCallbackCount = 0
+    var latestTime = -1f
+    s.listener =
+      object : XRLiveRuntimeSession.Listener {
+        override fun onTslUniformsChanged(materialIndex: Int, buf68: FloatArray) {
+          if (materialIndex == 0) {
+            tslCallbackCount++
+            latestTime = buf68[64]
+          }
+        }
+      }
+    assertTrue(s.setMaterialUniform("HoloShield", "uSpeed", 5.5f))
+    assertTrue(s.setMaterialUniform("*", "uSpeed", 7.25f))
+    assertFalse(s.setMaterialUniform("MissingMat", "uSpeed", 1f))
+    assertEquals(7.25f, s.tslUniformBuffer(0)!![0], 1e-5f)
+
+    s.step(0.1, XRPose())
+    assertEquals(0.1f, latestTime, 1e-4f)
+    assertTrue(tslCallbackCount >= 3)
+  }
+
   private fun glbOf(json: String): ByteBuffer {
     val jsonBytes = json.toByteArray(Charsets.UTF_8)
     val paddedLen = (jsonBytes.size + 3) and -4

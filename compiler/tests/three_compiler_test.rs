@@ -4823,4 +4823,29 @@ fn test_tsl_node_material_glb_roundtrip_diagnostics_and_rasterizer() {
         0.35,
     );
     assert_ne!(f0, f1, "TSL.time scanlines animate across rasterizer frames");
+
+    // USDZ `MaterialX` / `UsdShade` NodeGraph export (`transcode_three_to_usdz` & `transcode_glb_to_usdz`)
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("TSL scene should transcode to 64-byte aligned USDZ");
+    let fn_len = u16::from_le_bytes([usdz[26], usdz[27]]) as usize;
+    let extra_len = u16::from_le_bytes([usdz[28], usdz[29]]) as usize;
+    assert_eq!((30 + fn_len + extra_len) % 64, 0, "USDZ first entry 64-byte aligned");
+    let usda = String::from_utf8_lossy(&usdz);
+    assert!(usda.contains("def NodeGraph \"TSLGraph\""));
+    assert!(usda.contains("ND_time_float"));
+    assert!(usda.contains("ND_noise3d_float"));
+    assert!(usda.contains(
+        "color3f inputs:diffuseColor.connect = </Root/Materials/HoloShield/TSLGraph.outputs:diffuseColor>"
+    ));
+    assert!(usda.contains(
+        "color3f inputs:emissiveColor.connect = </Root/Materials/HoloShield/TSLGraph.outputs:emissiveColor>"
+    ));
+    assert!(usda.contains(
+        "float inputs:opacity.connect = </Root/Materials/HoloShield/TSLGraph.outputs:opacity>"
+    ));
+    assert!(!usda.contains("uPulseSpeed"), "Zero user uniform identifiers in USDA");
+
+    let glb_usdz = three_live_compiler::transcode_glb_to_usdz(&glb)
+        .expect("TSL GLB should round-trip to USDZ");
+    assert!(String::from_utf8_lossy(&glb_usdz).contains("def NodeGraph \"TSLGraph\""));
 }

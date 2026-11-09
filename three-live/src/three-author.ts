@@ -55,6 +55,7 @@ import {
   mat4Multiply,
 } from './three-view';
 import {installTslExtension} from './tsl/author';
+import {serializeTslToUsda} from './tsl/usdz';
 import {registerSimTraitSchema} from './xr-sim-schema';
 import {
   buildHubsExtension,
@@ -5254,6 +5255,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   installLodExtension(THREE, getSharedRegistry());
   installProceduralExtension(THREE, getSharedRegistry());
   installTslExtension(THREE, getSharedRegistry());
+  getSharedRegistry().tslUsdzSerializer = serializeTslToUsda;
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);

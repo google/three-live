@@ -2777,6 +2777,82 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertTrue(autoSession.castsShadow(at: 1))
     XCTAssertTrue(autoSession.receivesShadow(at: 1))
   }
+
+  func testTslMaterialValidatorHashParityAndLiveUniforms() throws {
+    let parityJSON = """
+      {
+        "version": 1,
+        "uniforms": { "uGain": { "type": "float", "value": 2.0 } },
+        "nodes": [
+          { "op": "const", "type": "vec3", "value": [0.25, 0.5, 0.75] },
+          { "op": "uniform", "name": "uGain", "type": "float" },
+          { "op": "mul", "type": "vec3", "args": [0, 1] }
+        ],
+        "outputs": { "emissive": 2, "color": 0, "opacity": 1 }
+      }
+      """
+    let rawParity = try JSONSerialization.jsonObject(with: Data(parityJSON.utf8))
+    let parityGraph = try XCTUnwrap(
+      XRTslMaterialValidator.validate(rawParity, materialLabel: "ParityMat"))
+    XCTAssertEqual(parityGraph.hash, "69150e26")
+
+    // Stage violation (`TL503`) & loop rejection (`TL504`)
+    let badStageObj = try JSONSerialization.jsonObject(
+      with: Data(
+        #"{"version":1,"nodes":[{"op":"builtin","name":"viewDirection","type":"vec3"}],"outputs":{"position":0}}"#
+          .utf8))
+    if case .failure(let issue) = XRTslMaterialValidator.validateDetailed(badStageObj) {
+      XCTAssertEqual(issue.code, "TL503")
+    } else {
+      XCTFail("Expected TL503 stage failure")
+    }
+
+    let badLoopObj = try JSONSerialization.jsonObject(
+      with: Data(
+        #"{"version":1,"nodes":[{"op":"loop","type":"float"}],"outputs":{"opacity":0}}"#.utf8))
+    if case .failure(let issue) = XRTslMaterialValidator.validateDetailed(badLoopObj) {
+      XCTAssertEqual(issue.code, "TL504")
+    } else {
+      XCTFail("Expected TL504 loop failure")
+    }
+
+    // Live `setMaterialUniform` + `TSL.time` advancement in `XRLiveRuntimeSession`
+    let gltfJSON = """
+      {
+        "asset": {"version": "2.0"},
+        "extensionsUsed": ["GOOGLE_material_tsl"],
+        "nodes": [{"name": "Shield", "mesh": 0}],
+        "meshes": [{"primitives": [{"material": 0}]}],
+        "materials": [{
+          "name": "HoloShield",
+          "pbrMetallicRoughness": {"baseColorFactor": [0.1, 0.2, 0.3, 1.0]},
+          "extensions": {
+            "GOOGLE_material_tsl": {
+              "version": 1,
+              "uniforms": {"uSpeed": {"type": "float", "value": 2.0}},
+              "nodes": [
+                {"op": "builtin", "name": "time", "type": "float"},
+                {"op": "uniform", "name": "uSpeed", "type": "float"},
+                {"op": "mul", "type": "float", "args": [0, 1]},
+                {"op": "sin", "type": "float", "args": [2]},
+                {"op": "abs", "type": "float", "args": [3]}
+              ],
+              "outputs": {"roughness": 4}
+            }
+          }
+        }]
+      }
+      """
+    let (s, rec) = session(gltfJSON)
+    XCTAssertTrue(s.setMaterialUniform("HoloShield", "uSpeed", 5.5))
+    XCTAssertTrue(s.setMaterialUniform("*", "uSpeed", 7.25))
+    XCTAssertFalse(s.setMaterialUniform("UnknownMat", "uSpeed", 1.0))
+    XCTAssertEqual(Double(s.tslUniformBuffer(at: 0)?[0] ?? 0), 7.25, accuracy: 1e-5)
+
+    s.step(dt: 0.1)
+    XCTAssertEqual(Double(s.tslUniformBuffer(at: 0)?[64] ?? 0), 0.1, accuracy: 1e-4)
+    XCTAssertNotNil(rec.materials[0])
+  }
 }
 
 /// `URLProtocol` stub serving canned responses (keyed by path) for `SplatParser.loadURL` tests.

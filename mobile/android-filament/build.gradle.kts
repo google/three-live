@@ -147,6 +147,7 @@ dependencies {
   // Keep in sync with mobile/examples/android_compose/build.gradle.kts.
   api("com.google.android.filament:filament-android:$filamentVersion")
   api("com.google.android.filament:gltfio-android:$filamentVersion")
+  compileOnly("com.google.android.filament:filamat-android:$filamentVersion")
 
   testImplementation("junit:junit:4.13.2")
 }

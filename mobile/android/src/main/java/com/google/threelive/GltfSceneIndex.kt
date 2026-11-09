@@ -90,6 +90,18 @@ class GltfSceneIndex(gltfJson: String) {
   /** Material `roughnessFactor` values (defaults to `1`). */
   val materialRoughness: FloatArray
 
+  /** Material names (`""` when absent). */
+  val materialNames: List<String>
+
+  /** Whether material `i` uses `alphaMode == "BLEND"`. */
+  val materialAlphaBlend: BooleanArray
+
+  /** Whether material `i` sets `doubleSided == true`. */
+  val materialDoubleSided: BooleanArray
+
+  /** Validated `GOOGLE_material_tsl` graphs per material (`null` when absent or invalid). */
+  val materialTslGraphs: List<TslValidatedGraph?>
+
   /** Whether node `i` has an explicit `extras.shadow` override in the GLB. */
   val nodeHasExplicitShadow: BooleanArray
 
@@ -163,8 +175,16 @@ class GltfSceneIndex(gltfJson: String) {
     val emissives = ArrayList<FloatArray>(materials.size)
     val metallics = FloatArray(materials.size) { 1f }
     val roughnesses = FloatArray(materials.size) { 1f }
+    val matNames = ArrayList<String>(materials.size)
+    val matBlend = BooleanArray(materials.size)
+    val matDoubleSided = BooleanArray(materials.size)
+    val matTsl = ArrayList<TslValidatedGraph?>(materials.size)
     for (mIdx in materials.indices) {
       val m = MiniJson.asMap(materials[mIdx])
+      val matName = MiniJson.asString(m?.get("name")) ?: ""
+      matNames.add(matName)
+      matBlend[mIdx] = MiniJson.asString(m?.get("alphaMode")) == "BLEND"
+      matDoubleSided[mIdx] = (m?.get("doubleSided") as? Boolean) == true
       val pbr = MiniJson.asMap(m?.get("pbrMetallicRoughness"))
       val bc = MiniJson.asList(pbr?.get("baseColorFactor"))
       baseColors.add(
@@ -185,11 +205,24 @@ class GltfSceneIndex(gltfJson: String) {
       )
       metallics[mIdx] = finiteFloat(pbr?.get("metallicFactor"), 1f)
       roughnesses[mIdx] = finiteFloat(pbr?.get("roughnessFactor"), 1f)
+      val exts = MiniJson.asMap(m?.get("extensions"))
+      val rawTsl = exts?.get(TslMaterialCompiler.EXTENSION_NAME)
+      matTsl.add(
+        if (rawTsl != null) {
+          TslMaterialCompiler.validate(rawTsl, matName.ifEmpty { "Material_$mIdx" })
+        } else {
+          null
+        }
+      )
     }
     materialBaseColors = baseColors
     materialEmissive = emissives
     materialMetallic = metallics
     materialRoughness = roughnesses
+    materialNames = matNames
+    materialAlphaBlend = matBlend
+    materialDoubleSided = matDoubleSided
+    materialTslGraphs = matTsl
 
     val rawCast = arrayOfNulls<Boolean>(n)
     val rawReceive = arrayOfNulls<Boolean>(n)

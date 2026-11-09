@@ -89,6 +89,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
 
     /** The active `KHR_materials_variants` variant changed (`null` when reset to default). */
     fun onVariantChanged(variantName: String?) {}
+
+    /** A `GOOGLE_material_tsl` material's 68-float uniform/time staging buffer changed. */
+    fun onTslUniformsChanged(materialIndex: Int, buf68: FloatArray) {}
   }
 
   /** Snapshot of a node's local transform. */
@@ -160,6 +163,12 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private val metallic: DoubleArray
   private val roughness: DoubleArray
   private val alphaCutoff: DoubleArray
+  private val materialNames: Array<String>
+  private val tslGraphs: Array<TslValidatedGraph?>
+  private val tslBuffers: Array<FloatArray?>
+  private val dirtyTsl: BooleanArray
+  private var hasAnimatedTsl = false
+  private var tslElapsedSec = 0f
 
   private val dirtyTransform: BooleanArray
   private val dirtyVisibility: BooleanArray
@@ -359,8 +368,14 @@ class XRLiveRuntimeSession(gltfJson: String) {
     roughness = DoubleArray(m) { 1.0 }
     alphaCutoff = DoubleArray(m) { 0.5 }
     dirtyMaterial = BooleanArray(m)
+    materialNames = Array(m) { "" }
+    tslGraphs = arrayOfNulls(m)
+    tslBuffers = arrayOfNulls(m)
+    dirtyTsl = BooleanArray(m)
     for (i in 0 until m) {
       val mat = MiniJson.asMap(materials[i]) ?: continue
+      val mName = MiniJson.asString(mat["name"]) ?: ""
+      materialNames[i] = mName
       val pbr = MiniJson.asMap(mat["pbrMetallicRoughness"])
       val bc = MiniJson.asList(pbr?.get("baseColorFactor"))
       if (bc != null) for (k in 0 until 4) baseColor[i * 4 + k] = numOr(bc.getOrNull(k), 1.0)
@@ -369,6 +384,15 @@ class XRLiveRuntimeSession(gltfJson: String) {
       val ef = MiniJson.asList(mat["emissiveFactor"])
       if (ef != null) for (k in 0 until 3) emissive[i * 3 + k] = numOr(ef.getOrNull(k), 0.0)
       alphaCutoff[i] = numOr(mat["alphaCutoff"], 0.5)
+      val rawTsl = MiniJson.asMap(mat["extensions"])?.get(TslMaterialCompiler.EXTENSION_NAME)
+      if (rawTsl != null) {
+        val g = TslMaterialCompiler.validate(rawTsl, mName.ifEmpty { "Material_$i" })
+        if (g != null) {
+          tslGraphs[i] = g
+          tslBuffers[i] = g.createDefaultBuffer()
+          if (g.usesTime) hasAnimatedTsl = true
+        }
+      }
     }
 
     // Traits.
@@ -683,6 +707,23 @@ class XRLiveRuntimeSession(gltfJson: String) {
       if (dynamicBodies.isNotEmpty()) {
         stepPhysics(dt)
       }
+      if (hasAnimatedTsl && dt > 0.0) {
+        tslElapsedSec =
+          TslMaterialCompiler.safeMod(
+            tslElapsedSec + dt.toFloat(),
+            TslMaterialCompiler.TIME_PERIOD_SEC,
+          )
+        for (mi in 0 until materialCount) {
+          val g = tslGraphs[mi] ?: continue
+          val buf = tslBuffers[mi] ?: continue
+          if (g.usesTime) {
+            buf[64] = tslElapsedSec
+            applyTslCpuFallbackToSession(mi, g, buf)
+            dirtyTsl[mi] = true
+            anyDirty = true
+          }
+        }
+      }
       flush()
     }
   }
@@ -736,6 +777,72 @@ class XRLiveRuntimeSession(gltfJson: String) {
     dirtyVisibility[nodeIndex] = true
     anyDirty = true
     flush()
+  }
+
+  /** Returns a copy of material [materialIndex]'s 68-float TSL uniform buffer, or `null`. */
+  fun tslUniformBuffer(materialIndex: Int): FloatArray? =
+    tslBuffers.getOrNull(materialIndex)?.copyOf()
+
+  /** Validated `GOOGLE_material_tsl` graph on [materialIndex], or `null` when absent. */
+  fun tslMaterialGraph(materialIndex: Int): TslValidatedGraph? = tslGraphs.getOrNull(materialIndex)
+
+  /** Scalar convenience overload for [setMaterialUniform]. */
+  fun setMaterialUniform(materialName: String, uniformName: String, value: Float): Boolean =
+    setMaterialUniform(materialName, uniformName, floatArrayOf(value))
+
+  /**
+   * Updates a named `TSL.uniform(initial, name)` on materials matching [materialName] (or `"*"` /
+   * `""` for all materials) at 60–120 Hz without recompiling shaders.
+   */
+  fun setMaterialUniform(materialName: String, uniformName: String, value: FloatArray): Boolean {
+    val wildcard = materialName == "*" || materialName.isEmpty()
+    var updated = false
+    for (mi in 0 until materialCount) {
+      if (!wildcard && materialNames[mi] != materialName) continue
+      val g = tslGraphs[mi] ?: continue
+      val buf = tslBuffers[mi] ?: continue
+      val slot = g.uniformSlotByName[uniformName] ?: continue
+      val vec4 = TslMaterialCompiler.packUniformVec4(slot.type, value) ?: continue
+      val base = slot.slot * 4
+      buf[base] = vec4[0]
+      buf[base + 1] = vec4[1]
+      buf[base + 2] = vec4[2]
+      buf[base + 3] = vec4[3]
+      applyTslCpuFallbackToSession(mi, g, buf)
+      dirtyTsl[mi] = true
+      anyDirty = true
+      updated = true
+    }
+    if (updated) flush()
+    return updated
+  }
+
+  private fun applyTslCpuFallbackToSession(mi: Int, g: TslValidatedGraph, buf: FloatArray) {
+    val eval = g.evaluateFallbackFactors(buf)
+    eval.baseColor?.let {
+      baseColor[mi * 4] = it[0].toDouble()
+      baseColor[mi * 4 + 1] = it[1].toDouble()
+      baseColor[mi * 4 + 2] = it[2].toDouble()
+      dirtyMaterial[mi] = true
+    }
+    eval.opacity?.let {
+      baseColor[mi * 4 + 3] = it.toDouble()
+      dirtyMaterial[mi] = true
+    }
+    eval.emissive?.let {
+      emissive[mi * 3] = it[0].toDouble()
+      emissive[mi * 3 + 1] = it[1].toDouble()
+      emissive[mi * 3 + 2] = it[2].toDouble()
+      dirtyMaterial[mi] = true
+    }
+    eval.roughness?.let {
+      roughness[mi] = it.toDouble()
+      dirtyMaterial[mi] = true
+    }
+    eval.metalness?.let {
+      metallic[mi] = it.toDouble()
+      dirtyMaterial[mi] = true
+    }
   }
 
   /**
@@ -2656,6 +2763,13 @@ class XRLiveRuntimeSession(gltfJson: String) {
           for (k in 0 until 3) sEmissive[k] = emissive[i * 3 + k].toFloat()
           l.onMaterialChanged(i, sBase, sEmissive, metallic[i].toFloat(), roughness[i].toFloat())
           l.onAlphaCutoffChanged(i, alphaCutoff[i].toFloat())
+        }
+      }
+      if (dirtyTsl[i]) {
+        dirtyTsl[i] = false
+        val buf = tslBuffers[i]
+        if (l != null && buf != null) {
+          l.onTslUniformsChanged(i, buf.copyOf())
         }
       }
     }

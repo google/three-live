@@ -258,6 +258,7 @@ export interface USDAMeshData {
   isXform?: boolean;
   invisible?: boolean;
   castShadow?: boolean;
+  tslGraph?: unknown;
 }
 
 /** Light descriptor serialized into USDA `UsdLux` prims (`ShadowAPI` + `ShapingAPI`). */
@@ -1804,6 +1805,8 @@ export function extractMeshesFromGLB(
       let opacity = 1.0;
       let emissiveColor: [number, number, number] = [0, 0, 0];
       let textures: Array<USDAMeshTexture | undefined> | undefined;
+      // tslint:disable-next-line:no-any glTF material extensions object.
+      let ext: Record<string, any> = {};
 
       if (prim.material !== undefined && materials[prim.material]) {
         const mat = materials[prim.material];
@@ -1879,7 +1882,7 @@ export function extractMeshesFromGLB(
               )
             : resolveTex(mat.occlusionTexture);
         if (dt || mrt || nt || et || ot) textures = [dt, mrt, nt, et, ot];
-        const ext = mat.extensions || {};
+        ext = mat.extensions || {};
         if (ext.KHR_materials_clearcoat) {
           clearcoat = ext.KHR_materials_clearcoat.clearcoatFactor ?? 0;
           clearcoatRoughness =
@@ -1908,6 +1911,7 @@ export function extractMeshesFromGLB(
         opacity,
         emissiveColor,
         ...(textures ? {textures} : {}),
+        ...(ext.GOOGLE_material_tsl ? {tslGraph: ext.GOOGLE_material_tsl} : {}),
         xrTraits: nodeXr || mesh.extras?.xr,
         ...(invisible ? {invisible: true} : {}),
       });
@@ -2338,6 +2342,7 @@ export function generateUSDAFromMeshes(
       opacity: number;
       emissiveColor: [number, number, number];
       textures?: Array<USDAMeshTexture | undefined>;
+      tslGraph?: unknown;
     }
   >();
 
@@ -2360,12 +2365,19 @@ export function generateUSDAFromMeshes(
           opacity: m.opacity ?? 1.0,
           emissiveColor: m.emissiveColor || [0, 0, 0],
           textures: m.textures,
+          tslGraph: m.tslGraph,
         });
       }
     }
     if (m.timeSamples && m.timeSamples.times.length > 0) {
       const lastT = m.timeSamples.times[m.timeSamples.times.length - 1];
       if (lastT > maxTimeCode) maxTimeCode = lastT;
+    } else if (
+      m.tslGraph &&
+      maxTimeCode <= 0 &&
+      JSON.stringify(m.tslGraph).includes('"time"')
+    ) {
+      maxTimeCode = 60;
     }
     if (m.xrTraits?.anchor && !rootAnchorPlane) {
       rootAnchorPlane =
@@ -2468,14 +2480,24 @@ ${rootAnchorAttrs}def Scope "Materials"
       emitTex('EmissiveTexture', et, 'sRGB', 'float3 outputs:rgb\n');
       emitTex('OcclusionTexture', ot, 'raw', 'float outputs:r\n');
     }
+    let pbrInputs = `${diffuseLine}\n${mrLines}\n${extraInputs}`;
+    const tslUsd =
+      matProps.tslGraph &&
+      getSharedRegistry().tslUsdzSerializer?.(
+        matProps.tslGraph,
+        matName,
+        pbrInputs,
+      );
+    if (tslUsd) {
+      pbrInputs = tslUsd.surfaceInputsUsda || pbrInputs;
+      texShaders += tslUsd.nodeGraphUsda;
+    }
     usda += `def Material "${matName}"
 {
 def Shader "PBRShader"
 {
 uniform token info:id = "UsdPreviewSurface"
-${diffuseLine}
-${mrLines}
-${extraInputs}token outputs:surface
+${pbrInputs}token outputs:surface
 }
 token outputs:surface${conn('PBRShader', 'surface')}
 ${texShaders}}

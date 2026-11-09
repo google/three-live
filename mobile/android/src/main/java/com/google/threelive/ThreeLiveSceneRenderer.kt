@@ -98,6 +98,19 @@ interface ThreeLiveSceneRenderer {
   fun setMaterialAlphaCutoff(materialIndex: Int, alphaCutoff: Float) {}
 
   /**
+   * Uploads the 68-float (`272 B`) Loop-Free TSL uniform/time buffer (`uTslP0..uTslP15` +
+   * `uTslTime`) for glTF [materialIndex] without recompiling shaders.
+   */
+  fun setMaterialTslUniforms(materialIndex: Int, buf68: FloatArray) {}
+
+  /**
+   * Updates a named `TSL.uniform(initial, name)` on materials matching [materialName] (or `"*"` /
+   * `""` for all materials) at 60–120 Hz without recompiling shaders.
+   */
+  fun setMaterialUniform(materialName: String, uniformName: String, value: FloatArray): Boolean =
+    false
+
+  /**
    * Writes the world matrix (column-major 4x4) the renderer applies to the whole scene, for example
    * a turntable auto-rotate, into [out]. Returns `false` (the default) when the scene root is not
    * moved.

@@ -52,4 +52,5 @@ export {
   type ValidatedTslNode,
   type ValidatedTslUniformSlot,
 } from './tsl/ir';
+export {serializeTslToUsda, type CompiledTslUsda} from './tsl/usdz';
 export {compileTslToWgsl, TSL_WGSL_UNIFORM_BYTES} from './tsl/wgsl';

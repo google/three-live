@@ -496,6 +496,29 @@
       applyPendingChanges()
     }
 
+    /// Updates a named `TSL.uniform(initial, name)` on `session` and immediately syncs
+    /// RealityKit `PhysicallyBasedMaterial` instances.
+    @discardableResult
+    public func setMaterialUniform(
+      _ materialName: String,
+      _ uniformName: String,
+      _ value: [Float]
+    ) -> Bool {
+      let ok = session.setMaterialUniform(materialName, uniformName, value)
+      if ok { applyPendingChanges() }
+      return ok
+    }
+
+    /// Scalar convenience overload for `setMaterialUniform(_:_:_:)`.
+    @discardableResult
+    public func setMaterialUniform(
+      _ materialName: String,
+      _ uniformName: String,
+      _ value: Float
+    ) -> Bool {
+      setMaterialUniform(materialName, uniformName, [value])
+    }
+
     /// Shows or hides the built-in 3D AR surface placement reticle and reference floor grid
     /// at height `groundY` (meters) for in-app AR surface placement previews when camera-based
     /// AR Quick Look is unavailable (e.g. on the iOS Simulator).

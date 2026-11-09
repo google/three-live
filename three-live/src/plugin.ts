@@ -274,10 +274,12 @@ export type TslMaterialResolver = (
 export type TslUsdzSerializer = (
   rawTsl: unknown,
   matSafeId: string,
-  indent: string,
+  basePbrInputsUsda: string,
 ) => {
   readonly nodeGraphUsda: string;
   readonly surfaceConnections: Readonly<Record<string, string>>;
+  readonly surfaceInputsUsda?: string;
+  readonly usesTime?: boolean;
 } | null;
 
 /** Host `<three-live>` / `<xr-live>` `renderer` attribute preference. */
