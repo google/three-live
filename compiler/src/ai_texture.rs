@@ -42,13 +42,16 @@ pub const TEXTURE_PACK_VERSION: u64 = 1;
 /// Longest accepted prompt, in UTF-16 code units (matches JS `String.length`).
 pub const MAX_TEXTURE_PROMPT_CHARS: usize = 500;
 /// Accepted texture edge lengths.
-pub const TEXTURE_SIZES: [u32; 2] = [256, 512];
+pub const TEXTURE_SIZES: [u32; 3] = [256, 512, 1024];
 /// Default texture edge length.
 pub const DEFAULT_TEXTURE_SIZE: u32 = 512;
+/// Largest derived normal / ORM map edge: a 1024 albedo derives its maps from a 2×2 box
+/// downsample, since lighting detail at 1024 costs 4× the memory for little visible gain.
+pub const MAX_DERIVED_MAP_SIZE: usize = 512;
 /// Most entries a pack may hold.
 pub const MAX_PACK_ENTRIES: usize = 64;
-/// Largest decoded albedo PNG accepted per entry.
-pub const MAX_ALBEDO_PNG_BYTES: usize = 2 * 1024 * 1024;
+/// Largest decoded albedo PNG accepted per entry (a stored 1024² RGBA PNG is ~4.2 MB).
+pub const MAX_ALBEDO_PNG_BYTES: usize = 6 * 1024 * 1024;
 /// Largest provider image accepted by [`prepare_albedo`].
 pub const MAX_SOURCE_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -82,16 +85,47 @@ pub fn canonical_prompt(raw: &str) -> Option<String> {
     Some(out)
 }
 
-/// Snaps a requested size to 256 / 512 (non-finite → 512). AI textures export at their full
-/// size (presets export at 256), so 512 is the ceiling that keeps GLBs reasonable.
+/// Snaps a requested size to 256 / 512 / 1024 (non-finite → 512).
 pub fn canonical_texture_size(raw: f64) -> u32 {
     if !raw.is_finite() {
         DEFAULT_TEXTURE_SIZE
     } else if raw <= 384.0 {
         256
-    } else {
+    } else if raw <= 768.0 {
         512
+    } else {
+        1024
     }
+}
+
+/// Edge length of the normal / ORM maps derived from an `n × n` albedo.
+pub fn derived_map_size(n: usize) -> usize {
+    if n > MAX_DERIVED_MAP_SIZE && n % 2 == 0 {
+        n / 2
+    } else {
+        n
+    }
+}
+
+/// Exact 2×2 box downsample of an even `n × n` RGBA8 image (`(a + b + c + d + 2) >> 2`).
+pub fn box_downsample_2x(rgba: &[u8], n: usize) -> Vec<u8> {
+    let m = n / 2;
+    let mut out = vec![0u8; m * m * 4];
+    for y in 0..m {
+        for x in 0..m {
+            let i0 = (2 * y * n + 2 * x) * 4;
+            let i1 = i0 + n * 4;
+            let o = (y * m + x) * 4;
+            for c in 0..4 {
+                let s = rgba[i0 + c] as u32
+                    + rgba[i0 + 4 + c] as u32
+                    + rgba[i1 + c] as u32
+                    + rgba[i1 + 4 + c] as u32;
+                out[o + c] = ((s + 2) >> 2) as u8;
+            }
+        }
+    }
+    out
 }
 
 /// `Math.round(Math.abs(seed)) >>> 0` (non-finite → 1).
@@ -155,7 +189,9 @@ fn clamp_unit(v: f64) -> f64 {
     }
 }
 
-/// Derives `[normal, orm]` RGBA8 maps from a seamless `n × n` sRGB albedo.
+/// Derives `[normal, orm]` RGBA8 maps from a seamless `n × n` sRGB albedo. The maps are
+/// [`derived_map_size`]`(n)` square: albedos above [`MAX_DERIVED_MAP_SIZE`] are first reduced
+/// with [`box_downsample_2x`].
 ///
 /// Height is the high-passed Rec. 709 luminance (`81·Y − Σ₉ₓ₉ Y`, wrap-around), normalized to
 /// `[0, 1]`; normals use [`height_to_normal`]; ORM is `R = 255`,
@@ -168,6 +204,10 @@ pub fn derive_texture_maps(
     metalness: f64,
 ) -> (Vec<u8>, Vec<u8>) {
     assert_eq!(albedo.len(), n * n * 4, "albedo must be n*n*4 bytes");
+    if derived_map_size(n) != n {
+        let half = box_downsample_2x(albedo, n);
+        return derive_texture_maps(&half, n / 2, normal_strength, roughness, metalness);
+    }
     let mut lum = vec![0i64; n * n];
     for (i, l) in lum.iter_mut().enumerate() {
         let o = i * 4;
@@ -301,7 +341,7 @@ impl TexturePack {
             })?;
             let png =
                 crate::render::decode_base64_str(b64, MAX_ALBEDO_PNG_BYTES).ok_or_else(|| {
-                    err(format!("entry {}: albedo is not valid base64 or exceeds 2 MB", key))
+                    err(format!("entry {}: albedo is not valid base64 or exceeds 6 MB", key))
                 })?;
             let rgba = decode_albedo_png(&png, spec.size)
                 .map_err(|m| err(format!("entry {}: {}", key, m)))?;
@@ -829,12 +869,12 @@ pub fn texture_image_parse_call(req: &Value) -> Value {
 }
 
 /// `{"op": "texture_derive", "albedo": base64 RGBA8, "size", "normalStrength"?, "roughness"?,
-/// "metalness"?}` → `{"normal", "orm"}` (base64 RGBA8).
+/// "metalness"?}` → `{"normal", "orm", "mapSize"}` (base64 RGBA8, `mapSize²` pixels each).
 pub fn texture_derive_call(req: &Value) -> Value {
     let run = || -> Result<Value, String> {
         let size = req.get("size").and_then(Value::as_u64).ok_or("missing 'size'")? as usize;
-        if !(4..=512).contains(&size) {
-            return Err("size must be in 4..=512".to_string());
+        if !(4..=1024).contains(&size) {
+            return Err("size must be in 4..=1024".to_string());
         }
         let albedo = decode_b64_arg(req, "albedo", size * size * 4)?;
         if albedo.len() != size * size * 4 {
@@ -851,6 +891,7 @@ pub fn texture_derive_call(req: &Value) -> Value {
         Ok(json!({
             "normal": crate::mcp::encode_base64(&normal),
             "orm": crate::mcp::encode_base64(&orm),
+            "mapSize": derived_map_size(size),
         }))
     };
     run().unwrap_or_else(|e| json!({"error": e}))
@@ -976,6 +1017,33 @@ mod tests {
     }
 
     #[test]
+    fn sizes_snap_to_256_512_1024() {
+        let snap = |v: f64| canonical_texture_size(v);
+        assert_eq!([snap(1.0), snap(384.0), snap(385.0), snap(768.0)], [256, 256, 512, 512]);
+        assert_eq!(
+            [snap(769.0), snap(1024.0), snap(4096.0), snap(f64::NAN)],
+            [1024, 1024, 1024, 512]
+        );
+        assert_eq!(
+            [derived_map_size(256), derived_map_size(512), derived_map_size(1024)],
+            [256, 512, 512]
+        );
+    }
+
+    #[test]
+    fn large_albedos_derive_half_size_maps_from_an_exact_box_downsample() {
+        let px = [10u8, 20, 30, 255, 11, 21, 31, 255, 12, 22, 32, 255, 13, 23, 33, 255];
+        // 2×2 → 1×1: (10 + 11 + 12 + 13 + 2) >> 2 = 12, (20+21+22+23+2)>>2 = 22, ...
+        assert_eq!(box_downsample_2x(&px, 2), vec![12, 22, 32, 255]);
+        let albedo = synthetic_albedo(2, 1024);
+        let (normal, orm) = derive_texture_maps(&albedo, 1024, 1.0, 0.7, 0.1);
+        assert_eq!(normal.len(), 512 * 512 * 4);
+        assert_eq!(orm.len(), 512 * 512 * 4);
+        let half = box_downsample_2x(&albedo, 1024);
+        assert_eq!(derive_texture_maps(&half, 512, 1.0, 0.7, 0.1), (normal, orm));
+    }
+
+    #[test]
     fn seam_blend_wraps_edges() {
         let n = 64;
         // A smooth ramp with a hard seam at the wrap (x = 63 → 0, y = 63 → 0).
@@ -1081,6 +1149,62 @@ mod tests {
     }
 
     #[test]
+    fn large_textures_export_at_1024_with_compressed_pngs() {
+        let spec = TextureSpec::new("big slate", Some(1024.0), None).unwrap();
+        let mut pack = TexturePack::default();
+        pack.entries.insert(
+            spec.key(),
+            PackEntry { spec, rgba: synthetic_albedo(0, 1024), provenance: Value::Null },
+        );
+        let code = "const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());\nm.userData.xr = { material: { preset: 'concrete', prompt: 'big slate', size: 1024 } };\nscene.add(m);";
+        let (glb, lookups) =
+            with_texture_pack(Some(Arc::new(pack)), || crate::transcode_three_to_glb(code));
+        let glb = glb.unwrap();
+        assert!(lookups[0].hit);
+        let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+        let gltf: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+        let mut dims = Vec::new();
+        for im in gltf["images"].as_array().unwrap() {
+            let uri = im["uri"].as_str().unwrap();
+            let png = crate::render::decode_base64_str(
+                uri.strip_prefix("data:image/png;base64,").unwrap(),
+                usize::MAX,
+            )
+            .unwrap();
+            // Compressed (not a stored first DEFLATE block): already-packed PNGs are left alone.
+            assert!(crate::render::recompress_stored_png(&png).is_none());
+            let img = crate::reference::decode_png(&png).unwrap();
+            dims.push(img.width);
+        }
+        dims.sort();
+        assert_eq!(dims, vec![512, 512, 1024], "albedo 1024, normal + ORM 512");
+        // The gradient albedo compresses far below its stored size (~4 MB).
+        assert!(glb.len() < 1024 * 1024, "GLB is {} bytes", glb.len());
+    }
+
+    #[test]
+    fn stored_pngs_recompress_losslessly() {
+        let rgba = synthetic_albedo(0, 64);
+        let (uri, _) =
+            crate::usdz::encode_rgba_png_data_uri_impl(&rgba, 64, 64, false, false, 512).unwrap();
+        let stored = crate::render::decode_base64_str(
+            uri.strip_prefix("data:image/png;base64,").unwrap(),
+            usize::MAX,
+        )
+        .unwrap();
+        let packed = crate::render::recompress_stored_png(&stored).unwrap();
+        assert!(packed.len() * 4 < stored.len());
+        assert_eq!(crate::reference::decode_png(&packed).unwrap().rgba, rgba);
+        let again = crate::render::compress_png_data_uri(&uri);
+        assert_eq!(crate::render::compress_png_data_uri(&uri), again, "cached");
+        assert!(again.len() * 4 < uri.len());
+        assert_eq!(
+            &*crate::render::compress_png_data_uri("data:image/jpeg;base64,AAAA"),
+            "data:image/jpeg;base64,AAAA"
+        );
+    }
+
+    #[test]
     fn bake_generates_misses_and_reuses_hits() {
         let script = r#"
             const a = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
@@ -1152,7 +1276,7 @@ mod tests {
     #[test]
     fn ai_call_ops_round_trip() {
         let k = texture_key_call(&json!({"prompt": "a  b", "size": 900, "seed": -2.5}));
-        assert_eq!(k["spec"], json!({"prompt": "a b", "size": 512, "seed": 3}));
+        assert_eq!(k["spec"], json!({"prompt": "a b", "size": 1024, "seed": 3}));
         assert!(texture_key_call(&json!({"prompt": "   "}))["error"].is_string());
         let albedo = crate::mcp::encode_base64(&synthetic_albedo(2, 8));
         let d = texture_derive_call(&json!({"albedo": albedo, "size": 8}));

@@ -24,7 +24,10 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.Files
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -39,8 +42,8 @@ class ThreeLiveAITexturesTest {
 
   /** Two prompts: "moss" on Wall and "terrazzo" on Floor. Pack = set of keys. */
   private class FakeTextureCore : AICore {
-    val ops = mutableListOf<String>()
-    var installed: Set<String> = emptySet()
+    val ops = CopyOnWriteArrayList<String>()
+    @Volatile var installed: Set<String> = emptySet()
 
     override suspend fun call(request: Map<String, Any?>): Map<String, Any?> {
       val op = request["op"] as String
@@ -75,6 +78,10 @@ class ThreeLiveAITexturesTest {
           val keys = keysOf(request["pack"] as String?) + key
           mapOf("key" to key, "pack" to mapOf("keys" to keys.toList().sorted(), "prov" to request["provenance"]))
         }
+        // Just enough of the editor ops for ThreeLiveAIEditor integration.
+        "messages" -> mapOf("messages" to listOf(mapOf("role" to "user", "content" to "edit")))
+        "extract" -> mapOf("code" to request["reply"])
+        "validate" -> mapOf("ok" to true)
         else -> mapOf("error" to "unknown op $op")
       }
     }
@@ -97,7 +104,7 @@ class ThreeLiveAITexturesTest {
   }
 
   private class FakeProvider(private val refuse: Set<String> = emptySet()) : AIImageProvider {
-    val prompts = mutableListOf<String>()
+    val prompts = CopyOnWriteArrayList<String>()
     override val name = "fake-images"
     override val model = "fake-1"
 
@@ -165,6 +172,58 @@ class ThreeLiveAITexturesTest {
     val forced = tex.generateTextures("scene", meshes = listOf("Wall"), force = true)
     assertEquals(listOf("k_moss"), forced.generated)
     assertEquals(listOf("moss SUFFIX"), provider.prompts)
+  }
+
+  @Test
+  fun autoModeGeneratesInBackgroundAndSkipsKnownFailures() = runBlocking {
+    val core = FakeTextureCore()
+    val provider = FakeProvider(refuse = setOf("terrazzo"))
+    val tex = ThreeLiveAITextures(provider, null, core)
+    assertEquals(ThreeLiveAITextures.Mode.AUTO, tex.mode)
+    val starts = CopyOnWriteArrayList<List<String>>()
+    tex.listener =
+      object : ThreeLiveAITextures.Listener {
+        override fun onTexturesStart(script: String, requests: List<AITextureRequest>) {
+          starts += requests.map { it.key }
+        }
+      }
+    val updates = CopyOnWriteArrayList<AITextureResult>()
+    tex.sceneLoaded("scene") { updates += it }!!.join()
+    assertEquals(listOf(listOf("k_moss", "k_terrazzo")), starts.toList())
+    assertEquals(listOf("k_moss"), updates.single().generated)
+    assertEquals(setOf("k_terrazzo"), updates.single().failed.keys)
+    assertEquals(setOf("k_moss"), core.installed)
+
+    // Moss is in the pack and terrazzo already failed: no provider calls, no update.
+    val calls = provider.prompts.size
+    tex.sceneLoaded("scene") { updates += it }!!.join()
+    assertEquals(calls, provider.prompts.size)
+    assertEquals(1, updates.size)
+    tex.clearFailures()
+    tex.sceneLoaded("scene")!!.join()
+    assertEquals(calls + 1, provider.prompts.size)
+
+    tex.mode = ThreeLiveAITextures.Mode.MANUAL
+    assertNull(tex.sceneLoaded("scene"))
+    val noProvider = ThreeLiveAITextures(null, null, FakeTextureCore())
+    assertEquals(ThreeLiveAITextures.Mode.MANUAL, noProvider.mode)
+    assertNull(noProvider.sceneLoaded("scene"))
+  }
+
+  @Test
+  fun editorReappliesTheSceneWhenAutoTexturesArrive() = runBlocking {
+    val core = FakeTextureCore()
+    val applied = CopyOnWriteArrayList<String>()
+    val chat =
+      object : AIProvider {
+        override suspend fun complete(messages: List<AIChatMessage>) = "scene2"
+      }
+    val editor = ThreeLiveAIEditor("scene", chat, { applied += it }, core)
+    editor.textures = ThreeLiveAITextures(FakeProvider(), null, core)
+    assertTrue(editor.editScene("add moss").applied)
+    withTimeout(2000) { while (applied.size < 2) delay(5) }
+    assertEquals(listOf("scene2", "scene2"), applied.toList())
+    assertEquals(setOf("k_moss", "k_terrazzo"), core.installed)
   }
 
   @Test

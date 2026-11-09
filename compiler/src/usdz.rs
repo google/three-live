@@ -832,7 +832,7 @@ fn srgb_byte_to_linear(b: u8) -> f64 {
     }
 }
 
-fn encode_rgba_png_data_uri_impl(
+pub(crate) fn encode_rgba_png_data_uri_impl(
     src: &[u8],
     src_w: usize,
     src_h: usize,
@@ -1156,6 +1156,10 @@ pub fn native_decode_b64_image(
         return Ok(JsValue::null());
     }
     check_native_input_size(out.len(), "native_decode_b64_image")?;
+    // USDZ packaging: DEFLATE the stored PNGs the in-engine encoders write.
+    if let Some(packed) = crate::render::recompress_stored_png(&out) {
+        out = packed;
+    }
     let arr = js_uint8_array_from_slice(&out, context)?;
     Ok(JsValue::from(arr))
 }

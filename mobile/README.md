@@ -152,6 +152,23 @@ try await reload(try await ThreeCompiler.compile(script))
 `setPack` installs the pack for every later compile in the process (pass `nil` /
 `null` to clear it).
 
+With a provider, `mode` defaults to auto (like `ai-textures` on the web): after
+each load, `sceneLoaded(script)` generates missing textures in the background
+and calls back so you can recompile. Textures that failed are not retried until
+`clearFailures()`. Set `mode` to manual to generate only on request. Give the
+editor the textures object and it does this for every edit, undo, and
+image-to-scene compile:
+
+```kotlin
+editor.textures = textures                      // re-applies when textures arrive
+textures.sceneLoaded(script) { reload(script) } // for scenes you load yourself
+```
+
+```swift
+editor.textures = textures
+textures.sceneLoaded(script) { _ in try? await reload(script) }
+```
+
 ## Building Native Distribution Packages
 
 Run the automated scripts from the root directory:

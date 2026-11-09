@@ -1004,7 +1004,7 @@ fn mcp_tool_definitions_base() -> Value {
         },
         {
             "name": "three_live_bake_textures",
-            "description": "Generate the AI textures a scene asks for (`mesh.userData.xr = { material: { preset, prompt, size: 256 | 512, seed } }`) through an OpenAI-compatible Images endpoint and save them in a texture pack. Use it last, after geometry and presets look right: it needs a configured image endpoint and costs money per texture. Returns a preset-vs-AI comparison image and the bake report. Pass the pack to `three_live_render` / `three_live_convert` (`texturePack` / `texturePackPath`) and ship it with the scene (`<three-live texture-pack=...>`).",
+            "description": "Generate the AI textures a scene asks for (`mesh.userData.xr = { material: { preset, prompt, size: 256 | 512 | 1024, seed } }`) through an OpenAI-compatible Images endpoint and save them in a texture pack. Use it last, after geometry and presets look right: it needs a configured image endpoint and costs money per texture. Returns a preset-vs-AI comparison image and the bake report. Pass the pack to `three_live_render` / `three_live_convert` (`texturePack` / `texturePackPath`) and ship it with the scene (`<three-live texture-pack=...>`).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

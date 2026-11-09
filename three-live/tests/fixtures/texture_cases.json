@@ -22,9 +22,9 @@
       "size": 1000,
       "seed": 7.4,
       "canonicalPrompt": "Mossy Kyoto temple stone, seamless",
-      "canonicalSize": 512,
+      "canonicalSize": 1024,
       "canonicalSeed": 7,
-      "key": "2e185675721890e2"
+      "key": "8b6408592b2e4879"
     },
     {
       "prompt": "café tiles 🧱",
@@ -62,6 +62,24 @@
       "canonicalSize": 256,
       "canonicalSeed": 0,
       "key": "92322e68aebe6dba"
+    },
+    {
+      "prompt": "big",
+      "size": 800,
+      "seed": 2,
+      "canonicalPrompt": "big",
+      "canonicalSize": 1024,
+      "canonicalSeed": 2,
+      "key": "17d9c15ffefa0292"
+    },
+    {
+      "prompt": "huge",
+      "size": 1024,
+      "seed": 9,
+      "canonicalPrompt": "huge",
+      "canonicalSize": 1024,
+      "canonicalSeed": 9,
+      "key": "9f61cd6bb687540e"
     }
   ],
   "derive": [
@@ -115,6 +133,19 @@
         3622647971,
         534438318,
         2581938984
+      ]
+    },
+    {
+      "name": "large",
+      "albedo": 2,
+      "size": 1024,
+      "normalStrength": 1.0,
+      "roughness": 0.7,
+      "metalness": 0.1,
+      "hashes": [
+        2652191813,
+        657448689,
+        3529187647
       ]
     }
   ]

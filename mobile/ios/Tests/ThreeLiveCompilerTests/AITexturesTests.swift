@@ -70,6 +70,35 @@ final class AITexturesTests: XCTestCase {
     XCTAssertTrue(images2.prompts.isEmpty)
   }
 
+  private final class Box: @unchecked Sendable {
+    var result: AITextureResult?
+    var starts: [[String]] = []
+  }
+
+  func testAutoModeGeneratesInTheBackgroundOnSceneLoaded() async throws {
+    let images = FakeImages()
+    let tex = AITextures(provider: images)
+    XCTAssertEqual(tex.mode, .auto)
+    let box = Box()
+    tex.onTexturesStart = { _, requests in box.starts.append(requests.map(\.key)) }
+    await tex.sceneLoaded(scene) { result in box.result = result }?.value
+    XCTAssertEqual(box.starts.count, 1)
+    XCTAssertEqual(box.result?.generated.count, 1)
+    XCTAssertEqual(images.prompts.count, 1)
+    let after = try await tex.requests(scene)
+    XCTAssertTrue(after[0].hit)
+
+    // Everything is in the pack: a second load does nothing.
+    await tex.sceneLoaded(scene)?.value
+    XCTAssertEqual(images.prompts.count, 1)
+    XCTAssertEqual(box.starts.count, 1)
+
+    tex.mode = .manual
+    XCTAssertNil(tex.sceneLoaded(scene))
+    XCTAssertEqual(AITextures().mode, .manual)
+    XCTAssertNil(AITextures().sceneLoaded(scene))
+  }
+
   func testRejectsBadPacksAndMissingProviders() async throws {
     let tex = AITextures()
     do {

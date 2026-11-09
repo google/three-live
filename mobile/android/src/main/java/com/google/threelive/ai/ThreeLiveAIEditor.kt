@@ -398,6 +398,13 @@ constructor(
   /** Camera for "left" / "right" / "front" in [selectByVoice] (default: the scene's camera). */
   @Volatile var camera: AICamera? = null
 
+  /**
+   * AI textures (B5). When set, every applied script is passed to
+   * [ThreeLiveAITextures.sceneLoaded]; in [ThreeLiveAITextures.Mode.AUTO] missing textures are
+   * generated in the background and the current script is re-applied when they arrive.
+   */
+  @Volatile var textures: ThreeLiveAITextures? = null
+
   /** Let [provider] resolve references the local matcher can't (tier 2; default true). */
   @Volatile var selectWithModel: Boolean = true
 
@@ -738,6 +745,7 @@ constructor(
           while (history.size > MAX_HISTORY) history.removeFirst()
           source = code
         }
+        texturesLoaded(code)
       } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
       } catch (e: Exception) {
@@ -843,6 +851,7 @@ constructor(
           }
           source = code
         }
+        texturesLoaded(code)
         setSelection(emptyList(), "clear", "api")
       } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
@@ -918,7 +927,17 @@ constructor(
     val prev = synchronized(lock) { history.removeLastOrNull() } ?: return false
     applyScene(prev)
     synchronized(lock) { source = prev }
+    texturesLoaded(prev)
     return true
+  }
+
+  /** Starts background texture generation for [code]; re-applies it if it is still current. */
+  private fun texturesLoaded(code: String) {
+    textures?.sceneLoaded(code) { result ->
+      if ((result.generated.isNotEmpty() || result.cached.isNotEmpty()) && source == code) {
+        applyScene(code)
+      }
+    }
   }
 
   /** Short spoken summary of [result] (shared wording with the web). */

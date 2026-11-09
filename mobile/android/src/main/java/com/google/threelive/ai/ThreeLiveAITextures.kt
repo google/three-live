@@ -25,7 +25,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -127,6 +135,11 @@ data class AITextureResult(
  * provider; after [generateTextures] (or setting [packJson]) recompile the scene to see the new
  * textures. Key derivation, image preparation, and pack validation run in the shared Rust core, so
  * results match the web and the CLI.
+ *
+ * Like `ai-textures` on the web, [mode] is [Mode.AUTO] when a [provider] is configured: call
+ * [sceneLoaded] after each load and missing textures are generated in the background, then
+ * [Listener.onTexturesUpdated] (and the `onUpdated` callback) fire so you can recompile. Pass this
+ * object to [ThreeLiveAIEditor.textures] and the editor does both for its edits.
  */
 class ThreeLiveAITextures
 @JvmOverloads
@@ -136,6 +149,33 @@ constructor(
   private val cacheDir: File? = null,
   private val core: AICore = NativeAICore,
 ) {
+  /** When missing textures are generated. Mirrors `ai-textures="auto|manual"` on the web. */
+  enum class Mode {
+    /** [sceneLoaded] generates missing textures in the background (needs a provider). */
+    AUTO,
+    /** Only packs, the cache, and explicit [generateTextures] calls. */
+    MANUAL,
+  }
+
+  /** Background generation events (called on a background thread). */
+  interface Listener {
+    /** [sceneLoaded] started generating [requests]. */
+    fun onTexturesStart(script: String, requests: List<AITextureRequest>) {}
+
+    /** Background generation finished; recompile [script] if anything was added. */
+    fun onTexturesUpdated(script: String, result: AITextureResult) {}
+  }
+
+  /** Defaults to [Mode.AUTO] with a provider, [Mode.MANUAL] without. */
+  @Volatile var mode: Mode = if (provider != null) Mode.AUTO else Mode.MANUAL
+
+  @Volatile var listener: Listener? = null
+
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+  private val generateLock = Mutex()
+  private val failedKeys = ConcurrentHashMap.newKeySet<String>()
+  @Volatile private var autoJob: Job? = null
+
   /** The current texture pack JSON (null = none). Set it with [setPack]. */
   @Volatile
   var packJson: String? = null
@@ -180,11 +220,66 @@ constructor(
     script: String,
     meshes: Collection<String> = emptyList(),
     force: Boolean = false,
-  ): AITextureResult {
-    val wanted =
-      requests(script).filter { r ->
-        (force || !r.hit) && (meshes.isEmpty() || r.meshes.any { it in meshes })
+  ): AITextureResult =
+    generate(script, force) { r -> meshes.isEmpty() || r.meshes.any { it in meshes } }
+
+  /**
+   * Call after loading [script]. In [Mode.AUTO] (with a provider) this generates the textures the
+   * pack is missing in the background — skipping ones that already failed, so a broken provider is
+   * not retried on every edit — then notifies [listener] and [onUpdated]. A newer call cancels the
+   * previous one. Returns the background job, or null when there is nothing to do.
+   */
+  @JvmOverloads
+  fun sceneLoaded(
+    script: String,
+    onUpdated: (suspend (AITextureResult) -> Unit)? = null,
+  ): Job? {
+    autoJob?.cancel()
+    if (mode != Mode.AUTO || provider == null) return null
+    val job =
+      scope.launch {
+        try {
+          val missing = requests(script).filter { !it.hit && it.key !in failedKeys }
+          if (missing.isEmpty()) return@launch
+          listener?.onTexturesStart(script, missing)
+          val keys = missing.map { it.key }.toSet()
+          val result = generate(script, force = false) { it.key in keys }
+          failedKeys += result.failed.keys
+          listener?.onTexturesUpdated(script, result)
+          onUpdated?.invoke(result)
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          // Background work must not crash the app; the scene keeps its presets.
+        }
       }
+    autoJob = job
+    return job
+  }
+
+  /** Forgets failed keys so [sceneLoaded] retries them (e.g. after fixing the provider). */
+  fun clearFailures() = failedKeys.clear()
+
+  /** Cancels background generation; this object stays usable for manual calls. */
+  fun close() {
+    autoJob?.cancel()
+  }
+
+  /** Releases the background scope for good. */
+  fun shutdown() = scope.cancel()
+
+  private suspend fun generate(
+    script: String,
+    force: Boolean,
+    include: (AITextureRequest) -> Boolean,
+  ): AITextureResult = generateLock.withLock { generateLocked(script, force, include) }
+
+  private suspend fun generateLocked(
+    script: String,
+    force: Boolean,
+    include: (AITextureRequest) -> Boolean,
+  ): AITextureResult {
+    val wanted = requests(script).filter { r -> (force || !r.hit) && include(r) }
     val generated = mutableListOf<String>()
     val cached = mutableListOf<String>()
     val failed = linkedMapOf<String, String>()
