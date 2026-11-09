@@ -196,6 +196,30 @@ quality never depends on the voice model.
     `await el.startVoiceEdit()`. Progress arrives as `three-live-voice` events
     (`listening`, `editing`, transcripts, results).
 
+**Talk-to-Select:** users can select by voice instead of tapping, so they can
+check that the right objects are highlighted before an edit.
+
+*   Say "select the two red chairs on the left", "also select the lamp",
+    "deselect the small one", or "clear the selection". References are
+    resolved locally with no model call: names (with synonyms and plurals),
+    material colors, left / right / front / back from the current camera, top /
+    bottom, size, ordinals ("the second mug"), counts ("both"), "all … except
+    …", and lists ("the lamp and the sofa").
+*   "Select the lamp and make it blue" selects first, then edits right away
+    when the reference was unambiguous. When it isn't, it asks ("Which one:
+    Chair Left or Chair Right?") and changes nothing.
+*   References the local matcher can't resolve ("the cup next to the sofa",
+    other languages) go to your code model, which picks from a compact scene
+    index or asks a question.
+*   Shift / Ctrl / Cmd-tap or a long press adds to the selection.
+    `el.selectedMeshes` holds it; `three-live-select` events report it.
+*   Push-to-talk shows confirmation chips: each selected mesh with ×, buttons
+    for the candidates of a question, and Apply for an edit that is waiting on
+    a model-resolved selection. Set `ai-select-chips="off"` to hide them.
+    Realtime voice sessions read the selection back instead, using the
+    `select_meshes` tool.
+*   From code: `await el.selectByVoice('the red chairs', {mode: 'add'})`.
+
 --------------------------------------------------------------------------------
 
 ## Install packages and bundles

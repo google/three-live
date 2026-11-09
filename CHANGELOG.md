@@ -69,6 +69,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `< 160 KB gz` (was `< 151`), `xr-live-full.min.js` `< 260 KB gz` (was
     `< 251`).
 
+-   **Talk-to-Select on Android and iOS (B2b-4):** `ThreeLiveAIEditor` /
+    `AIEditor` hold several selected meshes (`selections`, `setSelection`,
+    `toggleSelection(name, additive)`, `onSelectionsChanged` with its source)
+    and add `selectByVoice(query, mode)`, `selectNames`, `parseCommand`, and
+    `camera` for camera-relative references. `VoiceEditController` handles
+    selection commands and "select X and make it red". `AIVoiceSession`
+    handles the `select_meshes` tool and no longer echoes voice selections back
+    as context. All wording (confirmations, questions, selection context) now
+    comes from the core (`select_say`, `select_context`), so every platform says
+    the same thing. The `selection` parameter of `editScene` is now a list.
+
 -   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;

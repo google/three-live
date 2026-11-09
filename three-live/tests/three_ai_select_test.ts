@@ -282,6 +282,27 @@ async function run(): Promise<void> {
       }
     }
     assert(badCmd === 0, `all ${f.commands.length} shared push-to-talk commands parse the same`);
+    let badSay = 0;
+    for (const c of f.say) {
+      const got = describeVoiceSelection(c.mode, c.match ? {ids: [], ...c.match} : null, c.meshes, c.query);
+      if (got !== c.want) {
+        badSay++;
+        console.error(`      say ${JSON.stringify(c)} -> ${got}`);
+      }
+    }
+    for (const c of f.context) {
+      if (describeSelection(c.meshes) !== c.want) {
+        badSay++;
+        console.error(`      context ${JSON.stringify(c.meshes)} -> ${describeSelection(c.meshes)}`);
+      }
+    }
+    for (const [name, want] of f.speakable) {
+      if (speakableName(name) !== want) {
+        badSay++;
+        console.error(`      speakable ${name} -> ${speakableName(name)}`);
+      }
+    }
+    assert(badSay === 0, 'spoken wording matches the Rust core (say / context / speakable)');
   }
 
   // ---- 4b: words, colors ----

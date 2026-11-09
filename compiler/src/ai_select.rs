@@ -1446,6 +1446,126 @@ pub fn select_parse_call(req: &Value) -> Value {
     parse_select_reply(req.get("reply").and_then(Value::as_str).unwrap_or(""), &names)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Spoken wording (keep identical to `describeVoiceSelection` / `describeSelection` /
+// `speakableName` in the web plugin; checked by the shared fixture).
+
+/// A mesh name as it should be spoken: `"FloorLamp_2"` → `"Floor Lamp 2"`.
+pub fn speakable_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev: Option<char> = None;
+    for c in name.chars() {
+        if let Some(p) = prev {
+            if (p.is_ascii_lowercase() && c.is_ascii_uppercase())
+                || (p.is_ascii_alphabetic() && c.is_ascii_digit())
+            {
+                out.push(' ');
+            }
+        }
+        out.push(if matches!(c, '_' | '-' | '.') { ' ' } else { c });
+        prev = Some(c);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn speak_list(names: &[String], joiner: &str) -> String {
+    let shown: Vec<String> = names.iter().take(5).map(|n| speakable_name(n)).collect();
+    let more = names.len() - shown.len();
+    if more > 0 {
+        return format!("{} {} {} more", shown.join(", "), joiner, more);
+    }
+    if shown.len() < 2 {
+        return shown.concat();
+    }
+    format!("{} {} {}", shown[..shown.len() - 1].join(", "), joiner, shown[shown.len() - 1])
+}
+
+/// What to say back after a selection request. `matched` is a match JSON
+/// (`{confidence, reason, names, candidates}`) or `None` (no match was attempted).
+pub fn describe_voice_selection(
+    mode: &str,
+    matched: Option<&Value>,
+    meshes: &[String],
+    query: &str,
+) -> String {
+    if mode == "clear" {
+        return "Selection cleared.".into();
+    }
+    let Some(m) = matched else { return "Which object?".into() };
+    let list = |k: &str| strings(m.get(k)).unwrap_or_default();
+    let names = list("names");
+    let candidates = list("candidates");
+    let reason = m.get("reason").and_then(Value::as_str).unwrap_or("");
+    match m.get("confidence").and_then(Value::as_str).unwrap_or("none") {
+        "high" => match mode {
+            "remove" if meshes.is_empty() => {
+                format!("Removed {}. Nothing is selected.", speak_list(&names, "and"))
+            }
+            "remove" => {
+                format!("Removed {}. {} selected.", speak_list(&names, "and"), meshes.len())
+            }
+            "add" => format!("Added {}. {} selected.", speak_list(&names, "and"), meshes.len()),
+            _ if names.len() == 1 => format!("Selected {}.", speakable_name(&names[0])),
+            _ => format!("Selected {}: {}.", names.len(), speak_list(&names, "and")),
+        },
+        "ambiguous" if reason == "count_mismatch" => {
+            format!("I found {}: {}. Which ones?", candidates.len(), speak_list(&candidates, "and"))
+        }
+        "ambiguous" => format!("Which one: {}?", speak_list(&candidates, "or")),
+        _ => {
+            let q: String = query.split_whitespace().collect::<Vec<_>>().join(" ");
+            let q: String = q.chars().take(80).collect();
+            match reason {
+                "relation" => format!(
+                    "I can't tell which one \"{}\" is yet. Try its name or color, or tap it.",
+                    q
+                ),
+                "empty" => "Which object?".into(),
+                _ => format!("I couldn't find \"{}\".", q),
+            }
+        }
+    }
+}
+
+/// Describes a selection for a voice model (`describeSelection` on the web).
+pub fn describe_selection_context(meshes: &[String]) -> String {
+    match meshes.len() {
+        0 => "The user cleared the selection.".into(),
+        1 => format!(
+            "The user selected the mesh \"{}\". \"This\" or \"it\" now refers to it.",
+            meshes[0]
+        ),
+        n => {
+            let shown: Vec<String> = meshes.iter().take(20).map(|m| format!("\"{}\"", m)).collect();
+            let more = if n > 20 { format!(" and {} more", n - 20) } else { String::new() };
+            format!(
+                "The user selected {} meshes: {}{}. \"These\", \"them\", or \"it\" refer to them.",
+                n,
+                shown.join(", "),
+                more
+            )
+        }
+    }
+}
+
+/// `select_say` op: `{mode, match?, meshes, query}` → `{text}`.
+pub fn select_say_call(req: &Value) -> Value {
+    let meshes = strings(req.get("meshes")).unwrap_or_default();
+    let matched = req.get("match").filter(|m| m.is_object());
+    let text = describe_voice_selection(
+        req.get("mode").and_then(Value::as_str).unwrap_or("replace"),
+        matched,
+        &meshes,
+        req.get("query").and_then(Value::as_str).unwrap_or(""),
+    );
+    json!({"text": text})
+}
+
+/// `select_context` op: `{meshes}` → `{text}`.
+pub fn select_context_call(req: &Value) -> Value {
+    json!({"text": describe_selection_context(&strings(req.get("meshes")).unwrap_or_default())})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1588,6 +1708,22 @@ mod tests {
     }
 
     #[test]
+    fn shared_wording_cases() {
+        let f = fixture();
+        for case in f["say"].as_array().unwrap() {
+            let got = select_say_call(case);
+            assert_eq!(got["text"], case["want"], "say case {}", case);
+        }
+        for case in f["context"].as_array().unwrap() {
+            let got = select_context_call(case);
+            assert_eq!(got["text"], case["want"], "context case {}", case);
+        }
+        for case in f["speakable"].as_array().unwrap() {
+            assert_eq!(speakable_name(case[0].as_str().unwrap()), case[1].as_str().unwrap());
+        }
+    }
+
+    #[test]
     fn words_and_colors() {
         assert_eq!(name_words("RedChair_02"), vec!["red", "chair", "02"]);
         assert_eq!(name_words("bookShelves"), vec!["book", "shelf"]);
@@ -1645,6 +1781,15 @@ mod tests {
         assert_eq!(e[0].max, [3.0, 2.0, 1.0]);
         let index = build_index(&e);
         assert_eq!(index[0].color_name, Some("blue"));
+    }
+
+    #[test]
+    fn engine_colors_are_linear_and_classified() {
+        let src = "const mk = (name, x, color) => { const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1.2, 1), new THREE.MeshStandardMaterial({ color })); m.name = name; m.position.set(x, 0.6, 0); scene.add(m); };\nmk('Chair_Left', -2, 0xd93025); mk('Chair_Middle', 0, 0x1a73e8); mk('Chair_Right', 2, 0xd93025);";
+        let r = select_call(&json!({"source": src, "query": "the red chairs", "withIndex": true}));
+        // MeshStandardMaterial hex colors are sRGB; the engine stores linear factors.
+        assert_eq!(r["names"], json!(["Chair_Left", "Chair_Right"]), "{}", r);
+        assert_eq!(r["index"][1]["color"], "blue");
     }
 
     #[test]

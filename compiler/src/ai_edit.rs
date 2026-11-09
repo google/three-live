@@ -294,6 +294,8 @@ pub fn ai_call(request: &str) -> String {
         "select" => crate::ai_select::select_call(&req),
         "select_messages" => crate::ai_select::select_messages_call(&req),
         "select_parse" => crate::ai_select::select_parse_call(&req),
+        "select_say" => crate::ai_select::select_say_call(&req),
+        "select_context" => crate::ai_select::select_context_call(&req),
         "parse_command" => {
             crate::ai_select::parse_voice_command(str_arg(&req, "text").unwrap_or("")).to_json()
         }

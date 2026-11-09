@@ -95,5 +95,26 @@
     {"text": "remove the chair", "want": {"kind": "edit", "instruction": "remove the chair"}},
     {"text": "just make it bigger", "want": {"kind": "edit", "instruction": "just make it bigger"}},
     {"text": "selection looks good", "want": {"kind": "edit", "instruction": "selection looks good"}}
-  ]
+  ],
+  "say": [
+    {"mode": "clear", "meshes": [], "query": "", "want": "Selection cleared."},
+    {"mode": "replace", "meshes": [], "query": "", "want": "Which object?"},
+    {"mode": "replace", "match": {"confidence": "high", "reason": "match", "names": ["FloorLamp_2"], "candidates": []}, "meshes": ["FloorLamp_2"], "query": "the lamp", "want": "Selected Floor Lamp 2."},
+    {"mode": "replace", "match": {"confidence": "high", "reason": "match", "names": ["A", "B", "C"], "candidates": []}, "meshes": ["A", "B", "C"], "query": "x", "want": "Selected 3: A, B and C."},
+    {"mode": "replace", "match": {"confidence": "high", "reason": "match", "names": ["a1", "a2", "a3", "a4", "a5", "a6", "a7"], "candidates": []}, "meshes": [], "query": "x", "want": "Selected 7: a 1, a 2, a 3, a 4, a 5 and 2 more."},
+    {"mode": "add", "match": {"confidence": "high", "reason": "match", "names": ["Sofa"], "candidates": []}, "meshes": ["Chair", "Sofa"], "query": "x", "want": "Added Sofa. 2 selected."},
+    {"mode": "remove", "match": {"confidence": "high", "reason": "match", "names": ["Sofa"], "candidates": []}, "meshes": ["Chair"], "query": "x", "want": "Removed Sofa. 1 selected."},
+    {"mode": "remove", "match": {"confidence": "high", "reason": "match", "names": ["Sofa"], "candidates": []}, "meshes": [], "query": "x", "want": "Removed Sofa. Nothing is selected."},
+    {"mode": "replace", "match": {"confidence": "ambiguous", "reason": "multiple", "names": [], "candidates": ["Chair_Left", "Chair_Right"]}, "meshes": [], "query": "x", "want": "Which one: Chair Left or Chair Right?"},
+    {"mode": "replace", "match": {"confidence": "ambiguous", "reason": "count_mismatch", "names": [], "candidates": ["A", "B", "C"]}, "meshes": [], "query": "x", "want": "I found 3: A, B and C. Which ones?"},
+    {"mode": "replace", "match": {"confidence": "none", "reason": "relation", "names": [], "candidates": []}, "meshes": [], "query": "  the cup   next to the sofa ", "want": "I can't tell which one \"the cup next to the sofa\" is yet. Try its name or color, or tap it."},
+    {"mode": "replace", "match": {"confidence": "none", "reason": "empty", "names": [], "candidates": []}, "meshes": [], "query": "it", "want": "Which object?"},
+    {"mode": "replace", "match": {"confidence": "none", "reason": "no_match", "names": [], "candidates": []}, "meshes": [], "query": "the giraffe", "want": "I couldn't find \"the giraffe\"."}
+  ],
+  "context": [
+    {"meshes": [], "want": "The user cleared the selection."},
+    {"meshes": ["Roof"], "want": "The user selected the mesh \"Roof\". \"This\" or \"it\" now refers to it."},
+    {"meshes": ["Roof", "Door"], "want": "The user selected 2 meshes: \"Roof\", \"Door\". \"These\", \"them\", or \"it\" refer to them."}
+  ],
+  "speakable": [["FloorLamp_2", "Floor Lamp 2"], ["chair-left.001", "chair left 001"], ["RedChairB", "Red Chair B"], ["a__b", "a b"]]
 }
