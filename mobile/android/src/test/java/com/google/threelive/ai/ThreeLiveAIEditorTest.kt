@@ -19,8 +19,12 @@ package com.google.threelive.ai
 import com.google.threelive.MiniJson
 import com.google.threelive.gemini.GeminiLiveTransport
 import com.google.threelive.gemini.PcmAudioSink
-import com.sun.net.httpserver.HttpServer
-import java.net.InetSocketAddress
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -247,38 +251,52 @@ class ThreeLiveAIEditorTest {
     assertEquals(listOf("Roof", null, "Door"), seen)
   }
 
+  /** In-memory HTTP exchange (Android unit tests have no JDK HTTP server). */
+  private class FakeConnection(url: URL, private val status: Int, private val reply: String) : HttpURLConnection(url) {
+    val body = ByteArrayOutputStream()
+
+    override fun connect() {}
+
+    override fun disconnect() {}
+
+    override fun usingProxy() = false
+
+    override fun getOutputStream(): OutputStream = body
+
+    override fun getResponseCode() = status
+
+    override fun getInputStream(): InputStream = ByteArrayInputStream(reply.toByteArray())
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(reply.toByteArray())
+  }
+
   @Test
   fun chatProviderPostsAndParsesContent() = runBlocking {
-    val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-    val bodies = CopyOnWriteArrayList<String>()
-    server.createContext("/chat") { ex ->
-      bodies += ex.requestBody.readBytes().toString(Charsets.UTF_8)
-      val auth = ex.requestHeaders.getFirst("Authorization")
-      val reply =
-        if (auth == "Bearer t") """{"choices":[{"message":{"content":[{"type":"text","text":"```js\n"},"scene.add(x)\n```"]}}]}"""
-        else """{"error":"nope"}"""
-      val bytes = reply.toByteArray()
-      ex.sendResponseHeaders(if (auth == "Bearer t") 200 else 401, bytes.size.toLong())
-      ex.responseBody.use { it.write(bytes) }
-    }
-    server.start()
+    val opened = CopyOnWriteArrayList<FakeConnection>()
+    val ok = """{"choices":[{"message":{"content":[{"type":"text","text":"```js\n"},"scene.add(x)\n```"]}}]}"""
+    val provider =
+      AIChatProvider("https://proxy.example/chat", "m1", mapOf("Authorization" to "Bearer t"), openConnection = { url ->
+        FakeConnection(url, 200, ok).also { opened += it }
+      })
+    val text = provider.complete(listOf(AIChatMessage("user", "hi")))
+    assertEquals("```js\nscene.add(x)\n```", text)
+    val conn = opened.single()
+    assertEquals("POST", conn.requestMethod)
+    assertEquals("Bearer t", conn.getRequestProperty("Authorization"))
+    val sent = MiniJson.parseObjectOrNull(conn.body.toString(Charsets.UTF_8.name()))!!
+    assertEquals("m1", sent["model"])
+    assertEquals(false, sent["stream"])
+    assertEquals("hi", MiniJson.asMap(MiniJson.asList(sent["messages"])!![0])!!["content"])
+
+    val denied = AIChatProvider("https://proxy.example/chat", openConnection = { FakeConnection(it, 401, """{"error":"nope"}""") })
     try {
-      val url = "http://127.0.0.1:${server.address.port}/chat"
-      val text = AIChatProvider(url, "m1", mapOf("Authorization" to "Bearer t")).complete(listOf(AIChatMessage("user", "hi")))
-      assertEquals("```js\nscene.add(x)\n```", text)
-      val sent = MiniJson.parseObjectOrNull(bodies[0])!!
-      assertEquals("m1", sent["model"])
-      assertEquals(false, sent["stream"])
-      try {
-        AIChatProvider(url).complete(listOf(AIChatMessage("user", "hi")))
-        fail("401 must throw")
-      } catch (e: AIEditException) {
-        assertTrue(e.message!!.contains("HTTP 401"))
-      }
-    } finally {
-      server.stop(0)
+      denied.complete(listOf(AIChatMessage("user", "hi")))
+      fail("401 must throw")
+    } catch (e: AIEditException) {
+      assertTrue(e.message!!.contains("HTTP 401"))
     }
     assertFalse(AIChatProvider.isAllowedEndpoint("http://example.com/chat"))
+    assertTrue(AIChatProvider.isAllowedEndpoint("http://127.0.0.1:11434/v1/chat/completions"))
     assertTrue(AIChatProvider.isAllowedEndpoint("https://example.com/chat"))
     try {
       AIChatProvider.parseContent("""{"choices":[]}""")
