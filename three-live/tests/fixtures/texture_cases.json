@@ -22,9 +22,9 @@
       "size": 1000,
       "seed": 7.4,
       "canonicalPrompt": "Mossy Kyoto temple stone, seamless",
-      "canonicalSize": 1024,
+      "canonicalSize": 512,
       "canonicalSeed": 7,
-      "key": "8b6408592b2e4879"
+      "key": "2e185675721890e2"
     },
     {
       "prompt": "café tiles 🧱",

@@ -4472,7 +4472,7 @@ fn test_b5_ai_textures_resolve_from_the_active_pack() {
             new THREE.MeshStandardMaterial({ color: 0x336699 }));
         wall.name = 'MossWall';
         wall.position.set(0, 0.5, 0);
-        wall.userData.xr = { material: { preset: 'brick', prompt: ' mossy  stone ', size: 256, seed: 2 } };
+        wall.userData.xr = { material: { preset: 'brick', prompt: ' mossy  stone ', size: 512, seed: 2 } };
         scene.add(wall);
         const floor = new THREE.Mesh(new THREE.BoxGeometry(2, 0.1, 2),
             new THREE.MeshStandardMaterial({ color: 0x336699 }));
@@ -4481,8 +4481,8 @@ fn test_b5_ai_textures_resolve_from_the_active_pack() {
         scene.add(floor);
         scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     "#;
-    let spec = TextureSpec::new("mossy stone", Some(256.0), Some(2.0)).unwrap();
-    let rgba = synthetic_albedo(2, 256);
+    let spec = TextureSpec::new("mossy stone", Some(512.0), Some(2.0)).unwrap();
+    let rgba = synthetic_albedo(2, 512);
     let mut pack = TexturePack::default();
     pack.entries.insert(
         spec.key(),
@@ -4505,10 +4505,10 @@ fn test_b5_ai_textures_resolve_from_the_active_pack() {
     };
     let wall = &sg.materials[0];
     let (albedo, size) = decode(wall.base_color_texture.as_deref().unwrap());
-    assert_eq!(size, [256, 256]);
+    assert_eq!(size, [512, 512], "AI textures export at full size");
     assert_eq!(albedo.rgba, rgba, "exported albedo == pack albedo");
     let (normal, _) = decode(wall.normal_texture.as_deref().unwrap());
-    let (want_normal, _) = derive_texture_maps(&rgba, 256, 1.0, 0.85, 0.0);
+    let (want_normal, _) = derive_texture_maps(&rgba, 512, 1.0, 0.85, 0.0);
     assert_eq!(normal.rgba, want_normal, "exported normal == derived normal");
     assert!(wall.base_color[0] > 0.99 && wall.base_color[2] > 0.99, "AI albedo is untinted");
     // The miss falls back to the 32 px concrete preset.

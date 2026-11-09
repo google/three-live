@@ -2984,6 +2984,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       px.height,
       tex.flipY,
       tex.colorSpace === 'srgb-linear',
+      Math.min(MAX_BACKING_DIM, Number(tex._pngDim) || MAX_CANVAS_PNG_DIM),
     );
     tex._cs = encoded.uri;
     tex._ca = encoded.avgColor;
@@ -3005,6 +3006,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     declare _ca: RgbaTuple;
     declare _ms: string;
     declare _fs: number;
+    /** Export size cap override (AI textures export at their own size). */
+    declare _pngDim?: number;
 
     constructor(
       // tslint:disable-next-line:no-any Accepts VirtualCanvas, HTMLCanvasElement, OffscreenCanvas, or ImageData.
@@ -5361,8 +5364,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   };
   const texSize = (raw: unknown): number => {
     const n = typeof raw === 'number' ? raw : NaN;
+    // AI textures export at full size (presets at 256); 512 is the ceiling.
     if (!Number.isFinite(n)) return 512;
-    return n <= 384 ? 256 : n <= 768 ? 512 : 1024;
+    return n <= 384 ? 256 : 512;
   };
   const texSeed = (raw: unknown): number => {
     const n = typeof raw === 'number' ? raw : NaN;
@@ -5555,6 +5559,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       t.flipY = false;
       t.colorSpace = cs;
       t.name = `ai_${key}_${role}`;
+      // Export at the texture's own size instead of the 256 px canvas cap.
+      t._pngDim = size;
       return t;
     };
     const ormTex = mk(maps[2], 'srgb-linear', 'orm');
@@ -5678,6 +5684,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     // Host-side helpers for the AI texture pipeline (three-live-ai, B5).
     reg.canonicalTextureSpec = canonicalTextureSpec;
     reg.deriveTextureMaps = deriveTextureMaps;
+    reg.encodeRgbaPngDataUri = (rgba: Uint8Array, w: number, h: number) =>
+      encodeRgbaToPngDataUri(rgba, w, h, false, false, MAX_TEXTURE_DIM).uri;
     reg.materializeDeclarativeGeometry = (node: unknown) => {
       reg._cadMaterialize?.(node);
       reg._lodMaterialize?.(node);

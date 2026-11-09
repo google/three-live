@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 -   **AI PBR textures, core (B5a):** `userData.xr.material` accepts an optional
-    `prompt` (plus `size: 256 | 512 | 1024` and `seed`) next to its A8 `preset`.
+    `prompt` (plus `size: 256 | 512` and `seed`) next to its A8 `preset`.
     Compiling stays a pure function of `(script, texture pack)`: a texture pack
     maps an FNV-1a 64 content key of the canonical `{prompt, size, seed}` to a
     seamless albedo PNG, and the normal and occlusion-roughness-metalness maps
