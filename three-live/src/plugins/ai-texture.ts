@@ -29,7 +29,7 @@ export const TEXTURE_PACK_VERSION = 1;
 /** Most entries a pack may hold. */
 export const MAX_PACK_ENTRIES = 64;
 /** Largest albedo PNG accepted per pack entry. */
-export const MAX_ALBEDO_PNG_BYTES = 2 * 1024 * 1024;
+export const MAX_ALBEDO_PNG_BYTES = 6 * 1024 * 1024;
 /** Largest provider image accepted. */
 export const MAX_SOURCE_IMAGE_BYTES = 16 * 1024 * 1024;
 /** IndexedDB cache budget (least recently used entries are evicted). */
@@ -367,7 +367,12 @@ export const browserImageCodec: TextureImageCodec = {
     const enc = registry().encodeRgbaPngDataUri;
     if (typeof enc === 'function') {
       const uri = enc(rgba, size, size);
-      return base64ToBytes(uri.slice(uri.indexOf(',') + 1), Infinity);
+      const stored = base64ToBytes(uri.slice(uri.indexOf(',') + 1), Infinity);
+      // The procedural encoder is synchronous and stores; DEFLATE it here.
+      const deflater = getSharedRegistry().makePngDeflater?.(
+        (globalThis as {CompressionStream?: unknown}).CompressionStream,
+      );
+      return deflater ? deflater.png(stored) : stored;
     }
     throw new Error('PNG encoding needs the procedural plugin');
   },
@@ -492,7 +497,7 @@ export async function parseTexturePack(
     }
     const png = base64ToBytes(url.slice(prefix.length), MAX_ALBEDO_PNG_BYTES);
     if (png.length > MAX_ALBEDO_PNG_BYTES || imageKind(png) !== 'png') {
-      throw new Error(`texture pack: entry ${key}: albedo is not a PNG within 2 MB`);
+      throw new Error(`texture pack: entry ${key}: albedo is not a PNG within 6 MB`);
     }
     const img = await codec.decode(png);
     if (img.width !== spec.size || img.height !== spec.size) {

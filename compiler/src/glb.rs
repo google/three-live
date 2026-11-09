@@ -148,9 +148,10 @@ fn jnum(val: f32) -> serde_json::Value {
 /// and path traversal (`..`). Only `data:image/` data URIs or safe relative asset filenames are
 /// permitted.
 fn validate_texture_uri(uri: &str) -> Result<(), String> {
-    if uri.len() > 2 * 1024 * 1024 {
+    // 6 MB fits a stored 1024² RGBA PNG (~5.6 MB as base64), e.g. a 1024 px AI albedo.
+    if uri.len() > 6 * 1024 * 1024 {
         return Err(format!(
-            "Texture URI length ({} bytes) exceeds maximum allowed (2 MB)",
+            "Texture URI length ({} bytes) exceeds maximum allowed (6 MB)",
             uri.len()
         ));
     }
@@ -339,10 +340,13 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             if uri.is_empty() {
                 return Ok(None);
             }
-            validate_texture_uri(uri)?;
             if let Some(&idx) = texture_lookup.get(uri) {
                 return Ok(Some(idx));
             }
+            // In-engine encoders write stored PNGs (cheap inside the execution ceiling);
+            // DEFLATE them here, outside it.
+            let packed = crate::render::compress_png_data_uri(uri);
+            validate_texture_uri(&packed)?;
             if images.len() >= SECURITY_3D_MAX_TEXTURES {
                 return Err(format!(
                     "Scene exceeds SECURITY_3D_MAX_TEXTURES ({})",
@@ -350,7 +354,7 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                 ));
             }
             let img_idx = images.len();
-            images.push(json!({ "uri": uri }));
+            images.push(json!({ "uri": &*packed }));
             if samplers.is_empty() {
                 samplers.push(json!({
                     "magFilter": 9729,

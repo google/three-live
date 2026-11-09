@@ -784,7 +784,6 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   const B64_CHARS =
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const MAX_BACKING_DIM = 512;
-  const MAX_CANVAS_PNG_DIM = 256;
   const MAX_TEXTURE_DIM = 2048;
   const MAX_PATH_POINTS = 16384;
   const MAX_STATE_STACK = 256;
@@ -984,7 +983,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     srcH: number,
     flipY: boolean,
     isLinearColorSpace: boolean,
-    maxDim = MAX_CANVAS_PNG_DIM,
+    maxDim = MAX_BACKING_DIM,
   ): {uri: string; avgColor: RgbaTuple} => {
     if (
       !srcData ||
@@ -2984,7 +2983,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       px.height,
       tex.flipY,
       tex.colorSpace === 'srgb-linear',
-      Math.min(MAX_BACKING_DIM, Number(tex._pngDim) || MAX_CANVAS_PNG_DIM),
+      Math.min(MAX_TEXTURE_DIM, Number(tex._pngDim) || MAX_BACKING_DIM),
     );
     tex._cs = encoded.uri;
     tex._ca = encoded.avgColor;
@@ -3006,7 +3005,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     declare _ca: RgbaTuple;
     declare _ms: string;
     declare _fs: number;
-    /** Export size cap override (AI textures export at their own size). */
+    /** Export size cap override (default: the 512 px canvas backing limit). */
     declare _pngDim?: number;
 
     constructor(
@@ -3068,7 +3067,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
 
     get avgColor(): RgbaTuple {
-      syncCanvasTex(this);
+      // A manual `source` keeps the average that came with it.
+      if (!this._ms) syncCanvasTex(this);
       return this._ca;
     }
     set avgColor(v: RgbaTuple) {
@@ -5364,9 +5364,27 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   };
   const texSize = (raw: unknown): number => {
     const n = typeof raw === 'number' ? raw : NaN;
-    // AI textures export at full size (presets at 256); 512 is the ceiling.
     if (!Number.isFinite(n)) return 512;
-    return n <= 384 ? 256 : 512;
+    return n <= 384 ? 256 : n <= 768 ? 512 : 1024;
+  };
+  // Normal / ORM maps stop at 512: a 1024 albedo derives them from an exact
+  // 2×2 box downsample (`(a + b + c + d + 2) >> 2`).
+  const texMapSize = (n: number): number => (n > 512 && n % 2 === 0 ? n / 2 : n);
+  const texBox2 = (a: ArrayLike<number>, n: number): Uint8Array => {
+    const m = n / 2;
+    const out = new Uint8Array(m * m * 4);
+    for (let y = 0; y < m; y++) {
+      for (let x = 0; x < m; x++) {
+        const i0 = (2 * y * n + 2 * x) * 4;
+        const i1 = i0 + n * 4;
+        const o = (y * m + x) * 4;
+        for (let c = 0; c < 4; c++) {
+          out[o + c] =
+            (a[i0 + c] + a[i0 + 4 + c] + a[i1 + c] + a[i1 + 4 + c] + 2) >> 2;
+        }
+      }
+    }
+    return out;
   };
   const texSeed = (raw: unknown): number => {
     const n = typeof raw === 'number' ? raw : NaN;
@@ -5433,16 +5451,19 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const seed = texSeed(o?.seed);
     return {prompt, size, seed, key: texKey(prompt, size, seed)};
   };
-  // [normal, orm] from a seamless N×N albedo: high-passed integer luminance
-  // (81·Y − Σ9×9 Y, wrap-around) → height → heightToNormal; ORM G =
-  // roughness + 0.35·(0.5 − h), B = metalness.
+  // [normal, orm] (texMapSize(N)² each) from a seamless N×N albedo:
+  // high-passed integer luminance (81·Y − Σ9×9 Y, wrap-around) → height →
+  // heightToNormal; ORM G = roughness + 0.35·(0.5 − h), B = metalness.
   const deriveTextureMaps = (
-    albedo: Uint8Array,
+    albedo: ArrayLike<number>,
     N: number,
     ns: number,
     rough: number,
     metal: number,
   ): Uint8Array[] => {
+    if (texMapSize(N) !== N) {
+      return deriveTextureMaps(texBox2(albedo, N), N / 2, ns, rough, metal);
+    }
     const lum = new Float64Array(N * N);
     for (let i = 0; i < N * N; i++) {
       const o = i * 4;
@@ -5551,22 +5572,25 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       }
     }
     if (!maps) return null;
-    const mk = (bytes: Uint8Array, cs: string, role: string) => {
-      const vc = new VirtualCanvas(size, size);
-      vc._data.set(bytes);
-      vc._ver++;
-      const t = new CanvasTexture(vc);
+    // Plain `{data, width, height}` images (not VirtualCanvas, whose backing
+    // stops at 512) that export at their own size.
+    const mk = (bytes: Uint8Array, n: number, cs: string, role: string) => {
+      const t = new CanvasTexture({
+        data: new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, n * n * 4),
+        width: n,
+        height: n,
+      });
       t.flipY = false;
       t.colorSpace = cs;
       t.name = `ai_${key}_${role}`;
-      // Export at the texture's own size instead of the 256 px canvas cap.
-      t._pngDim = size;
+      t._pngDim = n;
       return t;
     };
-    const ormTex = mk(maps[2], 'srgb-linear', 'orm');
+    const ms = texMapSize(size);
+    const ormTex = mk(maps[2], ms, 'srgb-linear', 'orm');
     // tslint:disable-next-line:no-any Spreadable MeshStandardMaterial params.
-    const out: any = {map: mk(maps[0], 'srgb', 'albedo')};
-    if (ns > 0) out.normalMap = mk(maps[1], 'srgb-linear', 'normal');
+    const out: any = {map: mk(maps[0], size, 'srgb', 'albedo')};
+    if (ns > 0) out.normalMap = mk(maps[1], ms, 'srgb-linear', 'normal');
     out.roughnessMap = ormTex;
     out.metalnessMap = ormTex;
     if (token) {

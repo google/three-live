@@ -2332,12 +2332,18 @@ export function validateXRTraits(
       );
     }
     const sz = materialObj['size'];
-    if (typeof sz === 'number' && sz !== 256 && sz !== 512) {
-      const snapped = Number.isFinite(sz) && sz <= 384 ? 256 : 512;
+    if (typeof sz === 'number' && sz !== 256 && sz !== 512 && sz !== 1024) {
+      const snapped = !Number.isFinite(sz)
+        ? 512
+        : sz <= 384
+          ? 256
+          : sz <= 768
+            ? 512
+            : 1024;
       pushDiag(
         'TL202',
-        `userData.xr.material.size (${sz}) on node '${nodeName}' is not 256 or 512; the AI texture uses ${snapped}.`,
-        'Use size: 256 or 512 for AI textures.',
+        `userData.xr.material.size (${sz}) on node '${nodeName}' is not 256, 512, or 1024; the AI texture uses ${snapped}.`,
+        'Use size: 256, 512, or 1024 for AI textures.',
         'info',
       );
     }

@@ -153,6 +153,13 @@ export interface SharedThreeLiveRegistry {
    * permitted unless explicitly enabled.
    */
   allowClientScripts?: boolean;
+  /**
+   * `makePngDeflater` from `png-deflate.ts`, published by `three-author.ts` so
+   * host-side plugins (AI texture packs) reuse it instead of bundling a copy.
+   */
+  makePngDeflater?: (
+    compressionStream: unknown,
+  ) => import('./png-deflate').PngDeflater | null;
   /** Reference to the host `THREE` namespace installed by `three-author.ts`. */
   threeNamespace?: unknown;
   /**

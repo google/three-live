@@ -26,6 +26,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **1024 px AI textures, compressed texture PNGs, and native auto
+    generation (B5e):** `userData.xr.material.size` accepts `1024` (snapping:
+    ≤ 384 → 256, ≤ 768 → 512, else 1024); the derived normal and ORM maps stay
+    at 512, computed from an exact 2×2 box downsample shared by JS and Rust.
+    Texture PNGs are now DEFLATE-compressed with adaptive filtering: the Rust
+    GLB writer recompresses the in-engine (stored) PNGs, and the Web sandbox
+    worker does the same with `CompressionStream` before posting the GLB,
+    moving texture images into the BIN chunk. Canvas and preset textures
+    export at their 512 px canvas size instead of 256. On Android and iOS,
+    `ThreeLiveAITextures` / `AITextures` gain `mode` (auto when a provider is
+    set, like `ai-textures` on the Web), `sceneLoaded(script)` background
+    generation with update callbacks, and `ThreeLiveAIEditor.textures` /
+    `AIEditor.textures`, which re-apply the scene when textures arrive. GLB
+    exports mark nodes whose material shows an AI texture with
+    `extras.xr.material.textureKey` (the pack key), so tools can tell it from
+    a preset fallback.
+    Budgets: `three-live.min.js` `< 76 KB gz`, `three-live-full.min.js`
+    `< 188 KB gz`, `xr-live.min.js` `< 87 KB gz`, `xr-live-full.min.js`
+    `< 297 KB gz`.
+
 -   **AI textures on Android and iOS (B5d):** `ThreeLiveAITextures` (Android)
     and `AITextures` (iOS) install a texture pack for every compile
     (`setPack`), list a scene's texture requests, and generate missing textures
@@ -61,7 +81,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `three-live-full.min.js` `< 186 KB gz`, `xr-live-full.min.js` `< 295 KB gz`.
 
 -   **AI PBR textures, core (B5a):** `userData.xr.material` accepts an optional
-    `prompt` (plus `size: 256 | 512` and `seed`) next to its A8 `preset`.
+    `prompt` (plus `size: 256 | 512` and `seed`; 1024 since B5e) next to its A8 `preset`.
     Compiling stays a pure function of `(script, texture pack)`: a texture pack
     maps an FNV-1a 64 content key of the canonical `{prompt, size, seed}` to a
     seamless albedo PNG, and the normal and occlusion-roughness-metalness maps

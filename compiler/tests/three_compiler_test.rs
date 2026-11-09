@@ -3636,10 +3636,22 @@ fn test_full_pbr_material_maps_glb_usdz_and_software_render() {
     let glb = transcode_three_to_glb(pbr_script).expect("PBR GLB");
     let round_trip = three_live_compiler::glb::read_glb(&glb).expect("read_glb round-trip");
     let rm = &round_trip.materials[0];
-    assert_eq!(rm.metallic_roughness_texture, m.metallic_roughness_texture);
-    assert_eq!(rm.normal_texture, m.normal_texture);
-    assert_eq!(rm.emissive_texture, m.emissive_texture);
-    assert_eq!(rm.occlusion_texture, m.occlusion_texture);
+    // GLB textures are DEFLATEd (the in-engine PNGs are stored), so compare pixels.
+    let pixels = |uri: &Option<String>| {
+        let png = three_live_compiler::load_reference_bytes(uri.as_deref().unwrap()).unwrap();
+        three_live_compiler::decode_reference_image(&png).unwrap()
+    };
+    for (got, want) in [
+        (&rm.metallic_roughness_texture, &m.metallic_roughness_texture),
+        (&rm.normal_texture, &m.normal_texture),
+        (&rm.emissive_texture, &m.emissive_texture),
+        (&rm.occlusion_texture, &m.occlusion_texture),
+    ] {
+        let (a, a_size) = pixels(got);
+        let (b, b_size) = pixels(want);
+        assert_eq!((a.rgba, a_size), (b.rgba, b_size));
+        assert!(got.as_ref().unwrap().len() <= want.as_ref().unwrap().len());
+    }
     assert!((rm.occlusion_strength - 0.7).abs() < 1e-4);
     assert!((rm.emissive_factor[0] - 2.0).abs() < 1e-4);
 
@@ -4518,7 +4530,7 @@ fn test_b5_ai_textures_resolve_from_the_active_pack() {
     // Without an active pack the same script compiles to the presets (pure, offline).
     let plain = three_live_compiler::validate_three_script(script).expect("preset fallback");
     let (_, plain_size) = decode(plain.materials[0].base_color_texture.as_deref().unwrap());
-    assert_eq!(plain_size, [256, 256]);
+    assert_eq!(plain_size, [512, 512], "presets export at their 512 px canvas size");
     assert_ne!(
         plain.materials[0].base_color_texture, wall.base_color_texture,
         "no pack → brick preset, not the AI albedo"

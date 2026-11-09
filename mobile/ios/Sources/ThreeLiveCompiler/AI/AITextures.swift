@@ -96,12 +96,35 @@ public struct AITextureResult: Sendable, Equatable {
 /// a provider; after `generateTextures` (or `setPack`) recompile the scene to see the new
 /// textures. Key derivation, image preparation, and pack validation run in the shared Rust core,
 /// so results match the web and the CLI.
+///
+/// Like `ai-textures` on the web, `mode` is `.auto` when a provider is configured: call
+/// `sceneLoaded(_:onUpdated:)` after each load and missing textures are generated in the
+/// background, then `onTexturesUpdated` (and the `onUpdated` callback) fire so you can recompile.
+/// Assign this object to `AIEditor.textures` and the editor does both for its edits.
 public final class AITextures: @unchecked Sendable {
+  /// When missing textures are generated. Mirrors `ai-textures="auto|manual"` on the web.
+  public enum Mode: Sendable {
+    /// `sceneLoaded` generates missing textures in the background (needs a provider).
+    case auto
+    /// Only packs, the cache, and explicit `generateTextures` calls.
+    case manual
+  }
+
   private let provider: AIImageProvider?
   private let cacheDirectory: URL?
   private let core: AICore
   private let lock = NSLock()
   private var pack: String?
+  private var modeValue: Mode
+  private var failedKeys = Set<String>()
+  private var autoTask: Task<Void, Never>?
+  // Tail of the serialized generation chain (one pack update at a time).
+  private var generateTail: Task<Void, Never>?
+
+  /// `sceneLoaded` started generating these requests (called on a background task).
+  public var onTexturesStart: ((String, [AITextureRequest]) -> Void)?
+  /// Background generation finished; recompile the script if anything was added.
+  public var onTexturesUpdated: ((String, AITextureResult) -> Void)?
 
   /// - Parameters:
   ///   - cacheDirectory: raw provider images are cached here (`<key>.img`), e.g. a folder in
@@ -113,6 +136,81 @@ public final class AITextures: @unchecked Sendable {
     self.provider = provider
     self.cacheDirectory = cacheDirectory
     self.core = core
+    self.modeValue = provider == nil ? .manual : .auto
+  }
+
+  /// Defaults to `.auto` with a provider, `.manual` without.
+  public var mode: Mode {
+    get { locked { modeValue } }
+    set { locked { modeValue = newValue } }
+  }
+
+  /// Call after loading `script`. In `.auto` mode (with a provider) this generates the textures
+  /// the pack is missing in the background (skipping ones that already failed, so a broken
+  /// provider is not retried on every edit), then calls `onTexturesUpdated` and `onUpdated`. A
+  /// newer call cancels the previous one.
+  @discardableResult
+  public func sceneLoaded(
+    _ script: String, onUpdated: (@Sendable (AITextureResult) async -> Void)? = nil
+  ) -> Task<Void, Never>? {
+    let previous = locked { () -> Task<Void, Never>? in
+      let p = autoTask
+      autoTask = nil
+      return p
+    }
+    previous?.cancel()
+    guard mode == .auto, provider != nil else { return nil }
+    let task = Task { [weak self] in
+      guard let self else { return }
+      do {
+        let skip = self.locked { self.failedKeys }
+        let missing = try await self.requests(script).filter { !$0.hit && !skip.contains($0.key) }
+        if missing.isEmpty || Task.isCancelled { return }
+        self.onTexturesStart?(script, missing)
+        let keys = Set(missing.map(\.key))
+        let result = try await self.serialized {
+          try await self.generate(script, force: false) { keys.contains($0.key) }
+        }
+        if Task.isCancelled { return }
+        self.locked { self.failedKeys.formUnion(result.failed.keys) }
+        self.onTexturesUpdated?(script, result)
+        await onUpdated?(result)
+      } catch {
+        // Background work never throws to the app; the scene keeps its presets.
+      }
+    }
+    locked { autoTask = task }
+    return task
+  }
+
+  /// Forgets failed keys so `sceneLoaded` retries them (e.g. after fixing the provider).
+  public func clearFailures() {
+    locked { failedKeys.removeAll() }
+  }
+
+  /// Cancels background generation.
+  public func cancel() {
+    locked { autoTask }?.cancel()
+  }
+
+  // Runs `body` after every earlier serialized call has finished.
+  private func serialized(
+    _ body: @escaping @Sendable () async throws -> AITextureResult
+  ) async throws -> AITextureResult {
+    let task: Task<AITextureResult, Error> = locked {
+      let prev = generateTail
+      let t = Task { () async throws -> AITextureResult in
+        await prev?.value
+        return try await body()
+      }
+      generateTail = Task { _ = try? await t.value }
+      return t
+    }
+    return try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+    }
   }
 
   /// The current texture pack JSON (nil = none).
@@ -165,9 +263,17 @@ public final class AITextures: @unchecked Sendable {
   public func generateTextures(
     _ script: String, meshes: [String] = [], force: Bool = false
   ) async throws -> AITextureResult {
-    let wanted = try await requests(script).filter { r in
-      (force || !r.hit) && (meshes.isEmpty || r.meshes.contains(where: meshes.contains))
+    try await serialized {
+      try await self.generate(script, force: force) { r in
+        meshes.isEmpty || r.meshes.contains(where: meshes.contains)
+      }
     }
+  }
+
+  private func generate(
+    _ script: String, force: Bool, include: (AITextureRequest) -> Bool
+  ) async throws -> AITextureResult {
+    let wanted = try await requests(script).filter { r in (force || !r.hit) && include(r) }
     var generated: [String] = []
     var cached: [String] = []
     var failed: [String: String] = [:]

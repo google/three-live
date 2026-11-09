@@ -30,7 +30,9 @@ import {
   type ThreeLiveImageProvider,
 } from '../src/plugins/ai-texture';
 import {proceduralPlugin} from '../src/plugins/procedural';
+import {makePngDeflater} from '../src/png-deflate';
 import {buildSandboxWorkerSource, Scene, THREE} from '../src/three-author';
+import {sceneToGLB} from '../src/three-convert';
 
 registerPlugin(proceduralPlugin);
 
@@ -439,8 +441,136 @@ async function run(): Promise<void> {
     'Sandbox worker installs a sanitized __three_live_texture_pack__',
   );
 
+  // 10. PNG / GLB DEFLATE pass (B5e).
+  await deflaterTests(src);
+
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
   if (failed > 0) process.exit(1);
+}
+
+/** Decodes an 8-bit RGBA PNG (any filters) with node:zlib, for assertions. */
+function decodeRgbaPng(png: Uint8Array): {w: number; h: number; rgba: Uint8Array} {
+  const zlib = require('zlib') as typeof import('zlib');
+  const b = Buffer.from(png);
+  const w = b.readUInt32BE(16);
+  const h = b.readUInt32BE(20);
+  const idat: Buffer[] = [];
+  for (let p = 8; p + 8 <= b.length; ) {
+    const len = b.readUInt32BE(p);
+    if (b.toString('ascii', p + 4, p + 8) === 'IDAT') {
+      idat.push(b.subarray(p + 8, p + 8 + len));
+    }
+    p += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const rb = w * 4;
+  const rgba = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const ft = raw[y * (rb + 1)];
+    for (let i = 0; i < rb; i++) {
+      const x = raw[y * (rb + 1) + 1 + i];
+      const a = i >= 4 ? rgba[y * rb + i - 4] : 0;
+      const up = y > 0 ? rgba[(y - 1) * rb + i] : 0;
+      const c = i >= 4 && y > 0 ? rgba[(y - 1) * rb + i - 4] : 0;
+      let pred = 0;
+      if (ft === 1) pred = a;
+      else if (ft === 2) pred = up;
+      else if (ft === 3) pred = (a + up) >> 1;
+      else if (ft === 4) {
+        const pp = a + up - c;
+        const pa = Math.abs(pp - a);
+        const pb = Math.abs(pp - up);
+        const pc = Math.abs(pp - c);
+        pred = pa <= pb && pa <= pc ? a : pb <= pc ? up : c;
+      }
+      rgba[y * rb + i] = (x + pred) & 255;
+    }
+  }
+  return {w, h, rgba};
+}
+
+async function deflaterTests(workerSrc: string): Promise<void> {
+  assert(
+    makePngDeflater(undefined) === null,
+    'makePngDeflater returns null without CompressionStream',
+  );
+  const d = makePngDeflater(
+    (globalThis as {CompressionStream?: unknown}).CompressionStream,
+  )!;
+  const n = 96;
+  const rgba = new Uint8Array(n * n * 4);
+  for (let i = 0; i < n * n; i++) {
+    const x = i % n;
+    const y = Math.floor(i / n);
+    rgba.set([x * 2, y * 2, (x * y) & 255, 255], i * 4);
+  }
+  const uri = reg.encodeRgbaPngDataUri(rgba, n, n) as string;
+  const stored = new Uint8Array(Buffer.from(uri.split(',')[1], 'base64'));
+  const packed = await d.png(stored);
+  const back = decodeRgbaPng(packed);
+  assert(
+    packed.length < stored.length / 4 &&
+      back.w === n &&
+      back.h === n &&
+      Buffer.compare(Buffer.from(back.rgba), Buffer.from(rgba)) === 0,
+    'Stored PNGs are re-encoded with filters + DEFLATE, pixel-exact',
+  );
+  assert(
+    (await d.png(packed)) === packed &&
+      (await d.png(new Uint8Array([1, 2, 3]))).length === 3,
+    'Already-compressed PNGs and non-PNG bytes pass through unchanged',
+  );
+
+  // A GLB with a CanvasTexture: images shrink, geometry bytes survive.
+  const canvas: any = (globalThis as any).document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#3366aa';
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = '#ffcc00';
+  ctx.fillRect(32, 32, 64, 64);
+  const scene = new Scene();
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({map: new THREE.CanvasTexture(canvas)}),
+  );
+  scene.add(mesh);
+  const glb = sceneToGLB(scene as any);
+  const out = await d.glb(glb);
+  const parse = (g: Uint8Array) => {
+    const dv = new DataView(g.buffer, g.byteOffset, g.byteLength);
+    const jl = dv.getUint32(12, true);
+    const json = JSON.parse(Buffer.from(g.subarray(20, 20 + jl)).toString());
+    const bin = g.subarray(28 + jl, 28 + jl + dv.getUint32(20 + jl, true));
+    const view = (i: number) => {
+      const v = json.bufferViews[i];
+      return bin.subarray(v.byteOffset || 0, (v.byteOffset || 0) + v.byteLength);
+    };
+    return {json, view, total: dv.getUint32(8, true)};
+  };
+  const a = parse(glb);
+  const b = parse(out);
+  const posView = a.json.accessors[a.json.meshes[0].primitives[0].attributes.POSITION].bufferView;
+  const srcUri: string = a.json.images[0].uri;
+  const imgA = decodeRgbaPng(
+    new Uint8Array(Buffer.from(srcUri.split(',')[1], 'base64')),
+  );
+  const imgB = decodeRgbaPng(b.view(b.json.images[0].bufferView));
+  assert(
+    out.length < glb.length / 2 &&
+      b.json.images[0].uri === undefined &&
+      b.json.images[0].mimeType === 'image/png' &&
+      b.total === out.length &&
+      Buffer.compare(Buffer.from(imgA.rgba), Buffer.from(imgB.rgba)) === 0 &&
+      Buffer.compare(Buffer.from(a.view(posView)), Buffer.from(b.view(posView))) === 0 &&
+      b.json.buffers[0].byteLength % 4 === 0,
+    'GLB pass DEFLATEs PNG images into the BIN chunk losslessly',
+  );
+  assert(
+    workerSrc.includes('CompressionStream'),
+    'Sandbox worker DEFLATEs GLB textures before posting 3D_MODEL_READY',
+  );
 }
 
 run().catch((e) => {

@@ -448,6 +448,10 @@ public final class AIEditor: @unchecked Sendable {
   public var camera: AICamera?
   /// Let `provider` resolve references the local matcher can't (tier 2; default true).
   public var selectWithModel = true
+  /// AI textures (B5). When set, every applied script goes to `AITextures.sceneLoaded`; in
+  /// `.auto` mode missing textures are generated in the background and the current script is
+  /// re-applied when they arrive.
+  public var textures: AITextures?
 
   public init(
     source: String = "", provider: AIProvider, core: AICore = NativeAICore.shared,
@@ -794,6 +798,7 @@ public final class AIEditor: @unchecked Sendable {
           if history.count > Self.maxHistory { history.removeFirst() }
           _source = code
         }
+        texturesLoaded(code)
       } catch let loadError {
         error =
           "The edit compiled but failed to load: \((loadError as? LocalizedError)?.errorDescription ?? String(describing: loadError))"
@@ -894,6 +899,7 @@ public final class AIEditor: @unchecked Sendable {
           }
           _source = code
         }
+        texturesLoaded(code)
         setSelection([], mode: "clear", source: "api")
       } catch let loadError {
         error =
@@ -1013,7 +1019,18 @@ public final class AIEditor: @unchecked Sendable {
     guard let prev = locked({ history.popLast() }) else { return false }
     try await applyScene(prev)
     locked { _source = prev }
+    texturesLoaded(prev)
     return true
+  }
+
+  /// Starts background texture generation for `code`; re-applies it if it is still current.
+  private func texturesLoaded(_ code: String) {
+    textures?.sceneLoaded(code) { [weak self] result in
+      guard let self, !result.generated.isEmpty || !result.cached.isEmpty,
+        self.source == code
+      else { return }
+      try? await self.applyScene(code)
+    }
   }
 
   /// Short spoken summary of `result` (shared wording with the web).

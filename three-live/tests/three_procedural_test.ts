@@ -1505,7 +1505,7 @@ function runProceduralTests(): void {
     const hm = hitMat as any;
     assert(
       hm.map?.name === `ai_${mossSpec.key}_albedo` &&
-        fnv1a(hm.map.image._data) === fnv1a(mossRgba) &&
+        fnv1a(hm.map.image.data) === fnv1a(mossRgba) &&
         hm.normalMap?.name === `ai_${mossSpec.key}_normal` &&
         hm.roughnessMap === hm.metalnessMap &&
         hm.color.getHex() === 0xffffff,
@@ -1524,6 +1524,13 @@ function runProceduralTests(): void {
         (m: any) => m.pbrMetallicRoughness?.baseColorTexture,
       ).length === 2 && hitNode?.extras?.xr?.material?.prompt === 'mossy stone',
       'AI textures export as ordinary glTF textures and keep the prompt spec in node extras.xr',
+    );
+    const missNode = aiGltf.nodes.find((n: any) => n.name === 'BrickFallback');
+    assert(
+      hitNode?.extras?.xr?.material?.textureKey === mossSpec.key &&
+        missNode?.extras?.xr?.material?.textureKey === undefined &&
+        (hitMesh.userData.xr as any).material.textureKey === undefined,
+      'Exports mark AI hits with extras.xr.material.textureKey (not preset fallbacks, not userData)',
     );
   } finally {
     delete g.__three_live_texture_pack__;
@@ -1575,6 +1582,49 @@ function runProceduralTests(): void {
     'AI textures never outlive their pack and are shared by meshes with the same spec',
   );
 
+  // 1024 px AI textures: the albedo exports at 1024 (past the 512 px canvas
+  // backing), the derived normal / ORM maps at 512.
+  const bigSpec = reg.canonicalTextureSpec({prompt: 'big slate', size: 1024});
+  const bigRgba = synth(2, 1024);
+  g.__three_live_texture_pack__ = {[bigSpec.key]: {size: 1024, rgba: bigRgba}};
+  try {
+    const bigMat = new MeshStandardMaterial();
+    const bigMesh = new Mesh(new BoxGeometry(1, 1, 1), bigMat);
+    bigMesh.userData.xr = {
+      material: {preset: 'concrete', prompt: 'big slate', size: 1024},
+    };
+    const bigScene = new Scene();
+    bigScene.add(bigMesh);
+    bigScene.updateMatrixWorld(true);
+    const bm = bigMat as any;
+    const pngDims = (uri: string) => {
+      const b = Buffer.from(uri.split(',')[1], 'base64');
+      return [b.readUInt32BE(16), b.readUInt32BE(20)].join('x');
+    };
+    const [bigNormal] = reg.deriveTextureMaps(bigRgba, 1024, 1, 0.8, 0);
+    assert(
+      bm.map?.name === `ai_${bigSpec.key}_albedo` &&
+        pngDims(bm.map.source) === '1024x1024' &&
+        pngDims(bm.normalMap.source) === '512x512' &&
+        pngDims(bm.roughnessMap.source) === '512x512' &&
+        fnv1a(bm.normalMap.image.data) === fnv1a(bigNormal),
+      '1024 px AI albedos export at 1024 with 512 px derived normal / ORM maps',
+    );
+  } finally {
+    delete g.__three_live_texture_pack__;
+  }
+  // Canvas textures export at their backing size (up to 512), not 256.
+  const wideCanvas: any = document.createElement('canvas');
+  wideCanvas.width = 512;
+  wideCanvas.height = 512;
+  const wideTex = new THREE.CanvasTexture(wideCanvas);
+  const wideUri = String(wideTex.source);
+  const wideBuf = Buffer.from(wideUri.split(',')[1], 'base64');
+  assert(
+    wideBuf.readUInt32BE(16) === 512 && wideBuf.readUInt32BE(20) === 512,
+    'CanvasTexture exports at its 512 px backing size',
+  );
+
   const tl206 = (xr: unknown) =>
     validateXRTraits(xr, 'Wall').filter(
       (d) => d.code === 'TL206' || d.code === 'TL202',
@@ -1586,6 +1636,9 @@ function runProceduralTests(): void {
   const clean = tl206({
     material: {preset: 'brick', prompt: 'stone', size: 512},
   });
+  const clean1024 = tl206({
+    material: {preset: 'brick', prompt: 'stone', size: 1024},
+  });
   assert(
     noPreset.length === 1 &&
       noPreset[0].severity === 'warning' &&
@@ -1594,7 +1647,8 @@ function runProceduralTests(): void {
       emptyPrompt.length === 1 &&
       oddSize.length === 1 &&
       oddSize[0].code === 'TL202' &&
-      clean.length === 0,
+      clean.length === 0 &&
+      clean1024.length === 0,
     'TL206 flags prompts without a preset (warning), oversized (error) or empty prompts, and odd AI texture sizes',
   );
 

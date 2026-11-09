@@ -37,6 +37,7 @@ import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
 import {installLodExtension} from './plugins/lod';
 import {installProceduralExtension} from './plugins/procedural';
+import {makePngDeflater, PngDeflater} from './png-deflate';
 import {
   calculateCRC32,
   generateUSDZ,
@@ -44,6 +45,7 @@ import {
   sceneToCanvas3D,
   sceneToGLB,
   sceneToUSDZ,
+  withAITextureKey,
 } from './three-convert';
 import {
   type GLBData,
@@ -2652,6 +2654,9 @@ export const exportSceneToCanvas3D = sceneToCanvas3D;
 export const exportSceneToGLB = sceneToGLB;
 export const exportSceneToUSDZ = sceneToUSDZ;
 
+// Shared with host-side plugins (AI texture pack export) to avoid a second copy.
+getSharedRegistry().makePngDeflater = makePngDeflater;
+
 export {generateUSDZ, glbToUSDZ, sceneToCanvas3D, sceneToGLB, sceneToUSDZ};
 
 // =========================================================================
@@ -3321,6 +3326,7 @@ interface SandboxWorkerConfig {
 function sandboxWorkerMain(
   cfg: SandboxWorkerConfig,
   extInstallers?: Array<(threeNs: unknown, reg: unknown) => void>,
+  makeDeflater?: typeof makePngDeflater,
 ) {
   // The worker global is a WorkerGlobalScope whose members are revoked and
   // patched dynamically below, so it is deliberately untyped here.
@@ -3334,7 +3340,22 @@ function sandboxWorkerMain(
 
   // Capture the channel back to the host before the author script can see it,
   // so it cannot forge a 3D_MODEL_READY message.
-  const post = scope.postMessage.bind(scope);
+  const rawPost = scope.postMessage.bind(scope);
+  // Texture PNGs leave the synchronous exporters stored (uncompressed); they
+  // are DEFLATEd asynchronously before the GLB is posted. Later messages queue
+  // behind that so the host still sees the model before DONE.
+  let deflater: PngDeflater | null = null;
+  try {
+    deflater = makeDeflater ? makeDeflater(scope.CompressionStream) : null;
+  } catch {}
+  let queue: Promise<unknown> | null = null;
+  // tslint:disable-next-line:no-any
+  function post(msg: any, transfer?: Transferable[]) {
+    const send = () =>
+      transfer && transfer.length ? rawPost(msg, transfer) : rawPost(msg);
+    if (queue) queue = queue.then(send, send);
+    else send();
+  }
 
   function fail(message: unknown) {
     post({type: 'ERROR', nonce: NONCE, message: String(message)});
@@ -3495,6 +3516,29 @@ function sandboxWorkerMain(
       sentModel = true;
     }
     msg.nonce = NONCE;
+    if (
+      msg.type === '3D_MODEL_READY' &&
+      deflater &&
+      msg.glbBuffer instanceof ArrayBuffer
+    ) {
+      const original = msg.glbBuffer as ArrayBuffer;
+      const prior = queue || Promise.resolve();
+      queue = prior
+        .then(() => deflater!.glb(new Uint8Array(original)))
+        .then(
+          (out: Uint8Array) => {
+            if (out.buffer !== original) {
+              msg.glbBuffer =
+                out.byteOffset === 0 && out.byteLength === out.buffer.byteLength
+                  ? out.buffer
+                  : out.slice().buffer;
+            }
+            rawPost(msg, [msg.glbBuffer]);
+          },
+          () => rawPost(msg, [original]),
+        );
+      return;
+    }
     if (transfer && transfer.length) post(msg, transfer);
     else post(msg);
   }
@@ -3535,7 +3579,7 @@ function sandboxWorkerMain(
         if (
           count < 64 &&
           /^[0-9a-f]{16}$/.test(k) &&
-          (sz === 256 || sz === 512) &&
+          (sz === 256 || sz === 512 || sz === 1024) &&
           e.rgba instanceof Uint8Array &&
           e.rgba.length === sz * sz * 4
         ) {
@@ -3674,7 +3718,7 @@ export function buildSandboxWorkerSource(
     .join(',');
   // The 'use strict' prologue applies to the whole worker script; a directive
   // inside the function could be stripped when the bundle is itself strict.
-  return `'use strict';(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)},[${installerExprs}]);`;
+  return `'use strict';(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)},[${installerExprs}],(${makePngDeflater.toString()}));`;
 }
 
 /** Reports a sandbox job that hit SECURITY_3D_SANDBOX_TIMEOUT_MS. */
@@ -5597,7 +5641,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         });
       }
 
-      const safeXR = toSafeJson(node.userData?.xr);
+      const safeXR = withAITextureKey(toSafeJson(node.userData?.xr), node);
       // `sceneToCanvas3D` only serializes truthy `userData.xr`.
       const hasXR = Boolean(node.userData?.xr) && safeXR !== null;
       const inter = toSafeJson(node.userData?.interactivity);
