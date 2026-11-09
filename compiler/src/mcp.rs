@@ -2170,8 +2170,30 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut buf = vec![0u8; 16384];
-            let _ = stream.read(&mut buf);
+            let mut req_bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req_bytes.extend_from_slice(&chunk[..n]);
+                if let Some(hdr_end) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let hdr_str = String::from_utf8_lossy(&req_bytes[..hdr_end]);
+                    let content_len = hdr_str
+                        .lines()
+                        .find_map(|l| {
+                            let lower = l.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if req_bytes.len() >= hdr_end + 4 + content_len {
+                        break;
+                    }
+                }
+            }
             let reply_json = serde_json::to_string(&json!({
                 "choices": [{
                     "message": {
@@ -2187,6 +2209,8 @@ mod tests {
             );
             stream.write_all(http_resp.as_bytes()).unwrap();
             stream.flush().unwrap();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.read(&mut chunk);
         });
 
         let rgba = vec![80u8, 140, 220, 255];

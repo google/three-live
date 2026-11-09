@@ -415,7 +415,7 @@ pub fn validate_image_scene(code: &str) -> ImageSceneValidation {
     if let Some(err_diag) = report.diagnostics.iter().find(|d| d.severity == "error") {
         return fail(format!("[{}] {}", err_diag.code, err_diag.message));
     }
-    let warnings: Vec<String> = report
+    let mut warnings: Vec<String> = report
         .diagnostics
         .iter()
         .filter(|d| d.severity == "warning")
@@ -428,6 +428,26 @@ pub fn validate_image_scene(code: &str) -> ImageSceneValidation {
             }
         })
         .collect();
+    let has_unnamed_xr = report.diagnostics.iter().any(|d| d.code == "TL205")
+        || if scene.nodes.is_empty() {
+            scene.meshes.iter().any(|m| {
+                m.name.trim().is_empty() && (m.xr_traits.is_some() || m.xr_normalized.is_some())
+            })
+        } else {
+            scene.nodes.iter().any(|n| {
+                n.name.trim().is_empty()
+                    && (n.xr_traits.is_some()
+                        || n.xr_normalized.is_some()
+                        || n.interactivity.is_some()
+                        || !n.interactivity_events.is_empty())
+            })
+        };
+    if has_unnamed_xr
+        && warnings.len() < MAX_WARNINGS
+        && !warnings.iter().any(|w| w.contains("TL204"))
+    {
+        warnings.push("[TL204] Node with userData.xr is missing a unique .name.".to_string());
+    }
     ImageSceneValidation { ok: true, error: None, warnings, mesh_names: names, mesh_count }
 }
 
@@ -804,17 +824,21 @@ fn post_http_plain(rest: &str, api_key: Option<&str>, body_bytes: &[u8]) -> Resu
     }
     req_head.push_str("\r\n");
 
+    let mut req_buf = Vec::with_capacity(req_head.len() + body_bytes.len());
+    req_buf.extend_from_slice(req_head.as_bytes());
+    req_buf.extend_from_slice(body_bytes);
+
     stream
-        .write_all(req_head.as_bytes())
-        .and_then(|_| stream.write_all(body_bytes))
+        .write_all(&req_buf)
         .and_then(|_| stream.flush())
         .map_err(|e| format!("Failed sending request to AI endpoint: {}", e))?;
 
     let mut resp_bytes = Vec::new();
-    stream
-        .take(16 * 1024 * 1024)
-        .read_to_end(&mut resp_bytes)
-        .map_err(|e| format!("Failed reading response from AI endpoint: {}", e))?;
+    if let Err(e) = stream.take(16 * 1024 * 1024).read_to_end(&mut resp_bytes) {
+        if e.kind() != std::io::ErrorKind::ConnectionReset || resp_bytes.is_empty() {
+            return Err(format!("Failed reading response from AI endpoint: {}", e));
+        }
+    }
 
     let Some(hdr_end) = resp_bytes.windows(4).position(|w| w == b"\r\n\r\n") else {
         return Err("Malformed HTTP response from AI endpoint.".to_string());
@@ -1033,6 +1057,27 @@ mod tests {
         assert!(wres.ok);
         assert!(!wres.warnings.is_empty(), "expected spatial warnings for unlit/offscreen scene");
 
+        // Unnamed node with userData.xr emits TL204 warning matching web validateImageScene.
+        let unnamed_xr = "\
+            const light = new THREE.AmbientLight(0xffffff, 0.8);\n\
+            scene.add(light);\n\
+            const dir = new THREE.DirectionalLight(0xffffff, 1.0);\n\
+            dir.position.set(2, 4, 3);\n\
+            scene.add(dir);\n\
+            const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial());\n\
+            lamp.position.set(0, 0.2, 0);\n\
+            lamp.userData.xr = { grab: true };\n\
+            scene.add(lamp);\n\
+            camera.position.set(0, 1.2, 3);\n\
+            camera.lookAt(0, 0.2, 0);\n";
+        let xres = validate_image_scene(unnamed_xr);
+        assert!(xres.ok);
+        assert!(
+            xres.warnings.iter().any(|w| w.contains("[TL204]")),
+            "expected TL204 warning for unnamed XR node, got: {:?}",
+            xres.warnings
+        );
+
         // Empty or broken scenes fail with ok=false.
         assert!(!validate_image_scene("").ok);
         assert!(!validate_image_scene("const g = new THREE.Group(); scene.add(g);").ok);
@@ -1124,9 +1169,31 @@ mod tests {
 
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut buf = vec![0u8; 16384];
-            let n = stream.read(&mut buf).expect("read request");
-            let req_str = String::from_utf8_lossy(&buf[..n]);
+            let mut req_bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).expect("read request");
+                if n == 0 {
+                    break;
+                }
+                req_bytes.extend_from_slice(&chunk[..n]);
+                if let Some(hdr_end) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let hdr_str = String::from_utf8_lossy(&req_bytes[..hdr_end]);
+                    let content_len = hdr_str
+                        .lines()
+                        .find_map(|l| {
+                            let lower = l.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if req_bytes.len() >= hdr_end + 4 + content_len {
+                        break;
+                    }
+                }
+            }
+            let req_str = String::from_utf8_lossy(&req_bytes);
             assert!(req_str.contains("POST /v1/chat/completions HTTP/1.1"));
             assert!(req_str.contains("Authorization: Bearer test-secret"));
             assert!(req_str.contains("\"image_url\""));
@@ -1146,6 +1213,8 @@ mod tests {
             );
             stream.write_all(http_resp.as_bytes()).unwrap();
             stream.flush().unwrap();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.read(&mut chunk);
         });
 
         let rgba = vec![80u8, 140, 220, 255];
