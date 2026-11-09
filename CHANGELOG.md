@@ -26,6 +26,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Room-scan priors on Android:** `AISpatialPriors.fromRoomScan(surfaces,
+    objects, camera, cameraFovDeg)` with `AIRoomSurface` / `AIRoomObject`
+    (column-major 4×4 transforms) brings the iOS room-scan mapping to Kotlin,
+    so Android XR labeled planes, Meta MRUK rooms, or custom scanners can feed
+    `compileFromImage` the same planes, objects, and floor height as RoomPlan
+    on iOS.
+
 -   **RoomPlan priors for image-to-scene (iOS):**
     `AISpatialPriors.fromCapturedRoom(room, camera:)` (iOS 16+) turns a RoomPlan
     `CapturedRoom` into metric priors for `compileFromImage`: walls, doors,
