@@ -677,7 +677,7 @@ async function runTests(): Promise<void> {
   console.log('Running three-live-webgpu test suite...');
 
   await test('WGSL shaders satisfy W3C uniformity, Y-derivative flip, and struct layout invariants', () => {
-    assert.strictEqual(SCENE_UNIFORM_BYTES, 464);
+    assert.strictEqual(SCENE_UNIFORM_BYTES, 800);
     assert.strictEqual(PART_STRIDE_BYTES, 128);
     assert.strictEqual(PART_STRIDE_WORDS, 32);
     assert.strictEqual(VERTEX_STRIDE_BYTES, 32);

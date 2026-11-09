@@ -63,6 +63,23 @@ import {
   parseHexRgb,
   postprocessingPlugin,
 } from './plugins/postprocessing';
+import {
+  computeWorldSceneBounds,
+  doesMeshCastShadow,
+  doesMeshReceiveShadow,
+  fitDirectionalShadowMatrix,
+  fitSpotShadowMatrix,
+  getShadowMapStats,
+  MAX_SHADOW_LIGHTS,
+  normalizeShadowMapsMode,
+  resolveActiveShadowLights,
+  SHADOW_MAP_TEXTURE_UNIT,
+  shadowMapsPlugin,
+  type ResolvedShadowPlan,
+  type ResolvedShadowSlice,
+  type ShadowMapStats,
+  type WorldSceneBounds,
+} from './plugins/shadow-maps';
 import {contactShadowPlugin} from './plugins/shadows';
 import {
   extractMaterialVariants,
@@ -75,6 +92,7 @@ import {webxrPlugin} from './plugins/webxr';
 
 // Auto-register Studio Rendering & WebXR Suite plugins
 registerPlugin(contactShadowPlugin);
+registerPlugin(shadowMapsPlugin);
 registerPlugin(hotspotPlugin);
 registerPlugin(environmentMapPlugin);
 registerPlugin(materialsPlugin);
@@ -88,18 +106,24 @@ registerPlugin(lodPlugin);
 export {
   applyMeshoptFilter,
   computeOutlineClipOffset,
+  computeWorldSceneBounds,
   contactShadowPlugin,
   decimateGeometry,
   decodeMeshoptBuffer,
   decodeMeshoptGLB,
+  doesMeshCastShadow,
+  doesMeshReceiveShadow,
   encodeMeshoptBuffer,
   environmentMapPlugin,
   evaluateKawaseBloom,
   extractMaterialVariants,
   extractPrimitiveVariantMappings,
+  fitDirectionalShadowMatrix,
+  fitSpotShadowMatrix,
   getEnvironmentSH,
   getInteractivityVM,
   getLodController,
+  getShadowMapStats,
   hotspotPlugin,
   installLodExtension,
   interactivityPlugin,
@@ -108,17 +132,22 @@ export {
   LodController,
   lodPlugin,
   materialsPlugin,
+  MAX_SHADOW_LIGHTS,
   meshoptDecoder,
   meshoptPlugin,
+  normalizeShadowMapsMode,
   parseHexRgb,
   parseLod,
   parseSafeGltfPointer,
   postprocessingPlugin,
   registerMaterialShader,
+  resolveActiveShadowLights,
   selectLodLevelIndex,
   selectMaterialVariant,
   sendInteractivityEvent,
   setEnvironmentSH,
+  SHADOW_MAP_TEXTURE_UNIT,
+  shadowMapsPlugin,
   variantsPlugin,
   webxrPlugin,
   type LodGroupState,
@@ -126,5 +155,9 @@ export {
   type LodOptions,
   type MeshoptFilter,
   type MeshoptMode,
+  type ResolvedShadowPlan,
+  type ResolvedShadowSlice,
+  type ShadowMapStats,
   type VariantMapping,
+  type WorldSceneBounds,
 };

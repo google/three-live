@@ -88,6 +88,7 @@ bundles and entry points.
 | `skybox-image` | `string` | `three-live-studio` | Visible background equirectangular skybox image URL rendered behind the 3D scene. |
 | `shadow-intensity` | `number` | `three-live`+ | Ground contact shadow opacity from `0.0` (off) to `1.0` (default: `0.7`). |
 | `shadow-softness` | `number` | `three-live`+ | Radial Gaussian blur falloff of contact shadow from `0.0` (hard) to `1.0` (soft). |
+| `shadow-maps` | `"auto" \| "pcf" \| "off"` | `three-live-studio` | Multi-light depth shadow maps (`"auto"` default activates when any light sets `castShadow = true`; `"pcf"` auto-promotes key lights and opaque meshes even on plain `.glb` files; `"off"` disables depth shadow passes). |
 | `tone-mapping` | `string` | `three-live-viewer`+ | Tone mapping mode: `"neutral"` (default, Khronos PBR Neutral), `"aces"` (ACES Filmic), `"agx"` (AgX Filmic), `"reinhard"`, or `"none"`. |
 | `variant-name` | `string` | `three-live-studio` | Active `KHR_materials_variants` product material variant name (e.g. `"Midnight Black"`). Also readable/writable via `viewer.variantName` and `viewer.availableVariants`. |
 | `bloom` | `boolean \| string` | `three-live-studio` | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`). |
@@ -231,6 +232,18 @@ position, normal })`.
     -   **Analytical Ground Contact Shadows:** Set `shadow-intensity="0.7"` and
         `shadow-softness="0.5"` for soft ground ambient occlusion without shadow
         map pass overhead.
+    -   **Multi-Light Depth Shadow Maps (`shadowMapsPlugin` / `shadow-maps`):**
+        Configure `light.castShadow = true`,
+        `light.shadow.mapSize.set(1024, 1024)`, `light.shadow.bias`,
+        `light.shadow.normalBias`, `light.shadow.radius`,
+        `mesh.castShadow = true`, and `mesh.receiveShadow = true` inside
+        `<script type="text/three">`, or set `shadow-maps="pcf"` on
+        `<three-live>` to cast real-time mesh-on-mesh shadows from up to 4
+        directional, spot, and point lights across WebGL2 (`DEPTH_COMPONENT24`
+        2D array + 8-tap Vogel-disk PCF), WebGPU (`depth24plus` 2D array +
+        16-tap Vogel-disk PCF), Android Filament, iOS/visionOS RealityKit, and
+        `.usdz` (`UsdLuxShadowAPI`). Static camera orbits reuse the cached depth
+        array with zero shadow pass draw calls.
 
 ### Animations: Rigid-Body TRS, Skeletal/Morph & Inverse Kinematics (IK)
 

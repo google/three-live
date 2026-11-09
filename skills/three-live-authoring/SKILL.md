@@ -28,8 +28,10 @@ description: >-
         sheen, volume), 5 filmic/commerce tone-mapping modes
         (`tone-mapping="neutral|aces|agx|reinhard|none"`), HDR emissive `bloom`,
         silhouette `outline`, `.hdr` environment lighting, ground contact
-        shadows, skeletal animations & 2-bone/FABRIK `ik`, or 2D screen-space
-        hotspots (`slot="hotspot-*"`)
+        shadows, multi-light depth shadow maps (`shadow-maps="auto|pcf|off"`,
+        `light.castShadow`, `mesh.castShadow`, `mesh.receiveShadow`), skeletal
+        animations & 2-bone/FABRIK `ik`, or 2D screen-space hotspots
+        (`slot="hotspot-*"`)
 - **Use `<xr-live>` (`xr-live-full.min.js`)** when you need:
     - 6DoF WebXR (`xr-mode="ar"` / `"vr"` / `"auto"`) or desktop 6DoF simulation (`xr-simulator="living-room"`)
     -   Declarative spatial manipulation traits (`grab`, `scale`, `billboard`,

@@ -99,6 +99,28 @@ export interface ThreeLivePlugin {
  */
 export const XR_LIVE_AR_SURFACE_Y = -0.25;
 
+/** Host `<three-live>` / `<xr-live>` `shadow-maps` attribute mode. */
+export type ShadowMapsMode = 'auto' | 'pcf' | 'off';
+
+/** Multi-light shadow-map chunk spliced into `ThreeView`'s render shader. */
+export interface ShadowMapShaderChunk {
+  /** GLSL uniform declarations + PCF helper replacing `SHD_U`. */
+  uniformsGLSL: string;
+  /** GLSL directional light attenuation suffix replacing `SHD_D`. */
+  dirGLSL: string;
+  /** GLSL point/spot light attenuation suffix replacing `SHD_P`. */
+  ptGLSL: string;
+  /** Uniform names to resolve on render programs. */
+  uniformNames: readonly string[];
+  /** Binds per-draw shadow map uniforms and array texture on Unit 9. */
+  bind(
+    gl: WebGL2RenderingContext,
+    u: Record<string, WebGLUniformLocation | null>,
+    viewer: unknown,
+    mesh: unknown,
+  ): void;
+}
+
 /** WebXR depth-occlusion chunk spliced into `ThreeView`'s render shader. */
 export interface XRDepthShaderChunk {
   /** GLSL uniform declarations replacing the `XRD_U` placeholder. */
@@ -130,6 +152,10 @@ export interface SharedThreeLiveRegistry {
    * lean viewer bundle carries no XR depth code.
    */
   xrDepthShader?: XRDepthShaderChunk;
+  /**
+   * Multi-light shadow-map shader chunk installed by `shadow-maps.ts`.
+   */
+  shadowMapShader?: ShadowMapShaderChunk;
   /**
    * Canonical `userData.xr` serializer (`xr-trait-schema.ts`). When present,
    * GLB/USDZ exports emit fully normalized spatial traits.
@@ -246,6 +272,8 @@ export interface GPUSceneAccelerator {
     canvasY: number,
     vp: Float32Array,
   ): number | null;
+  /** Returns true when WebGPU is ready to render `viewer` this frame. */
+  willRenderScene?(viewer: object): boolean;
   /** Hides any WebGPU scene layer associated with `viewer`. */
   hideLayer?(viewer: object): void;
   /** Releases all WebGPU buffers, textures, and canvas state for `viewer`. */

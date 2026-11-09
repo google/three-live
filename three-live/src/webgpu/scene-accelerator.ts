@@ -35,6 +35,15 @@ import {
   type ThreeLivePlugin,
 } from '../plugin';
 import {
+  doesMeshCastShadow,
+  doesMeshReceiveShadow,
+  MAX_SHADOW_LIGHTS,
+  resolveActiveShadowLights,
+  resolveShadowSectionPlane,
+  type ResolvedShadowPlan,
+} from '../plugins/shadow-maps';
+import {
+  PART_FLAG_CAST_SHADOW,
   PART_FLAG_HAS_BASE_TEX,
   PART_FLAG_HAS_EMISSIVE_TEX,
   PART_FLAG_HAS_MR_TEX,
@@ -42,18 +51,22 @@ import {
   PART_FLAG_HAS_OCC_TEX,
   PART_FLAG_HIDDEN,
   PART_FLAG_NO_SECTION_CLIP,
+  PART_FLAG_RECEIVE_SHADOW,
   PART_FLAG_WORLD_SPACE,
   PART_STEREO_SHIFT,
   PART_STRIDE_BYTES,
   PART_STRIDE_WORDS,
   SCENE_PBR_WGSL,
   SCENE_PICK_WGSL,
+  SCENE_SHADOW_DEPTH_WGSL,
   SCENE_SHADOW_WGSL,
   SCENE_UNIFORM_BYTES,
-  type SceneLightInput,
+  SHADOW_SLICE_UNIFORM_BYTES,
   VERTEX_STRIDE_BYTES,
   VERTEX_STRIDE_FLOATS,
   writeSceneUniforms,
+  writeShadowSliceUniforms,
+  type SceneLightInput,
 } from './shaders';
 
 const BUF_MAP_READ = 0x0001;
@@ -261,10 +274,15 @@ interface MeshLike {
   worldSpace?: boolean;
   worldMatrix?: Float32Array;
   isPluginMesh?: boolean;
+  castShadow?: boolean;
+  receiveShadow?: boolean;
   transform: Float32Array;
   instanceMatrices?: Float32Array;
   instanceColors?: Float32Array;
-  extras?: {xr?: Record<string, unknown>};
+  extras?: {
+    shadow?: {cast?: boolean; receive?: boolean};
+    xr?: Record<string, unknown>;
+  };
   userData?: {xr?: Record<string, unknown>};
   primitives: PrimitiveLike[];
 }
@@ -319,15 +337,22 @@ interface FormatPipelines {
 interface DevicePipelines {
   sceneBgl: unknown;
   matBgl: unknown;
+  shadowSliceBgl: unknown;
   scenePipeLayout: unknown;
   auxPipeLayout: unknown;
+  shadowDepthPipeLayout: unknown;
   shaderMod: unknown;
   shadowMod: unknown;
+  shadowDepthMod: unknown;
   pickMod: unknown;
   pickPipeline: unknown;
+  shadowDepthPipeline: unknown;
   sampler: unknown;
+  shadowSampler: unknown;
   whiteTex: GPUSceneTextureLike;
   whiteView: unknown;
+  dummyShadowTex: GPUSceneTextureLike;
+  dummyShadowView: unknown;
   defaultMatBg: unknown;
   byFormat: Map<string, FormatPipelines>;
   texCache: WeakMap<object, UploadedTexEntry>;
@@ -382,7 +407,11 @@ interface CompiledScene {
   partsUploadedOnce: boolean;
   envSourceRef: unknown;
   envView: unknown;
+  shadowViewRef: unknown;
   sceneBg: unknown;
+  shadowSliceBufs: Array<GPUSceneBufferLike | null>;
+  shadowSliceBgs: unknown[];
+  shadowBundles: Array<GPUSceneRenderBundleLike | null>;
   opaqueBundle: GPUSceneRenderBundleLike | null;
   blendBundle: GPUSceneRenderBundleLike | null;
   pickBundle: GPUSceneRenderBundleLike | null;
@@ -404,6 +433,12 @@ interface ViewerGPUState {
   msaaView: unknown;
   depthTex: GPUSceneTextureLike | null;
   depthView: unknown;
+  shadowTex: GPUSceneTextureLike | null;
+  shadowArrayView: unknown;
+  shadowLayerViews: unknown[];
+  shadowSize: number;
+  shadowLayers: number;
+  lastShadowDigest: number;
   pickColorTex: GPUSceneTextureLike | null;
   pickColorView: unknown;
   pickDepthTex: GPUSceneTextureLike | null;
@@ -414,6 +449,7 @@ interface ViewerGPUState {
   unhookSnapshot: (() => void) | null;
   gen: number;
   uniformScratch: ArrayBuffer;
+  shadowSliceScratch: ArrayBuffer;
 }
 
 const IDENTITY_MAT4 = new Float32Array([
@@ -731,6 +767,16 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
         visibility: STAGE_FRAGMENT,
         texture: {sampleType: 'float'},
       },
+      {
+        binding: 4,
+        visibility: STAGE_FRAGMENT,
+        sampler: {type: 'comparison'},
+      },
+      {
+        binding: 5,
+        visibility: STAGE_FRAGMENT,
+        texture: {sampleType: 'depth', viewDimension: '2d-array'},
+      },
     ],
   });
 
@@ -742,15 +788,36 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     })),
   });
 
+  const shadowSliceBgl = dev.createBindGroupLayout({
+    entries: [
+      {
+        binding: 0,
+        visibility: STAGE_VERTEX | STAGE_FRAGMENT,
+        buffer: {type: 'uniform'},
+      },
+      {
+        binding: 1,
+        visibility: STAGE_VERTEX | STAGE_FRAGMENT,
+        buffer: {type: 'read-only-storage'},
+      },
+    ],
+  });
+
   const scenePipeLayout = dev.createPipelineLayout({
     bindGroupLayouts: [sceneBgl, matBgl],
   });
   const auxPipeLayout = dev.createPipelineLayout({
     bindGroupLayouts: [sceneBgl],
   });
+  const shadowDepthPipeLayout = dev.createPipelineLayout({
+    bindGroupLayouts: [shadowSliceBgl],
+  });
 
   const shaderMod = dev.createShaderModule({code: SCENE_PBR_WGSL});
   const shadowMod = dev.createShaderModule({code: SCENE_SHADOW_WGSL});
+  const shadowDepthMod = dev.createShaderModule({
+    code: SCENE_SHADOW_DEPTH_WGSL,
+  });
   const pickMod = dev.createShaderModule({code: SCENE_PICK_WGSL});
 
   const sampler = dev.createSampler({
@@ -759,6 +826,13 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     mipmapFilter: 'linear',
     addressModeU: 'repeat',
     addressModeV: 'repeat',
+  });
+  const shadowSampler = dev.createSampler({
+    compare: 'less-equal',
+    magFilter: 'linear',
+    minFilter: 'linear',
+    addressModeU: 'clamp-to-edge',
+    addressModeV: 'clamp-to-edge',
   });
 
   const whiteTex = dev.createTexture({
@@ -775,6 +849,17 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     ),
   );
   const whiteView = whiteTex.createView();
+
+  const dummyShadowTex = dev.createTexture({
+    size: {width: 1, height: 1, depthOrArrayLayers: 1},
+    format: 'depth24plus',
+    usage: TEX_BINDING | TEX_RENDER_ATTACHMENT,
+  });
+  const dummyShadowView = dummyShadowTex.createView({
+    dimension: '2d-array',
+    baseArrayLayer: 0,
+    arrayLayerCount: 1,
+  });
 
   const defaultMatBg = dev.createBindGroup({
     layout: matBgl,
@@ -810,22 +895,60 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     multisample: {count: 1},
   });
 
+  const shadowDepthPipeline = dev.createRenderPipeline({
+    layout: shadowDepthPipeLayout,
+    vertex: {
+      module: shadowDepthMod,
+      entryPoint: 'vsShadowDepth',
+      buffers: [
+        {
+          arrayStride: VERTEX_STRIDE_BYTES,
+          attributes: [
+            {shaderLocation: 0, offset: 0, format: 'float32x3'},
+            {shaderLocation: 1, offset: 12, format: 'float32x3'},
+          ],
+        },
+      ],
+    },
+    fragment: {
+      module: shadowDepthMod,
+      entryPoint: 'fsShadowDepth',
+      targets: [],
+    },
+    primitive: {topology: 'triangle-list', cullMode: 'none'},
+    depthStencil: {
+      format: 'depth24plus',
+      depthWriteEnabled: true,
+      depthCompare: 'less-equal',
+      depthBias: 2,
+      depthBiasSlopeScale: 1.5,
+    },
+    multisample: {count: 1},
+  });
+
   cached = {
     sceneBgl,
     matBgl,
+    shadowSliceBgl,
     scenePipeLayout,
     auxPipeLayout,
+    shadowDepthPipeLayout,
     shaderMod,
     shadowMod,
+    shadowDepthMod,
     pickMod,
     pickPipeline,
+    shadowDepthPipeline,
     sampler,
+    shadowSampler,
     whiteTex,
     whiteView,
+    dummyShadowTex,
+    dummyShadowView,
     defaultMatBg,
     byFormat: new Map(),
     texCache: new WeakMap(),
-    ownedTextures: new Set([whiteTex]),
+    ownedTextures: new Set([whiteTex, dummyShadowTex]),
   };
   pipelineCache.set(dev, cached);
   return cached;
@@ -1158,71 +1281,8 @@ function hookCanvasSnapshots(
   return () => restores.forEach((r) => r());
 }
 
-function parseViewerSectionPlane(viewer: ViewerLike): {
-  enabled: boolean;
-  normal: [number, number, number];
-  constant: number;
-} | null {
-  for (const m of viewer.meshes ?? []) {
-    if (
-      m.name === '__xr_section_gizmo__' &&
-      m.visible !== false &&
-      m.worldMatrix &&
-      m.worldMatrix.length >= 16
-    ) {
-      const wm = m.worldMatrix;
-      const nx = wm[8];
-      const ny = wm[9];
-      const nz = wm[10];
-      const nl = Math.hypot(nx, ny, nz) || 1;
-      const unx = nx / nl;
-      const uny = ny / nl;
-      const unz = nz / nl;
-      const c = unx * wm[12] + uny * wm[13] + unz * wm[14];
-      return {enabled: true, normal: [unx, uny, unz], constant: c};
-    }
-  }
-
-  const raw = (viewer.container?.getAttribute?.('section-plane') ?? '')
-    .trim()
-    .toLowerCase();
-  if (!raw || raw === 'none' || raw === 'false') return null;
-
-  let localN: [number, number, number] = [1, 0, 0];
-  let localC = 0;
-  if (raw === 'interactive') {
-    localC = viewer.bounds?.center[0] ?? 0;
-  } else {
-    const m =
-      /^([+-]?[xyz])\s*:\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)$/.exec(raw);
-    if (!m) return null;
-    const sign = m[1].startsWith('-') ? -1 : 1;
-    const axis = m[1].replace(/^[+-]/, '');
-    const val = Math.max(-1000, Math.min(1000, Number(m[2]) || 0));
-    localN =
-      axis === 'x' ? [sign, 0, 0] : axis === 'y' ? [0, sign, 0] : [0, 0, sign];
-    localC = val * sign;
-  }
-
-  const rm = viewer.modelRootMatrix ?? IDENTITY_MAT4;
-  const wnx = rm[0] * localN[0] + rm[4] * localN[1] + rm[8] * localN[2];
-  const wny = rm[1] * localN[0] + rm[5] * localN[1] + rm[9] * localN[2];
-  const wnz = rm[2] * localN[0] + rm[6] * localN[1] + rm[10] * localN[2];
-  const wnl = Math.hypot(wnx, wny, wnz) || 1;
-  const unx = wnx / wnl;
-  const uny = wny / wnl;
-  const unz = wnz / wnl;
-  const px = localN[0] * localC;
-  const py = localN[1] * localC;
-  const pz = localN[2] * localC;
-  const wpx = rm[0] * px + rm[4] * py + rm[8] * pz + rm[12];
-  const wpy = rm[1] * px + rm[5] * py + rm[9] * pz + rm[13];
-  const wpz = rm[2] * px + rm[6] * py + rm[10] * pz + rm[14];
-  return {
-    enabled: true,
-    normal: [unx, uny, unz],
-    constant: unx * wpx + uny * wpy + unz * wpz,
-  };
+function parseViewerSectionPlane(viewer: ViewerLike) {
+  return resolveShadowSectionPlane(viewer);
 }
 
 function computeContactShadowInput(
@@ -1297,6 +1357,19 @@ function destroyCompiledScene(scene: CompiledScene | null): void {
   safe(() => scene.partBuf.destroy());
   safe(() => scene.uniformBuf.destroy());
   safe(() => scene.pickUniformBuf?.destroy());
+  for (const b of scene.shadowSliceBufs) {
+    safe(() => b?.destroy());
+  }
+}
+
+function destroyShadowTargets(st: ViewerGPUState): void {
+  safe(() => st.shadowTex?.destroy());
+  st.shadowTex = null;
+  st.shadowArrayView = null;
+  st.shadowLayerViews = [];
+  st.shadowSize = 0;
+  st.shadowLayers = 0;
+  st.lastShadowDigest = 0;
 }
 
 function destroyAttachments(st: ViewerGPUState): void {
@@ -1509,6 +1582,8 @@ function compileScene(
       {binding: 1, resource: {buffer: partBuf}},
       {binding: 2, resource: pipes.sampler},
       {binding: 3, resource: envInfo.view},
+      {binding: 4, resource: pipes.shadowSampler},
+      {binding: 5, resource: pipes.dummyShadowView},
     ],
   });
 
@@ -1533,7 +1608,11 @@ function compileScene(
     partsUploadedOnce: false,
     envSourceRef: extractImageSource(envHandle),
     envView: envInfo.view,
+    shadowViewRef: pipes.dummyShadowView,
     sceneBg,
+    shadowSliceBufs: [null, null, null, null],
+    shadowSliceBgs: [null, null, null, null],
+    shadowBundles: [null, null, null, null],
     opaqueBundle: null,
     blendBundle: null,
     pickBundle: null,
@@ -1633,6 +1712,8 @@ function ensurePickBundle(
         {binding: 1, resource: {buffer: scene.partBuf}},
         {binding: 2, resource: pipes.sampler},
         {binding: 3, resource: pipes.whiteView},
+        {binding: 4, resource: pipes.shadowSampler},
+        {binding: 5, resource: pipes.dummyShadowView},
       ],
     });
   }
@@ -1666,6 +1747,59 @@ function ensurePickBundle(
   return scene.pickBundle;
 }
 
+function ensureShadowSliceBundle(
+  dev: GPUSceneDeviceLike,
+  pipes: DevicePipelines,
+  scene: CompiledScene,
+  slot: number,
+): GPUSceneRenderBundleLike | null {
+  if (slot < 0 || slot >= MAX_SHADOW_LIGHTS) return null;
+  if (!scene.shadowSliceBufs[slot]) {
+    scene.shadowSliceBufs[slot] = dev.createBuffer({
+      size: SHADOW_SLICE_UNIFORM_BYTES,
+      usage: BUF_UNIFORM | BUF_COPY_DST,
+    });
+  }
+  if (!scene.shadowSliceBgs[slot]) {
+    scene.shadowSliceBgs[slot] = dev.createBindGroup({
+      layout: pipes.shadowSliceBgl,
+      entries: [
+        {binding: 0, resource: {buffer: scene.shadowSliceBufs[slot]!}},
+        {binding: 1, resource: {buffer: scene.partBuf}},
+      ],
+    });
+  }
+  if (scene.shadowBundles[slot]) return scene.shadowBundles[slot];
+  const enc = dev.createRenderBundleEncoder({
+    colorFormats: [],
+    depthStencilFormat: 'depth24plus',
+    sampleCount: 1,
+  });
+  enc.setPipeline(pipes.shadowDepthPipeline);
+  enc.setBindGroup(0, scene.shadowSliceBgs[slot]);
+  enc.setVertexBuffer(0, scene.vertexBuf);
+  if (scene.indexBuf) {
+    enc.setIndexBuffer(scene.indexBuf, 'uint32');
+  }
+  for (const g of scene.groups) {
+    if (g.isBackdrop || g.isBlend || g.prim.isTransmissive) continue;
+    if (g.indexed) {
+      enc.drawIndexed(
+        g.indexCount,
+        g.instanceCount,
+        g.firstIndex,
+        g.firstVertex,
+        g.firstInstance,
+      );
+    } else {
+      enc.draw(g.indexCount, g.instanceCount, g.firstVertex, g.firstInstance);
+    }
+  }
+  const bundle = enc.finish();
+  scene.shadowBundles[slot] = bundle;
+  return bundle;
+}
+
 const _tmpMatA = mat4Create();
 const _tmpMatB = mat4Create();
 
@@ -1675,26 +1809,34 @@ function syncSceneResources(
   viewer: ViewerLike,
   scene: CompiledScene,
   params: GPUSceneRenderParams,
+  shadowPlan?: ResolvedShadowPlan | null,
+  desiredShadowView?: unknown,
 ): void {
-  // 1. Refresh environment IBL bind group if `environmentImage` finished decoding.
+  // 1. Refresh environment IBL or shadow depth array bind group when changed.
   const envHandle = resolveEnvHandle(viewer);
   const envSrc = extractImageSource(envHandle);
+  let nextEnvView = scene.envView;
   if (envSrc !== scene.envSourceRef) {
     const envInfo = resolveGPUTextureView(dev, pipes, envHandle);
     scene.envSourceRef = envInfo.src;
-    if (envInfo.view !== scene.envView) {
-      scene.envView = envInfo.view;
-      scene.sceneBg = dev.createBindGroup({
-        layout: pipes.sceneBgl,
-        entries: [
-          {binding: 0, resource: {buffer: scene.uniformBuf}},
-          {binding: 1, resource: {buffer: scene.partBuf}},
-          {binding: 2, resource: pipes.sampler},
-          {binding: 3, resource: envInfo.view},
-        ],
-      });
-      scene.bundlesDirty = true;
-    }
+    nextEnvView = envInfo.view;
+  }
+  const nextShadowView = desiredShadowView ?? scene.shadowViewRef;
+  if (nextEnvView !== scene.envView || nextShadowView !== scene.shadowViewRef) {
+    scene.envView = nextEnvView;
+    scene.shadowViewRef = nextShadowView;
+    scene.sceneBg = dev.createBindGroup({
+      layout: pipes.sceneBgl,
+      entries: [
+        {binding: 0, resource: {buffer: scene.uniformBuf}},
+        {binding: 1, resource: {buffer: scene.partBuf}},
+        {binding: 2, resource: pipes.sampler},
+        {binding: 3, resource: nextEnvView},
+        {binding: 4, resource: pipes.shadowSampler},
+        {binding: 5, resource: nextShadowView},
+      ],
+    });
+    scene.bundlesDirty = true;
   }
 
   // 2. Pack `PartInstance` CPU staging words & detect tight dirty range.
@@ -1753,6 +1895,7 @@ function syncSceneResources(
     if (nowBlend !== g.isBlend) {
       g.isBlend = nowBlend;
       scene.bundlesDirty = true;
+      scene.shadowBundles = [null, null, null, null];
     }
 
     let flags = 0;
@@ -1763,6 +1906,24 @@ function syncSceneResources(
     if (g.src4) flags |= PART_FLAG_HAS_EMISSIVE_TEX;
     if (g.isBackdrop || mesh.isPluginMesh) flags |= PART_FLAG_NO_SECTION_CLIP;
     if (mesh.visible === false) flags |= PART_FLAG_HIDDEN;
+    if (
+      shadowPlan &&
+      shadowPlan.slices.length > 0 &&
+      !g.isBackdrop &&
+      !nowBlend &&
+      !prim.isTransmissive &&
+      doesMeshCastShadow(mesh, shadowPlan.promoteAllCasters)
+    ) {
+      flags |= PART_FLAG_CAST_SHADOW;
+    }
+    if (
+      shadowPlan &&
+      shadowPlan.slices.length > 0 &&
+      !g.isBackdrop &&
+      doesMeshReceiveShadow(mesh, shadowPlan.promoteAllReceivers)
+    ) {
+      flags |= PART_FLAG_RECEIVE_SHADOW;
+    }
 
     const xr = mesh.extras?.xr ?? mesh.userData?.xr;
     const stereoMode = xr?.['stereo'];
@@ -1967,6 +2128,10 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
   renderedFrames = 0;
   /** Diagnostic counter: total `GPURenderBundle` compilation passes. */
   bundleRecordCount = 0;
+  /** Diagnostic counter: total WebGPU shadow slice render passes executed. */
+  shadowPassCount = 0;
+  /** Diagnostic counter: static-scene shadow-map FNV-1a cache hits. */
+  shadowCacheHits = 0;
 
   private getState(viewer: object): ViewerGPUState {
     let st = this.states.get(viewer);
@@ -1984,6 +2149,12 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
         msaaView: null,
         depthTex: null,
         depthView: null,
+        shadowTex: null,
+        shadowArrayView: null,
+        shadowLayerViews: [],
+        shadowSize: 0,
+        shadowLayers: 0,
+        lastShadowDigest: 0,
         pickColorTex: null,
         pickColorView: null,
         pickDepthTex: null,
@@ -1994,6 +2165,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
         unhookSnapshot: null,
         gen: 0,
         uniformScratch: new ArrayBuffer(SCENE_UNIFORM_BYTES),
+        shadowSliceScratch: new ArrayBuffer(SHADOW_SLICE_UNIFORM_BYTES),
       };
       this.states.set(viewer, st);
       this.trackedViewers.add(viewer);
@@ -2145,6 +2317,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
       destroyCompiledScene(st.scene);
       st.scene = null;
       destroyAttachments(st);
+      destroyShadowTargets(st);
       destroyPickTargets(st);
     }
 
@@ -2159,6 +2332,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     if (!st.scene || !isSceneTopologyMatching(st.scene, backdrop, meshes)) {
       destroyCompiledScene(st.scene);
       st.scene = compileScene(dev, pipes, viewer, includeBackdrop);
+      st.lastShadowDigest = 0;
       if (!st.scene) {
         this.hideLayer(params.viewer);
         return false;
@@ -2166,7 +2340,58 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     }
 
     const scene = st.scene;
-    syncSceneResources(dev, pipes, viewer, scene, params);
+    const shadowPlan = resolveActiveShadowLights(viewer);
+    let desiredShadowView: unknown = pipes.dummyShadowView;
+    const neededSlices = shadowPlan.slices.length;
+    if (neededSlices > 0) {
+      if (
+        !st.shadowTex ||
+        st.shadowSize !== shadowPlan.mapSize ||
+        st.shadowLayers < neededSlices
+      ) {
+        safe(() => st.shadowTex?.destroy());
+        const allocLayers = Math.max(st.shadowLayers, neededSlices);
+        const shdTex = dev.createTexture({
+          size: {
+            width: shadowPlan.mapSize,
+            height: shadowPlan.mapSize,
+            depthOrArrayLayers: allocLayers,
+          },
+          format: 'depth24plus',
+          usage: TEX_RENDER_ATTACHMENT | TEX_BINDING,
+        });
+        st.shadowTex = shdTex;
+        st.shadowSize = shadowPlan.mapSize;
+        st.shadowLayers = allocLayers;
+        st.shadowArrayView = shdTex.createView({
+          dimension: '2d-array',
+          baseArrayLayer: 0,
+          arrayLayerCount: allocLayers,
+        });
+        st.shadowLayerViews = [];
+        for (let s = 0; s < allocLayers; s++) {
+          st.shadowLayerViews.push(
+            shdTex.createView({
+              dimension: '2d',
+              baseArrayLayer: s,
+              arrayLayerCount: 1,
+            }),
+          );
+        }
+        st.lastShadowDigest = 0;
+      }
+      desiredShadowView = st.shadowArrayView;
+    }
+
+    syncSceneResources(
+      dev,
+      pipes,
+      viewer,
+      scene,
+      params,
+      shadowPlan,
+      desiredShadowView,
+    );
 
     if (
       scene.bundlesDirty ||
@@ -2183,7 +2408,8 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
       this.bundleRecordCount++;
     }
 
-    const sectionPlane = parseViewerSectionPlane(viewer);
+    const sectionPlane =
+      shadowPlan.sectionPlane ?? parseViewerSectionPlane(viewer);
     const contactShadow = computeContactShadowInput(viewer, params.isAR);
     writeSceneUniforms(st.uniformScratch, {
       vp: params.vp,
@@ -2197,6 +2423,14 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
       isRightEye: params.eye === 'right',
       sectionPlane,
       contactShadow,
+      shadowMap:
+        neededSlices > 0
+          ? {
+              slices: shadowPlan.slices,
+              dirSlots: shadowPlan.dirSlots,
+              ptSlots: shadowPlan.ptSlots,
+            }
+          : null,
     });
     dev.queue.writeBuffer(scene.uniformBuf, 0, st.uniformScratch);
 
@@ -2213,6 +2447,46 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     const useMsaa = st.sampleCount > 1 && Boolean(st.msaaView);
 
     const encoder = dev.createCommandEncoder();
+    if (neededSlices > 0 && st.shadowTex) {
+      if (st.lastShadowDigest === shadowPlan.digest) {
+        this.shadowCacheHits++;
+      } else {
+        st.lastShadowDigest = shadowPlan.digest;
+        const rootMat = viewer.modelRootMatrix ?? IDENTITY_MAT4;
+        for (const slice of shadowPlan.slices) {
+          const shdBundle = ensureShadowSliceBundle(
+            dev,
+            pipes,
+            scene,
+            slice.slot,
+          );
+          const sliceBuf = scene.shadowSliceBufs[slice.slot];
+          const sliceView = st.shadowLayerViews[slice.slot];
+          if (!sliceBuf || !sliceView) continue;
+          writeShadowSliceUniforms(
+            st.shadowSliceScratch,
+            slice.viewProj,
+            rootMat,
+            slice.rayDir,
+            slice.normalBiasWorld,
+            sectionPlane,
+          );
+          dev.queue.writeBuffer(sliceBuf, 0, st.shadowSliceScratch);
+          const shdPass = encoder.beginRenderPass({
+            colorAttachments: [],
+            depthStencilAttachment: {
+              view: sliceView,
+              depthClearValue: 1.0,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'store',
+            },
+          });
+          if (shdBundle) shdPass.executeBundles([shdBundle]);
+          shdPass.end();
+          this.shadowPassCount++;
+        }
+      }
+    }
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         useMsaa
@@ -2443,6 +2717,22 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     }
   }
 
+  willRenderScene(viewerObj: object): boolean {
+    if (!cachedDevice) return false;
+    const v = viewerObj as ViewerLike;
+    if (v.xrSessionActive || resolveSceneRenderBackend(v, true) !== 'webgpu') {
+      return false;
+    }
+    const st = this.states.get(viewerObj);
+    if (st?.ctx) return true;
+    const glCv = v.canvas ?? (v.gl?.canvas as HTMLCanvasElement | undefined);
+    return Boolean(
+      glCv &&
+        typeof document !== 'undefined' &&
+        typeof glCv.parentElement?.insertBefore === 'function',
+    );
+  }
+
   hideLayer(viewer: object): void {
     const st = this.states.get(viewer);
     if (!st) return;
@@ -2458,6 +2748,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     st.gen++;
     destroyCompiledScene(st.scene);
     st.scene = null;
+    st.lastShadowDigest = 0;
     this.hideLayer(viewer);
   }
 
@@ -2472,6 +2763,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     destroyCompiledScene(st.scene);
     st.scene = null;
     destroyAttachments(st);
+    destroyShadowTargets(st);
     destroyPickTargets(st);
     safe(() => st.ctx?.unconfigure?.());
     safe(() => st.canvas?.remove?.());
@@ -2497,6 +2789,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
         destroyCompiledScene(st.scene);
         st.scene = null;
         destroyAttachments(st);
+        destroyShadowTargets(st);
         destroyPickTargets(st);
         st.dev = null;
         st.configuredFormat = '';
@@ -2543,7 +2836,11 @@ export const webgpuScenePlugin: ThreeLivePlugin = {
   },
 
   onAttributeChanged(element: unknown, name: string): void {
-    if (name === 'renderer' || name === 'section-plane') {
+    if (
+      name === 'renderer' ||
+      name === 'section-plane' ||
+      name === 'shadow-maps'
+    ) {
       const el = element as {viewer?: {render?: () => void} | null} | null;
       el?.viewer?.render?.();
     }

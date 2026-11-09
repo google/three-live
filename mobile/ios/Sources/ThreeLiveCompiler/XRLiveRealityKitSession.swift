@@ -232,7 +232,14 @@
       // Apply calibrated studio materials (sRGB tint + calibrated metallic factor) to all
       // bound entities immediately so initial colors and reflections match Web and Android.
       // One pass over bound nodes (O(nodes x primitives)) rather than per material.
+      let hasShadowCasters = session.punctualLights.contains { $0.shadow?.cast == true }
       for (nodeIndex, entity) in entitiesByNode {
+        #if os(visionOS)
+          if #available(visionOS 2.0, *), hasShadowCasters, session.hasMesh(at: nodeIndex) {
+            entity.components.set(
+              GroundingShadowComponent(castsShadow: session.castsShadow(at: nodeIndex)))
+          }
+        #endif
         let primitives = session.materialIndices(forNode: nodeIndex)
         var seen = Set<Int>()
         for materialIndex in primitives
@@ -318,8 +325,39 @@
         let keyLight = DirectionalLight()
         keyLight.light.intensity = 1500 * scale
         keyLight.light.color = XRPlatformColor(red: 1.0, green: 0.99, blue: 0.97, alpha: 1.0)
-        keyLight.look(at: [0, 0, 0], from: [1.8, 4.5, 2.2], relativeTo: container)
+        let shadowLights = session.punctualLights.filter { $0.shadow?.cast == true }.prefix(4)
+        if let dirLight = shadowLights.first(where: { $0.type == "directional" }) {
+          keyLight.shadow = DirectionalLightComponent.Shadow()
+          let fromPos =
+            simd_length_squared(dirLight.position) > 1e-4
+            ? dirLight.position : SIMD3<Float>(1.8, 4.5, 2.2)
+          keyLight.look(at: [0, 0, 0], from: fromPos, relativeTo: container)
+        } else {
+          if !shadowLights.isEmpty {
+            keyLight.shadow = DirectionalLightComponent.Shadow()
+          }
+          keyLight.look(at: [0, 0, 0], from: [1.8, 4.5, 2.2], relativeTo: container)
+        }
         container.addChild(keyLight)
+
+        for spotDef in shadowLights where spotDef.type == "spot" {
+          let spot = SpotLight()
+          spot.light.intensity = max(200, spotDef.intensity * 600) * scale
+          spot.light.color = XRPlatformColor(
+            red: Self.srgbComponent(spotDef.color.x),
+            green: Self.srgbComponent(spotDef.color.y),
+            blue: Self.srgbComponent(spotDef.color.z),
+            alpha: 1.0)
+          spot.light.innerAngleInDegrees = spotDef.innerConeAngle * 180 / .pi
+          spot.light.outerAngleInDegrees = spotDef.outerConeAngle * 180 / .pi
+          if spotDef.range > 0 {
+            spot.light.attenuationRadius = spotDef.range
+          }
+          spot.shadow = SpotLightComponent.Shadow()
+          let target = spotDef.position + spotDef.direction
+          spot.look(at: target, from: spotDef.position, relativeTo: container)
+          container.addChild(spot)
+        }
 
         let fillLight = DirectionalLight()
         fillLight.light.intensity = 220 * scale

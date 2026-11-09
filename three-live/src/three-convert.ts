@@ -23,13 +23,18 @@ import {getSharedRegistry} from './plugin';
 import type {
   InstancedMesh,
   Light,
-  LightGpu,
   Material,
   Mesh,
   Object3D,
   Scene,
 } from './three-author';
-import {toGLBData, type GLBData} from './three-view';
+import {
+  extractKhrLights,
+  type GLBData,
+  type LightGpu,
+  type LightShadowGpu,
+  toGLBData,
+} from './three-view';
 
 declare const ENABLE_NATIVE_HOOKS: boolean;
 
@@ -252,6 +257,21 @@ export interface USDAMeshData {
   children?: USDAMeshData[];
   isXform?: boolean;
   invisible?: boolean;
+  castShadow?: boolean;
+}
+
+/** Light descriptor serialized into USDA `UsdLux` prims (`ShadowAPI` + `ShapingAPI`). */
+export interface USDALightData {
+  name?: string;
+  type: 'directional' | 'spot' | 'point';
+  color: [number, number, number];
+  intensity: number;
+  position: [number, number, number];
+  direction?: [number, number, number];
+  range?: number;
+  innerConeAngle?: number;
+  outerConeAngle?: number;
+  shadow?: LightShadowGpu;
 }
 
 export interface ZipEntry {
@@ -278,6 +298,21 @@ function uniqName(used: Set<string>, base: string): string {
   while (used.has(name)) name = `${base}_${s++}`;
   used.add(name);
   return name;
+}
+
+function quatFromMinusZ(
+  dx: number,
+  dy: number,
+  dz: number,
+): [number, number, number, number] {
+  const len = Math.hypot(dx, dy, dz) || 1;
+  const vx = dx / len;
+  const vy = dy / len;
+  const vz = dz / len;
+  const dot = -vz;
+  if (dot < -0.999999) return [0, 1, 0, 0];
+  const s = Math.sqrt((1 + dot) * 2);
+  return [vy / s, -vx / s, 0, s * 0.5];
 }
 
 function decomposeMat4ToTRS(
@@ -516,6 +551,8 @@ function serializeScene(
   const textureLookup = new Map<string, number>();
   const variantNames: string[] = [];
   const lights: LightGpu[] = [];
+  const khrLights: Array<Record<string, unknown>> = [];
+  let hasAnyShadowLight = false;
 
   function serializeMaterial(rawMat: Material): number {
     let matIdx = matMap.get(rawMat);
@@ -728,56 +765,25 @@ function serializeScene(
     return accIdx;
   }
 
-  scene.traverse((node) => {
-    if (
-      (node as any).isLight ||
-      ((node as any).color && (node as any).intensity !== undefined)
-    ) {
-      const me = (node as any).matrixWorld?.elements;
-      const px = finUsd(me ? me[12] : node.position?.x, 0),
-        py = finUsd(me ? me[13] : node.position?.y, 0),
-        pz = finUsd(me ? me[14] : node.position?.z, 0);
-      const tgt = (node as any).target;
-      const te = tgt?.parent ? tgt?.matrixWorld?.elements : undefined;
-      const tx = finUsd(te ? te[12] : tgt?.position?.x, 0),
-        ty = finUsd(te ? te[13] : tgt?.position?.y, 0),
-        tz = finUsd(te ? te[14] : tgt?.position?.z, 0);
-      const dx = tx - px,
-        dy = ty - py,
-        dz = tz - pz,
-        dLen = Math.hypot(dx, dy, dz);
-      const outerAngle = Math.max(
-        0.01,
-        Math.min(Math.PI / 2, finUsd((node as any).angle, Math.PI / 3)),
-      );
-      const pen = Math.max(0, Math.min(1, finUsd((node as any).penumbra, 0)));
-      lights.push({
-        type: node.type,
-        color: [node.color.r, node.color.g, node.color.b],
-        intensity: node.intensity,
-        position: [px, py, pz],
-        ...(node.type === 'spot'
-          ? {
-              direction:
-                dLen > 1e-6 ? [dx / dLen, dy / dLen, dz / dLen] : [0, -1, 0],
-              outerConeAngle: outerAngle,
-              innerConeAngle: Math.max(0, outerAngle * (1 - pen)),
-              range: Math.max(0, finUsd((node as any).distance, 0)),
-            }
-          : node.type === 'point'
-            ? {range: Math.max(0, finUsd((node as any).distance, 0))}
-            : node.type === 'hemisphere' && (node as any).groundColor
-              ? {
-                  groundColor: [
-                    (node as any).groundColor.r,
-                    (node as any).groundColor.g,
-                    (node as any).groundColor.b,
-                  ],
-                }
-              : {}),
-      });
-    }
-  });
+  const pendingKhrLights: Array<{
+    // tslint:disable-next-line:no-any
+    node: Record<string, any>;
+    obj: Object3D;
+    px: number;
+    py: number;
+    pz: number;
+    tx: number;
+    ty: number;
+    tz: number;
+    dx: number;
+    dy: number;
+    dz: number;
+    dLen: number;
+    outerAngle: number;
+    innerAngle: number;
+    range: number;
+    shadowSpec?: LightShadowGpu;
+  }> = [];
 
   const rootNodeIndices: number[] = [];
   const seenObjs = new Set<Object3D>([scene]);
@@ -861,6 +867,132 @@ function serializeScene(
         nodeExtensionsUsed
           .add('MOZ_hubs_components')
           .add('ANDROID_xr_scenecore');
+      }
+    }
+
+    // tslint:disable-next-line:no-any
+    const anyObj = obj as any;
+    const isLightObj =
+      anyObj.isLight || (anyObj.color && anyObj.intensity !== undefined);
+    if (
+      !isLightObj &&
+      (anyObj._castShdSet ||
+        anyObj._recvShdSet ||
+        obj.castShadow ||
+        obj.receiveShadow)
+    ) {
+      node.extras = {
+        ...(node.extras || {}),
+        shadow: {
+          cast: Boolean(obj.castShadow),
+          receive: anyObj._recvShdSet
+            ? Boolean(obj.receiveShadow)
+            : Boolean(obj.receiveShadow || obj.castShadow),
+        },
+      };
+    }
+
+    if (isLightObj) {
+      const me = anyObj.matrixWorld?.elements;
+      const wpx = finUsd(me ? me[12] : obj.position?.x, 0);
+      const wpy = finUsd(me ? me[13] : obj.position?.y, 0);
+      const wpz = finUsd(me ? me[14] : obj.position?.z, 0);
+      const tgt = anyObj.target;
+      const te = tgt?.parent ? tgt?.matrixWorld?.elements : undefined;
+      const tx = finUsd(te ? te[12] : tgt?.position?.x, 0);
+      const ty = finUsd(te ? te[13] : tgt?.position?.y, 0);
+      const tz = finUsd(te ? te[14] : tgt?.position?.z, 0);
+      const dx = tx - wpx;
+      const dy = ty - wpy;
+      const dz = tz - wpz;
+      const dLen = Math.hypot(dx, dy, dz);
+      const outerAngle = Math.max(
+        0.01,
+        Math.min(Math.PI / 2, finUsd(anyObj.angle, Math.PI / 3)),
+      );
+      const pen = Math.max(0, Math.min(1, finUsd(anyObj.penumbra, 0)));
+      const innerAngle = Math.max(0, outerAngle * (1 - pen));
+      const range = Math.max(0, finUsd(anyObj.distance, 0));
+      const isPunctual =
+        obj.type === 'directional' ||
+        obj.type === 'spot' ||
+        obj.type === 'point';
+      let shadowSpec: LightShadowGpu | undefined;
+      if (Boolean(obj.castShadow) && isPunctual) {
+        const sh = anyObj.shadow;
+        const ms = Math.max(
+          256,
+          Math.min(
+            2048,
+            Math.round(finUsd(sh?.mapSize?.x ?? sh?.mapSize?.width, 1024)),
+          ),
+        );
+        shadowSpec = {
+          cast: true,
+          mapSize: ms <= 384 ? 256 : ms <= 768 ? 512 : ms <= 1536 ? 1024 : 2048,
+          bias: clampUsd(sh?.bias, -0.05, 0.05, -0.0005),
+          normalBias: clampUsd(sh?.normalBias, 0, 0.2, 0.015),
+          radius: clampUsd(sh?.radius, 0, 8, 1.5),
+        };
+        hasAnyShadowLight = true;
+      }
+      const dirDx = wpx - tx;
+      const dirDy = wpy - ty;
+      const dirDz = wpz - tz;
+      const dirLen = Math.hypot(dirDx, dirDy, dirDz);
+      lights.push({
+        type: obj.type,
+        color: [obj.color.r, obj.color.g, obj.color.b],
+        intensity: obj.intensity,
+        position:
+          obj.type === 'directional' ? [dirDx, dirDy, dirDz] : [wpx, wpy, wpz],
+        ...(obj.type === 'directional'
+          ? {
+              direction:
+                dirLen > 1e-6
+                  ? [dirDx / dirLen, dirDy / dirLen, dirDz / dirLen]
+                  : [0, 1, 0],
+            }
+          : obj.type === 'spot'
+            ? {
+                direction:
+                  dLen > 1e-6 ? [dx / dLen, dy / dLen, dz / dLen] : [0, -1, 0],
+                outerConeAngle: outerAngle,
+                innerConeAngle: innerAngle,
+                range,
+              }
+            : obj.type === 'point'
+              ? {range}
+              : obj.type === 'hemisphere' && anyObj.groundColor
+                ? {
+                    groundColor: [
+                      anyObj.groundColor.r,
+                      anyObj.groundColor.g,
+                      anyObj.groundColor.b,
+                    ],
+                  }
+                : {}),
+        ...(shadowSpec ? {shadow: shadowSpec} : {}),
+      });
+      if (isPunctual) {
+        pendingKhrLights.push({
+          node,
+          obj,
+          px: wpx,
+          py: wpy,
+          pz: wpz,
+          tx,
+          ty,
+          tz,
+          dx,
+          dy,
+          dz,
+          dLen,
+          outerAngle,
+          innerAngle,
+          range,
+          shadowSpec,
+        });
       }
     }
 
@@ -1043,6 +1175,44 @@ function serializeScene(
       }
     }
   }
+  if (hasAnyShadowLight) {
+    for (const p of pendingKhrLights) {
+      const khrIdx = khrLights.length;
+      khrLights.push({
+        name: p.obj.name || `Light_${khrIdx}`,
+        type: p.obj.type,
+        color: [p.obj.color.r, p.obj.color.g, p.obj.color.b],
+        intensity: p.obj.intensity,
+        ...(p.range > 0 && (p.obj.type === 'point' || p.obj.type === 'spot')
+          ? {range: p.range}
+          : {}),
+        ...(p.obj.type === 'spot'
+          ? {
+              spot: {
+                innerConeAngle: p.innerAngle,
+                outerConeAngle: p.outerAngle,
+              },
+            }
+          : {}),
+        ...(p.shadowSpec ? {extras: {shadow: p.shadowSpec}} : {}),
+      });
+      p.node.extensions = {
+        ...(p.node.extensions || {}),
+        KHR_lights_punctual: {light: khrIdx},
+      };
+      nodeExtensionsUsed.add('KHR_lights_punctual');
+      if (p.obj.type === 'directional' || p.obj.type === 'spot') {
+        const rvx = p.dLen > 1e-6 ? p.dx / p.dLen : 0;
+        const rvy = p.dLen > 1e-6 ? p.dy / p.dLen : -1;
+        const rvz = p.dLen > 1e-6 ? p.dz / p.dLen : 0;
+        p.node.rotation = quatFromMinusZ(rvx, rvy, rvz);
+        if (p.obj.type === 'directional' && (p.tx || p.ty || p.tz)) {
+          p.node.translation = [p.px - p.tx, p.py - p.ty, p.pz - p.tz];
+        }
+      }
+    }
+  }
+
   for (let ni = 0; ni < nodes.length; ni++) {
     const n = nodes[ni];
     if (n.children && n.children.length === 0) {
@@ -1296,7 +1466,10 @@ function serializeScene(
           ],
         }
       : {}),
-    ...(interactivityExt || variantNames.length > 0 || audioEmitters.length > 0
+    ...(interactivityExt ||
+    variantNames.length > 0 ||
+    audioEmitters.length > 0 ||
+    khrLights.length > 0
       ? {
           extensions: {
             ...(interactivityExt ? {KHR_interactivity: interactivityExt} : {}),
@@ -1315,6 +1488,9 @@ function serializeScene(
                     emitters: audioEmitters,
                   },
                 }
+              : {}),
+            ...(khrLights.length > 0
+              ? {KHR_lights_punctual: {lights: khrLights}}
               : {}),
           },
         }
@@ -1913,6 +2089,21 @@ export function extractMeshesFromGLB(
           nodeXr,
           isInvisible,
         );
+        const rawNodeObj = rawNodes?.[nIdx] as
+          | {_castShdSet?: boolean; _recvShdSet?: boolean; castShadow?: boolean}
+          | undefined;
+        const rawShadowExplicit = Boolean(
+          rawNodeObj?._castShdSet || rawNodeObj?._recvShdSet,
+        );
+        const nodeShadowCast: boolean | undefined =
+          typeof node.extras?.shadow?.cast === 'boolean'
+            ? node.extras.shadow.cast
+            : rawShadowExplicit
+              ? Boolean(rawNodeObj?.castShadow)
+              : undefined;
+        if (nodeShadowCast !== undefined) {
+          for (const pm of primMeshes) pm.castShadow = nodeShadowCast;
+        }
         const instExt = node.extensions?.EXT_mesh_gpu_instancing?.attributes;
         if (instExt && typeof instExt === 'object' && primMeshes.length > 0) {
           const tData = readVec(instExt.TRANSLATION, 3);
@@ -1991,6 +2182,40 @@ export function extractMeshesFromGLB(
         ...extractPrimitives(mIdx, meshName, meshes[mIdx].extras?.xr),
       );
     }
+  }
+
+  const rawGltfLights: LightGpu[] =
+    (Array.isArray(glb.lights) && glb.lights.length > 0
+      ? glb.lights
+      : undefined) ??
+    extractKhrLights(gltf) ??
+    (Array.isArray(gltf?.asset?.extras?.lights)
+      ? gltf.asset.extras.lights
+      : []);
+  const shadowLights: USDALightData[] = [];
+  for (let li = 0; li < rawGltfLights.length; li++) {
+    const l = rawGltfLights[li];
+    if (
+      l?.shadow?.cast &&
+      (l.type === 'directional' || l.type === 'spot' || l.type === 'point')
+    ) {
+      shadowLights.push({
+        name: `Light_${li}`,
+        type: l.type,
+        color: l.color,
+        intensity: l.intensity,
+        position: l.position,
+        direction: l.direction,
+        range: l.range,
+        innerConeAngle: l.innerConeAngle,
+        outerConeAngle: l.outerConeAngle,
+        shadow: l.shadow,
+      });
+    }
+  }
+  if (shadowLights.length > 0) {
+    (result as {__usdaShadowLights?: USDALightData[]}).__usdaShadowLights =
+      shadowLights;
   }
 
   return result;
@@ -2085,7 +2310,15 @@ function formatIndicesArray(
 /**
  * Generates valid Universal Scene Description ASCII (.usda) text from mesh/node data.
  */
-export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
+export function generateUSDAFromMeshes(
+  meshes: USDAMeshData[],
+  lights?: USDALightData[],
+): string {
+  const rawShadowLights: USDALightData[] =
+    lights ??
+    (meshes as {__usdaShadowLights?: USDALightData[]}).__usdaShadowLights ??
+    [];
+  const activeShadowLights = rawShadowLights.filter((l) => l?.shadow?.cast);
   const materialsMap = new Map<
     string,
     {
@@ -2436,6 +2669,9 @@ interpolation = "vertex"
 `;
     }
     body += `rel material:binding = </Root/Materials/${matBinding}>\n`;
+    if (mesh.castShadow === false && activeShadowLights.length > 0) {
+      body += `bool primvars:doNotCastShadows = 1\n`;
+    }
     return body;
   };
 
@@ -2493,7 +2729,77 @@ interpolation = "vertex"
   }
 
   usda += `}
-}
+`;
+
+  if (activeShadowLights.length > 0) {
+    usda += `def Scope "Lights"\n{\n`;
+    const usedLightNames = new Set<string>();
+    for (let li = 0; li < activeShadowLights.length; li++) {
+      const l = activeShadowLights[li];
+      const lName = uniqName(
+        usedLightNames,
+        sanitizeUsdIdentifier(l.name, `Light_${li}`),
+      );
+      const primType =
+        l.type === 'directional'
+          ? 'DistantLight'
+          : l.type === 'spot'
+            ? 'DiskLight'
+            : 'SphereLight';
+      const schemas =
+        l.type === 'spot' ? '["ShapingAPI", "ShadowAPI"]' : '["ShadowAPI"]';
+      const [cr, cg, cb] = l.color || [1, 1, 1];
+      const [px, py, pz] = l.position || [0, 5, 5];
+      let dirX = -px;
+      let dirY = -py;
+      let dirZ = -pz;
+      if (l.direction && l.direction.length >= 3) {
+        if (l.type === 'directional') {
+          dirX = -l.direction[0];
+          dirY = -l.direction[1];
+          dirZ = -l.direction[2];
+        } else {
+          dirX = l.direction[0];
+          dirY = l.direction[1];
+          dirZ = l.direction[2];
+        }
+      }
+      const [qx, qy, qz, qw] = quatFromMinusZ(dirX, dirY, dirZ);
+      let xformLines = '';
+      const xformOps: string[] = [];
+      if (
+        l.type !== 'directional' &&
+        (Math.abs(px) > 1e-7 || Math.abs(py) > 1e-7 || Math.abs(pz) > 1e-7)
+      ) {
+        xformLines += `double3 xformOp:translate = ${f3(px, py, pz)}\n`;
+        xformOps.push('"xformOp:translate"');
+      }
+      if (
+        l.type !== 'point' &&
+        (1 - Math.abs(qw) > 1e-7 || Math.hypot(qx, qy, qz) > 1e-7)
+      ) {
+        xformLines += `quatf xformOp:orient = ${f4(qw, qx, qy, qz)}\n`;
+        xformOps.push('"xformOp:orient"');
+      }
+      if (xformOps.length > 0) {
+        xformLines += `uniform token[] xformOpOrder = [${xformOps.join(', ')}]\n`;
+      }
+      let shapingLines = '';
+      if (l.type === 'spot') {
+        const outerDeg = ((l.outerConeAngle ?? Math.PI / 3) * 180) / Math.PI;
+        const innerDeg = ((l.innerConeAngle ?? outerDeg * 0.8) * 180) / Math.PI;
+        const softness =
+          outerDeg > 1e-4
+            ? Math.max(0, Math.min(1, 1 - innerDeg / outerDeg))
+            : 0;
+        shapingLines = `float inputs:shaping:cone:angle = ${formatNum(outerDeg)}\nfloat inputs:shaping:cone:softness = ${formatNum(softness)}\n`;
+      }
+      usda += `def ${primType} "${lName}" (\nprepend apiSchemas = ${schemas}\n)\n{\ncolor3f inputs:color = ${f3(cr, cg, cb)}\nfloat inputs:intensity = ${formatNum(l.intensity ?? 1)}\nbool inputs:shadow:enable = 1\n${shapingLines}${xformLines}}\n`;
+    }
+    usda += `}\n`;
+  }
+
+  usda += `}
 `;
 
   return usda;

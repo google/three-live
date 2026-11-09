@@ -27,7 +27,11 @@ import {
   CLIENT_SCRIPTS_DISABLED_ERROR,
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
-import {getSharedRegistry, type RendererPreference} from './plugin';
+import {
+  getSharedRegistry,
+  type RendererPreference,
+  type ShadowMapsMode,
+} from './plugin';
 import {
   normalizeToneMapping,
   SANDBOX_HOST_SCENE_LIMITS,
@@ -48,6 +52,7 @@ export type {
   MeshDecoder,
   OrbitLimits,
   RendererPreference,
+  ShadowMapsMode,
   ToneMappingMode,
 };
 
@@ -153,45 +158,42 @@ if (typeof CustomEvent === 'undefined' && typeof Event !== 'undefined') {
   };
 }
 
+/** Reflected HTML attribute properties installed on `ThreeLiveElement.prototype`. */
+export interface ThreeLiveElement {
+  src: string | null;
+  cameraControls: boolean;
+  cameraOrbit: string | null;
+  cameraTarget: string | null;
+  minCameraOrbit: string | null;
+  maxCameraOrbit: string | null;
+  fieldOfView: string | null;
+  iosSrc: string | null;
+  scriptSrc: string | null;
+  poster: string | null;
+  selectedMesh: string | null;
+  exposure: number;
+  autoRotate: boolean;
+  autoRotateDelay: number;
+  rotationPerSecond: string;
+  arScale: 'auto' | 'fixed';
+  arPlacement: 'floor' | 'wall';
+  shadowIntensity: number;
+  shadowSoftness: number;
+  bloom: number;
+  outlineSelected: boolean;
+  outlineColor: string;
+  environmentImage: string | null;
+  skyboxImage: string | null;
+  autoplay: boolean;
+  animationName: string | null;
+}
+
+/** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
-  public static readonly observedAttributes = [
-    'src',
-    'ios-src',
-    'script-src',
-    'sandbox',
-    'allow-client-scripts',
-    'poster',
-    'camera-controls',
-    'camera-orbit',
-    'camera-target',
-    'min-camera-orbit',
-    'max-camera-orbit',
-    'field-of-view',
-    'selected-mesh',
-    'ar',
-    'ar-modes',
-    'ar-scale',
-    'ar-placement',
-    'exposure',
-    'shadow-intensity',
-    'shadow-softness',
-    'tone-mapping',
-    'bloom',
-    'bloom-threshold',
-    'bloom-radius',
-    'outline',
-    'outline-selected',
-    'outline-color',
-    'environment-image',
-    'skybox-image',
-    'autoplay',
-    'animation-name',
-    'variant-name',
-    'auto-rotate',
-    'auto-rotate-delay',
-    'rotation-per-second',
-    'renderer',
-  ];
+  static readonly observedAttributes =
+    'src ios-src script-src sandbox allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps'.split(
+      ' ',
+    );
 
   /**
    * URL of the Three-Live IIFE bundle (e.g. `three-live.min.js`) that the
@@ -455,18 +457,33 @@ export class ThreeLiveElement extends BaseElement {
         if (newVal) this.loadModel(newVal).catch(() => {});
         break;
 
-      case 'camera-target':
-        this.applyCameraTarget(newVal);
+      case 'camera-target': {
+        const t = this.parseCameraTarget(newVal);
+        if (v && t) v.setTarget(t[0], t[1], t[2]);
         break;
+      }
 
       case 'min-camera-orbit':
       case 'max-camera-orbit':
-        this.applyOrbitLimits();
+        if (v) {
+          const min = this.parseOrbitLimit(this.getAttr('min-camera-orbit'));
+          const max = this.parseOrbitLimit(this.getAttr('max-camera-orbit'));
+          v.setOrbitLimits({
+            minTheta: min.theta,
+            maxTheta: max.theta,
+            minPhi: min.phi,
+            maxPhi: max.phi,
+            minDistance: min.distance,
+            maxDistance: max.distance,
+          });
+        }
         break;
 
-      case 'field-of-view':
-        this.applyFieldOfView(newVal);
+      case 'field-of-view': {
+        const fov = this.parseFieldOfView(newVal);
+        if (v && fov !== undefined) v.setFieldOfView(fov);
         break;
+      }
 
       case 'script-src':
         if (newVal) this.loadScriptFromSrc(newVal).catch(() => {});
@@ -550,6 +567,11 @@ export class ThreeLiveElement extends BaseElement {
       case 'renderer':
         v?.render();
         break;
+
+      case 'shadow-maps':
+        if (v) v.shadowMaps = newVal !== null ? this.shadowMaps : undefined;
+        v?.render();
+        break;
     }
 
     for (const plugin of ThreeView.getRegisteredPlugins()) {
@@ -577,69 +599,6 @@ export class ThreeLiveElement extends BaseElement {
   protected getFloatAttr(name: string, fallback: number): number {
     const val = this.getAttr(name);
     return val !== null ? parseFloat(val) : fallback;
-  }
-
-  get src(): string | null {
-    return this.getAttr('src');
-  }
-  set src(val: string | null) {
-    this.setAttr('src', val);
-  }
-
-  get cameraControls(): boolean {
-    return this.getBoolAttr('camera-controls');
-  }
-  set cameraControls(val: boolean) {
-    this.setBoolAttr('camera-controls', val);
-  }
-
-  get cameraOrbit(): string | null {
-    return this.getAttr('camera-orbit');
-  }
-  set cameraOrbit(val: string | null) {
-    this.setAttr('camera-orbit', val);
-  }
-
-  get cameraTarget(): string | null {
-    return this.getAttr('camera-target');
-  }
-  set cameraTarget(val: string | null) {
-    this.setAttr('camera-target', val);
-  }
-
-  get minCameraOrbit(): string | null {
-    return this.getAttr('min-camera-orbit');
-  }
-  set minCameraOrbit(val: string | null) {
-    this.setAttr('min-camera-orbit', val);
-  }
-
-  get maxCameraOrbit(): string | null {
-    return this.getAttr('max-camera-orbit');
-  }
-  set maxCameraOrbit(val: string | null) {
-    this.setAttr('max-camera-orbit', val);
-  }
-
-  get fieldOfView(): string | null {
-    return this.getAttr('field-of-view');
-  }
-  set fieldOfView(val: string | null) {
-    this.setAttr('field-of-view', val);
-  }
-
-  get iosSrc(): string | null {
-    return this.getAttr('ios-src');
-  }
-  set iosSrc(val: string | null) {
-    this.setAttr('ios-src', val);
-  }
-
-  get scriptSrc(): string | null {
-    return this.getAttr('script-src');
-  }
-  set scriptSrc(val: string | null) {
-    this.setAttr('script-src', val);
   }
 
   /**
@@ -677,48 +636,6 @@ export class ThreeLiveElement extends BaseElement {
     this.setBoolAttr('allow-client-scripts', value);
   }
 
-  get poster(): string | null {
-    return this.getAttr('poster');
-  }
-  set poster(val: string | null) {
-    this.setAttr('poster', val);
-  }
-
-  get selectedMesh(): string | null {
-    return this.getAttr('selected-mesh');
-  }
-  set selectedMesh(val: string | null) {
-    this.setAttr('selected-mesh', val);
-  }
-
-  get exposure(): number {
-    return this.getFloatAttr('exposure', 1.0);
-  }
-  set exposure(val: number) {
-    this.setAttr('exposure', val);
-  }
-
-  get autoRotate(): boolean {
-    return this.getBoolAttr('auto-rotate');
-  }
-  set autoRotate(val: boolean) {
-    this.setBoolAttr('auto-rotate', val);
-  }
-
-  get autoRotateDelay(): number {
-    return this.getFloatAttr('auto-rotate-delay', 3000);
-  }
-  set autoRotateDelay(val: number) {
-    this.setAttr('auto-rotate-delay', val);
-  }
-
-  get rotationPerSecond(): string {
-    return this.getAttr('rotation-per-second') || '30deg';
-  }
-  set rotationPerSecond(val: string | null) {
-    this.setAttr('rotation-per-second', val);
-  }
-
   get turntableRotation(): number {
     return this.viewer ? this.viewer.turntableRotation : 0;
   }
@@ -730,36 +647,8 @@ export class ThreeLiveElement extends BaseElement {
     this.setBoolAttr('ar', val);
   }
 
-  get arScale(): 'auto' | 'fixed' {
-    return (this.getAttr('ar-scale') as 'auto' | 'fixed') || 'auto';
-  }
-  set arScale(val: 'auto' | 'fixed') {
-    this.setAttr('ar-scale', val);
-  }
-
-  get arPlacement(): 'floor' | 'wall' {
-    return (this.getAttr('ar-placement') as 'floor' | 'wall') || 'floor';
-  }
-  set arPlacement(val: 'floor' | 'wall') {
-    this.setAttr('ar-placement', val);
-  }
-
   get canActivateAR(): boolean {
     return ThreeLiveElement.isARSupported();
-  }
-
-  get shadowIntensity(): number {
-    return this.getFloatAttr('shadow-intensity', 0);
-  }
-  set shadowIntensity(val: number) {
-    this.setAttr('shadow-intensity', val);
-  }
-
-  get shadowSoftness(): number {
-    return this.getFloatAttr('shadow-softness', 0.5);
-  }
-  set shadowSoftness(val: number) {
-    this.setAttr('shadow-softness', val);
   }
 
   get toneMapping(): ToneMappingMode {
@@ -767,13 +656,6 @@ export class ThreeLiveElement extends BaseElement {
   }
   set toneMapping(val: ToneMappingMode) {
     this.setAttr('tone-mapping', val);
-  }
-
-  get bloom(): number {
-    return this.getFloatAttr('bloom', 0);
-  }
-  set bloom(val: number) {
-    this.setAttr('bloom', val);
   }
 
   get bloomThreshold(): number {
@@ -796,48 +678,6 @@ export class ThreeLiveElement extends BaseElement {
     this.setAttr('bloom-radius', val);
   }
 
-  get outlineSelected(): boolean {
-    return this.getBoolAttr('outline-selected');
-  }
-  set outlineSelected(val: boolean) {
-    this.setBoolAttr('outline-selected', val);
-  }
-
-  get outlineColor(): string {
-    return this.getAttr('outline-color') || '#38bdf8';
-  }
-  set outlineColor(val: string | null) {
-    this.setAttr('outline-color', val);
-  }
-
-  get environmentImage(): string | null {
-    return this.getAttr('environment-image');
-  }
-  set environmentImage(val: string | null) {
-    this.setAttr('environment-image', val);
-  }
-
-  get skyboxImage(): string | null {
-    return this.getAttr('skybox-image');
-  }
-  set skyboxImage(val: string | null) {
-    this.setAttr('skybox-image', val);
-  }
-
-  get autoplay(): boolean {
-    return this.getBoolAttr('autoplay');
-  }
-  set autoplay(val: boolean) {
-    this.setBoolAttr('autoplay', val);
-  }
-
-  get animationName(): string | null {
-    return this.getAttr('animation-name');
-  }
-  set animationName(val: string | null) {
-    this.setAttr('animation-name', val);
-  }
-
   get availableAnimations(): string[] {
     return this.viewer ? this.viewer.getAvailableAnimations() : [];
   }
@@ -856,11 +696,19 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   get renderer(): RendererPreference {
-    const raw = (this.getAttr('renderer') || 'auto').trim().toLowerCase();
-    return raw === 'webgpu' || raw === 'webgl2' ? raw : 'auto';
+    const r = this.getAttr('renderer')?.trim().toLowerCase();
+    return r === 'webgpu' || r === 'webgl2' ? r : 'auto';
   }
   set renderer(val: RendererPreference | null) {
     this.setAttr('renderer', val);
+  }
+
+  get shadowMaps(): ShadowMapsMode {
+    const r = this.getAttr('shadow-maps')?.trim().toLowerCase();
+    return r === 'pcf' || r === 'off' ? r : 'auto';
+  }
+  set shadowMaps(val: ShadowMapsMode | null) {
+    this.setAttr('shadow-maps', val);
   }
 
   protected fireEvent(type: string, detail?: unknown): void {
@@ -1275,32 +1123,27 @@ export class ThreeLiveElement extends BaseElement {
   private initViewer(): void {
     if (!this.canvas) return;
 
-    const autoRotate = this.autoRotate;
-    const exposure = this.exposure;
-
-    const minOrbit = this.parseOrbitLimit(this.getAttr('min-camera-orbit'));
-    const maxOrbit = this.parseOrbitLimit(this.getAttr('max-camera-orbit'));
-    const cameraTarget = this.parseCameraTarget(this.getAttr('camera-target'));
-    const fieldOfView = this.parseFieldOfView(this.getAttr('field-of-view'));
-
     this.viewer = new ThreeView(this, this.canvas, {
-      autoRotate,
+      autoRotate: this.autoRotate,
       autoRotateDelay: this.autoRotateDelay,
       autoRotateSpeed: this.parseRotationPerSecond(
         this.getAttr('rotation-per-second'),
       ),
-      exposure,
+      exposure: this.exposure,
       shadowIntensity: this.shadowIntensity,
       shadowSoftness: this.shadowSoftness,
+      shadowMaps: this.hasAttribute('shadow-maps')
+        ? this.shadowMaps
+        : undefined,
       toneMapping: this.toneMapping,
       environmentImage: this.environmentImage,
       autoplay: this.autoplay,
       animationName: this.animationName || undefined,
       variantName: this.getAttr('variant-name') || undefined,
-      fieldOfView,
-      cameraTarget,
-      minCameraOrbit: minOrbit,
-      maxCameraOrbit: maxOrbit,
+      fieldOfView: this.parseFieldOfView(this.getAttr('field-of-view')),
+      cameraTarget: this.parseCameraTarget(this.getAttr('camera-target')),
+      minCameraOrbit: this.parseOrbitLimit(this.getAttr('min-camera-orbit')),
+      maxCameraOrbit: this.parseOrbitLimit(this.getAttr('max-camera-orbit')),
       onMeshClick: (hit: HitDetail) => {
         this.fireEvent('meshclick', hit);
       },
@@ -1534,20 +1377,6 @@ export class ThreeLiveElement extends BaseElement {
     };
   }
 
-  private applyOrbitLimits(): void {
-    if (!this.viewer) return;
-    const min = this.parseOrbitLimit(this.getAttr('min-camera-orbit'));
-    const max = this.parseOrbitLimit(this.getAttr('max-camera-orbit'));
-    this.viewer.setOrbitLimits({
-      minTheta: min.theta,
-      maxTheta: max.theta,
-      minPhi: min.phi,
-      maxPhi: max.phi,
-      minDistance: min.distance,
-      maxDistance: max.distance,
-    });
-  }
-
   private parseCameraTarget(
     targetStr: string | null,
   ): [number, number, number] | undefined {
@@ -1576,20 +1405,6 @@ export class ThreeLiveElement extends BaseElement {
     if (s.endsWith('rad')) return num;
     if (s.endsWith('%')) return (num / 100) * Math.PI * 2;
     return (num * Math.PI) / 180;
-  }
-
-  private applyCameraTarget(targetStr: string | null): void {
-    const target = this.parseCameraTarget(targetStr);
-    if (this.viewer && target) {
-      this.viewer.setTarget(target[0], target[1], target[2]);
-    }
-  }
-
-  private applyFieldOfView(fovStr: string | null): void {
-    const fov = this.parseFieldOfView(fovStr);
-    if (this.viewer && fov !== undefined) {
-      this.viewer.setFieldOfView(fov);
-    }
   }
 
   public updateHotspot(config: {
@@ -1712,6 +1527,87 @@ export class ThreeLiveElement extends BaseElement {
       runner.execute(script, this.sandbox, callbacks, {
         allowClientScripts: true,
       }),
+    );
+  }
+}
+
+{
+  interface AttrTarget {
+    getAttr(name: string): string | null;
+    setAttr(name: string, val: unknown): void;
+    getBoolAttr(name: string): boolean;
+    setBoolAttr(name: string, val: unknown): void;
+    getFloatAttr(name: string, fallback: number): number;
+  }
+  const proto = ThreeLiveElement.prototype as unknown;
+  const def = (
+    prop: string,
+    get: (this: AttrTarget) => unknown,
+    set: (this: AttrTarget, v: unknown) => void,
+  ) => Object.defineProperty(proto, prop, {get, set, configurable: true});
+  const kebab = (s: string) =>
+    s.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+  for (const p of 'src cameraOrbit cameraTarget minCameraOrbit maxCameraOrbit fieldOfView iosSrc scriptSrc poster selectedMesh environmentImage skyboxImage animationName'.split(
+    ' ',
+  )) {
+    const a = kebab(p);
+    def(
+      p,
+      function (this: AttrTarget) {
+        return this.getAttr(a);
+      },
+      function (this: AttrTarget, v: unknown) {
+        this.setAttr(a, v);
+      },
+    );
+  }
+  for (const p of 'cameraControls autoRotate outlineSelected autoplay'.split(
+    ' ',
+  )) {
+    const a = kebab(p);
+    def(
+      p,
+      function (this: AttrTarget) {
+        return this.getBoolAttr(a);
+      },
+      function (this: AttrTarget, v: unknown) {
+        this.setBoolAttr(a, v);
+      },
+    );
+  }
+  for (const [p, fb] of [
+    ['exposure', 1],
+    ['autoRotateDelay', 3000],
+    ['shadowIntensity', 0],
+    ['shadowSoftness', 0.5],
+    ['bloom', 0],
+  ] as const) {
+    const a = kebab(p);
+    def(
+      p,
+      function (this: AttrTarget) {
+        return this.getFloatAttr(a, fb);
+      },
+      function (this: AttrTarget, v: unknown) {
+        this.setAttr(a, v);
+      },
+    );
+  }
+  for (const [p, fb] of [
+    ['rotationPerSecond', '30deg'],
+    ['arScale', 'auto'],
+    ['arPlacement', 'floor'],
+    ['outlineColor', '#38bdf8'],
+  ] as const) {
+    const a = kebab(p);
+    def(
+      p,
+      function (this: AttrTarget) {
+        return this.getAttr(a) || fb;
+      },
+      function (this: AttrTarget, v: unknown) {
+        this.setAttr(a, v);
+      },
     );
   }
 }

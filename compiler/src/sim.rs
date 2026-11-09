@@ -498,6 +498,7 @@ fn init_sim_loop(
                 interactivity_events: Vec::new(),
                 interactivity: None,
                 visible: true,
+                shadow: None,
             });
         }
     }

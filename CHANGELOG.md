@@ -26,6 +26,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Multi-Light Depth Shadow Maps (`shadowMapsPlugin`, folded into
+    `three-live-studio.min.js`):** Real-time directional, spot, and point light
+    depth shadow mapping (`light.castShadow`,
+    `light.shadow.{mapSize, bias, normalBias, radius}`, `mesh.castShadow`,
+    `mesh.receiveShadow`, and `<three-live shadow-maps="auto | pcf | off">`)
+    across WebGL2, WebGPU, Android Filament, iOS/visionOS RealityKit, and
+    `.usdz`. Allocates a single `DEPTH_COMPONENT24` `gl.TEXTURE_2D_ARRAY` (up to
+    `MAX_SHADOW_LIGHTS = 4` slices, capped at 32 MB VRAM) with hardware
+    `COMPARE_REF_TO_TEXTURE` (`LEQUAL`), rotated 8-tap Vogel-disk PCF in WebGL2
+    and 8-tap Vogel-disk PCF with `depth24plus` array depth passes in WebGPU
+    (`three-live-webgpu`), tight dynamic world-space orthographic/perspective
+    frustum fitting, scale-invariant normal-offset bias, CAD `section-plane`
+    clipping, and an FNV-1a dirty digest that executes zero shadow depth passes
+    during static camera orbits. Exports `KHR_lights_punctual` `extras.shadow`,
+    `node.extras.shadow`, and USDZ `UsdLuxShadowAPI`
+    (`inputs:shadow:enable = 1`, `primvars:doNotCastShadows = 1`).
+
 -   **Room-scan priors on Android:** `AISpatialPriors.fromRoomScan(surfaces,
     objects, camera, cameraFovDeg)` with `AIRoomSurface` / `AIRoomObject`
     (column-major 4×4 transforms) brings the iOS room-scan mapping to Kotlin,
@@ -59,9 +76,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     exports mark nodes whose material shows an AI texture with
     `extras.xr.material.textureKey` (the pack key), so tools can tell it from
     a preset fallback.
-    Budgets: `three-live.min.js` `< 76 KB gz`, `three-live-full.min.js`
-    `< 188 KB gz`, `xr-live.min.js` `< 87 KB gz`, `xr-live-full.min.js`
-    `< 297 KB gz`.
+    Budgets: `three-live.min.js` `< 77 KB gz`, `three-live-full.min.js`
+    `< 198 KB gz`, `xr-live.min.js` `< 89 KB gz`, `xr-live-full.min.js`
+    `< 307 KB gz`.
 
 -   **AI textures on Android and iOS (B5d):** `ThreeLiveAITextures` (Android)
     and `AITextures` (iOS) install a texture pack for every compile
@@ -95,7 +112,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `el.exportTexturePack()` saves the pack for reproducible results. Events:
     `three-live-texture-start`, `three-live-texture`, and
     `three-live-texture-error`. Budgets: `three-live-ai.min.js` `< 29 KB gz`,
-    `three-live-full.min.js` `< 186 KB gz`, `xr-live-full.min.js` `< 295 KB gz`.
+    `three-live-full.min.js` `< 198 KB gz`, `xr-live-full.min.js` `< 306 KB gz`.
 
 -   **AI PBR textures, core (B5a):** `userData.xr.material` accepts an optional
     `prompt` (plus `size: 256 | 512` and `seed`; 1024 since B5e) next to its A8 `preset`.

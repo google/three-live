@@ -20,6 +20,7 @@
 
 import type {
   CameraState,
+  ShadowMapsMode,
   ThreeLiveElement,
 } from './three-live/src/three-live-element';
 import type {
@@ -122,6 +123,23 @@ export {
   installProceduralExtension,
   proceduralPlugin,
 } from './three-live/src/plugins/procedural';
+export {
+  computeWorldSceneBounds,
+  doesMeshCastShadow,
+  doesMeshReceiveShadow,
+  fitDirectionalShadowMatrix,
+  fitSpotShadowMatrix,
+  getShadowMapStats,
+  MAX_SHADOW_LIGHTS,
+  normalizeShadowMapsMode,
+  resolveActiveShadowLights,
+  SHADOW_MAP_TEXTURE_UNIT,
+  shadowMapsPlugin,
+  type ResolvedShadowPlan,
+  type ResolvedShadowSlice,
+  type ShadowMapStats,
+  type WorldSceneBounds,
+} from './three-live/src/plugins/shadow-maps';
 export {
   extractMaterialVariants,
   extractPrimitiveVariantMappings,
@@ -387,6 +405,8 @@ export interface ThreeLiveAttributes {
   'texture-pack'?: string;
   /** `three-live-webgpu`: scene rendering backend (`'auto'`, `'webgpu'`, or `'webgl2'`). */
   renderer?: 'auto' | 'webgpu' | 'webgl2' | string;
+  /** `three-live-studio` / `shadowMapsPlugin`: multi-light depth shadow maps (`'auto'`, `'pcf'`, or `'off'`). */
+  'shadow-maps'?: ShadowMapsMode | string;
   /** `xr-live-webgpu`: Gaussian splatting backend (`'auto'`, `'webgpu'`, `'hybrid'`, or `'webgl2'`). */
   'splat-renderer'?: 'auto' | 'webgpu' | 'hybrid' | 'webgl2' | string;
   /** `xr-live-spatial` / `xr-live-webgpu`: Spherical Harmonics view-dependent color quality (`'normal'` or `'high'`). */

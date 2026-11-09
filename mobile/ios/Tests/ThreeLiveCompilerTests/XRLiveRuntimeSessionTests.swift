@@ -2690,6 +2690,93 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertTrue(session.isVisible(1))
     XCTAssertFalse(session.isVisible(2))
   }
+
+  func testMultiLightShadowMapsAndNodeShadowFlags() throws {
+    let explicitJSON = """
+      {
+        "asset": {"version": "2.0"},
+        "extensions": {
+          "KHR_lights_punctual": {
+            "lights": [
+              {
+                "type": "directional",
+                "color": [1, 0.95, 0.9],
+                "intensity": 2.4,
+                "extras": {"shadow": {"cast": true, "mapSize": 2048, "bias": -0.0008, "normalBias": 0.02, "radius": 2.5}}
+              },
+              {
+                "type": "spot",
+                "color": [0.5, 0.8, 1],
+                "intensity": 1.6,
+                "range": 12,
+                "spot": {"innerConeAngle": 0.2, "outerConeAngle": 0.785398},
+                "extras": {"shadow": {"cast": true, "mapSize": 1024}}
+              },
+              {
+                "type": "point",
+                "intensity": 0.8
+              }
+            ]
+          }
+        },
+        "nodes": [
+          {"name": "KeyLight", "extensions": {"KHR_lights_punctual": {"light": 0}}},
+          {"name": "RimSpot", "translation": [-2, 4, 3], "extensions": {"KHR_lights_punctual": {"light": 1}}},
+          {"name": "FillPt", "extensions": {"KHR_lights_punctual": {"light": 2}}},
+          {"name": "Tower", "mesh": 0, "extras": {"shadow": {"cast": true, "receive": true}}},
+          {"name": "Floor", "mesh": 0, "extras": {"shadow": {"receive": true}}},
+          {"name": "Gizmo", "mesh": 0, "extras": {"shadow": {"cast": false}}},
+          {"name": "Unflagged", "mesh": 0}
+        ],
+        "meshes": [{"name": "M", "primitives": [{}]}]
+      }
+      """
+    let s = try XCTUnwrap(XRLiveRuntimeSession(gltfJSONData: Data(explicitJSON.utf8)))
+    XCTAssertEqual(s.punctualLights.count, 3)
+    XCTAssertEqual(s.punctualLights[0].type, "directional")
+    XCTAssertEqual(s.punctualLights[0].nodeIndex, 0)
+    XCTAssertEqual(s.punctualLights[0].shadow?.cast, true)
+    XCTAssertEqual(s.punctualLights[0].shadow?.mapSize, 2048)
+    XCTAssertEqual(Double(s.punctualLights[0].shadow?.bias ?? 0), -0.0008, accuracy: 1e-6)
+    XCTAssertEqual(Double(s.punctualLights[0].shadow?.normalBias ?? 0), 0.02, accuracy: 1e-6)
+    XCTAssertEqual(Double(s.punctualLights[0].shadow?.radius ?? 0), 2.5, accuracy: 1e-6)
+
+    XCTAssertEqual(s.punctualLights[1].type, "spot")
+    XCTAssertEqual(s.punctualLights[1].nodeIndex, 1)
+    XCTAssertEqual(s.punctualLights[1].shadow?.cast, true)
+    XCTAssertEqual(s.punctualLights[1].shadow?.mapSize, 1024)
+    XCTAssertNil(s.punctualLights[2].shadow)
+
+    XCTAssertTrue(s.hasExplicitShadow(at: 3))
+    XCTAssertTrue(s.castsShadow(at: 3) && s.receivesShadow(at: 3))
+    XCTAssertFalse(s.castsShadow(at: 4))
+    XCTAssertTrue(s.receivesShadow(at: 4))
+    XCTAssertFalse(s.castsShadow(at: 5))
+    XCTAssertFalse(s.hasExplicitShadow(at: 6))
+    XCTAssertFalse(s.castsShadow(at: 6))
+    XCTAssertTrue(s.receivesShadow(at: 6))
+
+    // Auto-caster promotion when a light casts shadows and no mesh node has explicit shadow flags.
+    let autoJSON = """
+      {
+        "asset": {"version": "2.0"},
+        "extensions": {
+          "KHR_lights_punctual": {
+            "lights": [{"type": "directional", "intensity": 2.0, "extras": {"shadow": {"cast": true}}}]
+          }
+        },
+        "nodes": [
+          {"name": "KeyLight", "extensions": {"KHR_lights_punctual": {"light": 0}}},
+          {"name": "AutoBox", "mesh": 0}
+        ],
+        "meshes": [{"name": "M", "primitives": [{}]}]
+      }
+      """
+    let autoSession = try XCTUnwrap(XRLiveRuntimeSession(gltfJSONData: Data(autoJSON.utf8)))
+    XCTAssertFalse(autoSession.hasExplicitShadow(at: 1))
+    XCTAssertTrue(autoSession.castsShadow(at: 1))
+    XCTAssertTrue(autoSession.receivesShadow(at: 1))
+  }
 }
 
 /// `URLProtocol` stub serving canned responses (keyed by path) for `SplatParser.loadURL` tests.

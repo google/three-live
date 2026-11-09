@@ -4558,3 +4558,106 @@ fn test_b5_prompt_without_preset_reports_tl206() {
     let sg = three_live_compiler::validate_three_script(script).expect("plain color fallback");
     assert!(sg.materials[0].base_color_texture.is_none());
 }
+
+#[test]
+fn test_multi_light_shadow_maps_glb_and_usdz_parity() {
+    let script = r#"
+        const key = new THREE.DirectionalLight(0xffffff, 2.2);
+        key.position.set(4, 8, 5);
+        key.castShadow = true;
+        key.shadow.mapSize.set(2048, 2048);
+        key.shadow.bias = -0.0007;
+        key.shadow.normalBias = 0.018;
+        key.shadow.radius = 2.0;
+        scene.add(key);
+
+        const spot = new THREE.SpotLight(0x88ccff, 1.5, 12, Math.PI / 4, 0.25);
+        spot.position.set(-3, 5, -2);
+        spot.castShadow = true;
+        spot.shadow.mapSize.width = 1024;
+        spot.shadow.mapSize.height = 1024;
+        scene.add(spot);
+
+        const fill = new THREE.PointLight(0xffaa44, 0.8, 10);
+        fill.position.set(1, 3, 2);
+        fill.castShadow = false;
+        scene.add(fill);
+
+        const tower = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 2, 1),
+            new THREE.MeshStandardMaterial({ color: 0x6366f1 })
+        );
+        tower.name = 'Tower';
+        tower.position.set(0, 1, 0);
+        tower.castShadow = true;
+        tower.receiveShadow = true;
+        scene.add(tower);
+
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(8, 0.2, 8),
+            new THREE.MeshStandardMaterial({ color: 0x94a3b8 })
+        );
+        floor.name = 'Floor';
+        floor.position.set(0, -0.1, 0);
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        const gizmo = new THREE.Mesh(
+            new THREE.BoxGeometry(0.2, 0.2, 0.2),
+            new THREE.MeshBasicMaterial({ color: 0xffff00 })
+        );
+        gizmo.name = 'Gizmo';
+        gizmo.castShadow = false;
+        scene.add(gizmo);
+    "#;
+
+    let sg = validate_three_script(script).expect("Shadow scene should validate");
+    assert_eq!(sg.lights.len(), 3, "Should extract all 3 punctual lights");
+    assert!(sg.lights[0].shadow.as_ref().is_some_and(|s| s.cast && s.map_size == 2048));
+    assert!(sg.lights[1].shadow.as_ref().is_some_and(|s| s.cast && s.map_size == 1024));
+    assert!(sg.lights[2].shadow.is_none(), "Non-shadow fill light should omit shadow config");
+
+    let glb = transcode_three_to_glb(script).expect("Shadow GLB should compile");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON");
+
+    let khr_lights = gltf["extensions"]["KHR_lights_punctual"]["lights"]
+        .as_array()
+        .expect("KHR_lights_punctual.lights array must be emitted");
+    assert_eq!(
+        khr_lights.len(),
+        3,
+        "All punctual lights (shadow + non-shadow) must be preserved in KHR_lights_punctual"
+    );
+    assert_eq!(khr_lights[0]["extras"]["shadow"]["cast"], true);
+    assert_eq!(khr_lights[0]["extras"]["shadow"]["mapSize"], 2048);
+    assert_eq!(khr_lights[1]["extras"]["shadow"]["cast"], true);
+    assert_eq!(khr_lights[1]["extras"]["shadow"]["mapSize"], 1024);
+    assert!(khr_lights[2].get("extras").is_none());
+
+    let nodes = gltf["nodes"].as_array().expect("nodes array");
+    let tower_node = nodes.iter().find(|n| n["name"] == "Tower").expect("Tower node");
+    assert_eq!(tower_node["extras"]["shadow"]["cast"], true);
+    assert_eq!(tower_node["extras"]["shadow"]["receive"], true);
+
+    let floor_node = nodes.iter().find(|n| n["name"] == "Floor").expect("Floor node");
+    assert_eq!(floor_node["extras"]["shadow"]["receive"], true);
+    assert_eq!(floor_node["extras"]["shadow"]["cast"], false);
+
+    let gizmo_node = nodes.iter().find(|n| n["name"] == "Gizmo").expect("Gizmo node");
+    assert_eq!(
+        gizmo_node["extras"]["shadow"]["cast"], false,
+        "Explicit castShadow = false opt-out must be preserved on node.extras.shadow"
+    );
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(script).expect("Shadow USDZ");
+    assert!(verify_usdz_alignment(&usdz) >= 1);
+    let usda = String::from_utf8_lossy(&usdz);
+    assert!(usda.contains("def Scope \"Lights\""));
+    assert!(usda.contains("def DistantLight \"Light_0\""));
+    assert!(usda.contains("def DiskLight \"Light_1\""));
+    assert!(usda.contains("prepend apiSchemas = [\"ShadowAPI\"]"));
+    assert!(usda.contains("bool inputs:shadow:enable = 1"));
+    assert!(usda.contains("bool primvars:doNotCastShadows = 1"));
+}
