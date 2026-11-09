@@ -362,7 +362,7 @@ live Three.js scenes:
     domain bundles (`three-live-studio.min.js` at `< 29 KB gz`,
     `three-live-cad.min.js` at `< 10 KB gz`, `three-live-procedural.min.js` at
     `< 28 KB gz`, and `three-live-animation.min.js`
-    at `< 17 KB gz`, or `< 157 KB gz` combined in `three-live-full.min.js`) add
+    at `< 11 KB gz`, or `< 157 KB gz` combined in `three-live-full.min.js`) add
     `KHR_interactivity` behavior graphs, PBR Next materials,
     `KHR_materials_variants`, `EXT_meshopt_compression`, HDRI and
     spherical-harmonics lighting, contact shadows, 3D hotspots, post-processing
