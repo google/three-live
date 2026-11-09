@@ -157,7 +157,7 @@ final class AIEditorTests: XCTestCase {
     let setup = transport.sent[0]
     XCTAssertEqual(setup["type"] as? String, "session.update")
     let tools = ((setup["session"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
-    XCTAssertEqual(tools, ["edit_scene", "undo_edit"])
+    XCTAssertEqual(tools, ["edit_scene", "undo_edit", "select_meshes"])
     XCTAssertTrue(
       transport.sent.contains { (($0["item"] as? [String: Any])?["role"] as? String) == "system" })
 
