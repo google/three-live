@@ -399,7 +399,7 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             "pbrMetallicRoughness": pbr,
             "doubleSided": mat.double_sided,
         });
-        if sanitize_finite(mat.base_color[3], 1.0) < 1.0 - 1e-4 {
+        if mat.alpha_blend || sanitize_finite(mat.base_color[3], 1.0) < 1.0 - 1e-4 {
             mat_json["alphaMode"] = json!("BLEND");
         }
 
@@ -472,6 +472,12 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                     "thicknessFactor": jnum(thickness),
                 }),
             );
+        }
+        if let Some(ref tsl_val) = mat.tsl {
+            if crate::tsl::validate_tsl_graph(tsl_val, &mat.name).is_ok() {
+                add_ext(crate::tsl::TSL_EXTENSION_NAME);
+                mat_exts.insert(crate::tsl::TSL_EXTENSION_NAME.to_string(), tsl_val.clone());
+            }
         }
         if !mat_exts.is_empty() {
             mat_json["extensions"] = serde_json::Value::Object(mat_exts);
@@ -1451,6 +1457,11 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
             let occlusion_texture = resolve_tex_uri(&m["occlusionTexture"]);
             let occlusion_strength =
                 m["occlusionTexture"]["strength"].as_f64().unwrap_or(1.0) as f32;
+            let alpha_blend = m["alphaMode"].as_str() == Some("BLEND");
+            let tsl = m["extensions"]
+                .get(crate::tsl::TSL_EXTENSION_NAME)
+                .cloned()
+                .filter(|v| crate::tsl::validate_tsl_graph(v, &name).is_ok());
             materials.push(Material3D {
                 name,
                 base_color: bc,
@@ -1465,6 +1476,8 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 emissive_texture,
                 occlusion_texture,
                 occlusion_strength,
+                alpha_blend,
+                tsl,
                 ..Default::default()
             });
         }

@@ -203,6 +203,12 @@ pub struct Material3D {
     pub ior: f32,
     #[serde(default)]
     pub thickness: f32,
+    /// Explicit alpha-blending flag (`THREE.Material.transparent = true`).
+    #[serde(default)]
+    pub alpha_blend: bool,
+    /// Optional validated `GOOGLE_material_tsl` v1 node graph extension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tsl: Option<serde_json::Value>,
 }
 
 /// Default index of refraction, shared by `serde` and `Default`.
@@ -235,6 +241,8 @@ impl Default for Material3D {
             transmission: 0.0,
             ior: default_ior(),
             thickness: 0.0,
+            alpha_blend: false,
+            tsl: None,
         }
     }
 }

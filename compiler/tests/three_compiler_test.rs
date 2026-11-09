@@ -4661,3 +4661,166 @@ fn test_multi_light_shadow_maps_glb_and_usdz_parity() {
     assert!(usda.contains("bool inputs:shadow:enable = 1"));
     assert!(usda.contains("bool primvars:doNotCastShadows = 1"));
 }
+
+#[test]
+fn test_tsl_node_material_glb_roundtrip_diagnostics_and_rasterizer() {
+    let script = r#"
+        const { TSL } = THREE;
+        const speed = TSL.uniform(6.0, 'uPulseSpeed');
+        const holo = new THREE.MeshStandardNodeMaterial({
+            name: 'HoloShield',
+            color: 0x0284c7,
+            transparent: true,
+            roughness: 0.15,
+            metalness: 0.1,
+        });
+        const rim = TSL.fresnel(2.5);
+        const scan = TSL.sin(TSL.positionWorld.y.mul(40).sub(TSL.time.mul(speed))).mul(0.5).add(0.5);
+        holo.colorNode = TSL.color(0x0284c7);
+        holo.emissiveNode = TSL.color(0x38bdf8).mul(rim.add(scan.mul(0.35)));
+        holo.opacityNode = rim.mul(0.75).add(0.15).clamp(0.05, 0.95);
+
+        const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 12), holo);
+        sphere.name = 'Shield';
+        sphere.position.set(0, 1.0, 0);
+        scene.add(sphere);
+
+        const cadMat = new THREE.MeshStandardNodeMaterial({ name: 'TriplanarMetal', metalness: 0.85 });
+        const grain = TSL.simplexNoise3D(TSL.positionWorld.mul(TSL.vec3(1, 8, 1)));
+        cadMat.colorNode = TSL.mix(TSL.color(0x94a3b8), TSL.color(0xcbd5e1), grain);
+        cadMat.roughnessNode = TSL.remap(grain, 0, 1, 0.18, 0.42);
+        cadMat.positionNode = TSL.positionLocal.add(TSL.vec3(0, TSL.sin(TSL.positionLocal.x.mul(4)).mul(0.05), 0));
+
+        const plate = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.25, 2.0), cadMat);
+        plate.name = 'BasePlate';
+        plate.position.set(0, 0.125, 0);
+        scene.add(plate);
+
+        scene.add(new THREE.DirectionalLight(0xffffff, 2.0));
+    "#;
+
+    let sg = validate_three_script(script).expect("TSL scene should validate");
+    assert!(
+        sg.diagnostics.is_empty(),
+        "Valid loop-free TSL scene should emit 0 diagnostics, got: {:?}",
+        sg.diagnostics
+    );
+    assert_eq!(sg.materials.len(), 2);
+    assert!(sg.materials[0].alpha_blend, "Transparent TSL material sets alpha_blend");
+    assert!(sg.materials[0].tsl.is_some(), "HoloShield carries GOOGLE_material_tsl");
+    assert!(sg.materials[1].tsl.is_some(), "TriplanarMetal carries GOOGLE_material_tsl");
+
+    // Round-trip through binary GLB (`write_glb` -> `read_glb`)
+    let glb = transcode_three_to_glb(script).expect("TSL GLB should compile");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON");
+    assert!(
+        gltf["extensionsUsed"]
+            .as_array()
+            .is_some_and(|exts| exts.iter().any(|e| e == "GOOGLE_material_tsl")),
+        "GLB extensionsUsed must declare GOOGLE_material_tsl"
+    );
+    assert_eq!(gltf["materials"][0]["alphaMode"], "BLEND");
+    assert_eq!(gltf["materials"][0]["extensions"]["GOOGLE_material_tsl"]["version"], 1);
+
+    let rt = three_live_compiler::read_glb(&glb).expect("read_glb should parse TSL GLB");
+    assert!(rt.materials[0].tsl.is_some());
+    assert!(rt.materials[1].tsl.is_some());
+
+    // Headless PBR rasterizer + static PBR texture baker
+    let (rw, rh, rgba) = three_live_compiler::render_scene_rgba(
+        &sg,
+        &three_live_compiler::RenderOptions {
+            width: 128,
+            height: 128,
+            view: three_live_compiler::RenderViewMode::Camera,
+            ..Default::default()
+        },
+    );
+    assert_eq!((rw, rh), (128, 128));
+    let png = three_live_compiler::encode_png_rgba(rw, rh, &rgba).expect("PNG encode");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+    let validated = three_live_compiler::validate_tsl_graph(
+        sg.materials[1].tsl.as_ref().unwrap(),
+        "TriplanarMetal",
+    )
+    .expect("TriplanarMetal TSL graph validates");
+    let baked =
+        three_live_compiler::bake_tsl_pbr_maps(&validated, [1.0, 1.0, 1.0, 1.0], 0.5, 0.85, 64)
+            .expect("256/64 fallback PBR bake succeeds");
+    assert!(baked
+        .base_color_png_uri
+        .as_deref()
+        .is_some_and(|u| u.starts_with("data:image/png;base64,")));
+    assert!(baked.orm_png_uri.as_deref().is_some_and(|u| u.starts_with("data:image/png;base64,")));
+
+    // Stage error (`fresnel` in `positionNode` -> TL503) & loop rejection (`TSL.Loop` -> TL504)
+    let bad_script = r#"
+        const { TSL } = THREE;
+        const m = new THREE.MeshStandardNodeMaterial({ color: 0xff0000 });
+        const unused = TSL.Loop();
+        m.positionNode = TSL.vec3(TSL.fresnel(2.0));
+        scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), m));
+    "#;
+    let bad_sg = validate_three_script(bad_script).expect("Degrades cleanly to base PBR");
+    assert!(
+        bad_sg.diagnostics.iter().any(|d| d.code == "TL503"),
+        "Expected TL503 stage diagnostic, got {:?}",
+        bad_sg.diagnostics
+    );
+    assert!(
+        bad_sg.diagnostics.iter().any(|d| d.code == "TL504"),
+        "Expected TL504 loop diagnostic, got {:?}",
+        bad_sg.diagnostics
+    );
+    assert!(bad_sg.materials[0].tsl.is_none(), "Invalid TSL graph stripped cleanly");
+
+    // Cross-language JS <-> Rust exact structural hash & procedural noise lockstep
+    let parity_json = serde_json::json!({
+        "version": 1,
+        "uniforms": { "uGain": { "type": "float", "value": 2.0 } },
+        "nodes": [
+            { "op": "const", "type": "vec3", "value": [0.25, 0.5, 0.75] },
+            { "op": "uniform", "name": "uGain", "type": "float" },
+            { "op": "mul", "type": "vec3", "args": [0, 1] }
+        ],
+        "outputs": { "emissive": 2, "color": 0, "opacity": 1 }
+    });
+    let parity_graph =
+        three_live_compiler::validate_tsl_graph(&parity_json, "ParityMat").expect("Parity graph");
+    assert_eq!(
+        parity_graph.hash, "69150e26",
+        "Rust FNV-1a structural hash must match JS validateTslGraph bit-for-bit"
+    );
+    assert!((three_live_compiler::tsl_simplex_noise_2d(1.25, -2.5) - 0.113066).abs() < 1e-4);
+    assert!((three_live_compiler::tsl_simplex_noise_3d(0.75, 1.5, -0.5) - 0.394809).abs() < 1e-4);
+    assert!((three_live_compiler::tsl_voronoi_2d(2.3, 4.1, 0.8) - 0.365854).abs() < 1e-4);
+
+    // SimStepper::is_time_varying + time-stepped rasterizer (`t=0.0` vs `t=0.35`)
+    let stepper = three_live_compiler::SimStepper::new(script.as_bytes(), false)
+        .expect("SimStepper builds on TSL scene");
+    assert!(stepper.is_time_varying(), "Pure TSL.time material marks SimStepper time-varying");
+    let f0 = three_live_compiler::render_viewport_rgba_at_time(
+        &sg,
+        64,
+        64,
+        three_live_compiler::RenderViewMode::Camera,
+        false,
+        false,
+        None,
+        0.0,
+    );
+    let f1 = three_live_compiler::render_viewport_rgba_at_time(
+        &sg,
+        64,
+        64,
+        three_live_compiler::RenderViewMode::Camera,
+        false,
+        false,
+        None,
+        0.35,
+    );
+    assert_ne!(f0, f1, "TSL.time scanlines animate across rasterizer frames");
+}

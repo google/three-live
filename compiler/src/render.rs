@@ -459,6 +459,8 @@ struct ClipVertex {
     clip: [f32; 4],
     world_pos: [f32; 3],
     world_norm: [f32; 3],
+    local_pos: [f32; 3],
+    local_norm: [f32; 3],
     uv: [f32; 2],
 }
 
@@ -480,6 +482,16 @@ impl ClipVertex {
                 a.world_norm[0] + t * (b.world_norm[0] - a.world_norm[0]),
                 a.world_norm[1] + t * (b.world_norm[1] - a.world_norm[1]),
                 a.world_norm[2] + t * (b.world_norm[2] - a.world_norm[2]),
+            ]),
+            local_pos: [
+                a.local_pos[0] + t * (b.local_pos[0] - a.local_pos[0]),
+                a.local_pos[1] + t * (b.local_pos[1] - a.local_pos[1]),
+                a.local_pos[2] + t * (b.local_pos[2] - a.local_pos[2]),
+            ],
+            local_norm: normalize3([
+                a.local_norm[0] + t * (b.local_norm[0] - a.local_norm[0]),
+                a.local_norm[1] + t * (b.local_norm[1] - a.local_norm[1]),
+                a.local_norm[2] + t * (b.local_norm[2] - a.local_norm[2]),
             ]),
             uv: [a.uv[0] + t * (b.uv[0] - a.uv[0]), a.uv[1] + t * (b.uv[1] - a.uv[1])],
         }
@@ -795,6 +807,33 @@ pub fn render_viewport_rgba(
         show_annotations,
         header_label,
         false,
+        0.0,
+    )
+    .0
+}
+
+/// Renders a single viewport at an explicit simulation `time_sec` (drives `TSL.time` shaders).
+#[allow(clippy::too_many_arguments)]
+pub fn render_viewport_rgba_at_time(
+    scene: &SceneGraph,
+    width: u32,
+    height: u32,
+    mode: RenderViewMode,
+    show_grid: bool,
+    show_annotations: bool,
+    header_label: Option<&str>,
+    time_sec: f32,
+) -> Vec<u8> {
+    render_viewport_impl(
+        scene,
+        width,
+        height,
+        mode,
+        show_grid,
+        show_annotations,
+        header_label,
+        false,
+        time_sec,
     )
     .0
 }
@@ -822,6 +861,7 @@ pub fn render_viewport_rgba_with_mask(
         show_annotations,
         header_label,
         true,
+        0.0,
     );
     (rgba, mask.unwrap_or_default())
 }
@@ -836,6 +876,7 @@ fn render_viewport_impl(
     show_annotations: bool,
     header_label: Option<&str>,
     want_mask: bool,
+    time_sec: f32,
 ) -> (Vec<u8>, Option<Vec<u8>>) {
     let w = width.clamp(32, 2048) as usize;
     let h = height.clamp(32, 2048) as usize;
@@ -940,6 +981,7 @@ fn render_viewport_impl(
         normal: Option<DecodedTexture>,
         emissive: Option<DecodedTexture>,
         occlusion: Option<DecodedTexture>,
+        tsl: Option<crate::tsl::ValidatedTslGraph>,
     }
     let default_mat = Material3D::default();
     let default_maps = DecodedMaterialMaps::default();
@@ -955,6 +997,7 @@ fn render_viewport_impl(
             normal: m.normal_texture.as_deref().and_then(decode_png_data_uri),
             emissive: m.emissive_texture.as_deref().and_then(decode_png_data_uri),
             occlusion: m.occlusion_texture.as_deref().and_then(decode_png_data_uri),
+            tsl: m.tsl.as_ref().and_then(|v| crate::tsl::validate_tsl_graph(v, &m.name).ok()),
         })
         .collect();
     let mut clipped_tris = Vec::with_capacity(2);
@@ -1032,11 +1075,14 @@ fn render_viewport_impl(
         let maps = mesh.material_index.and_then(|mi| decoded_maps.get(mi)).unwrap_or(&default_maps);
         let tex_opt = maps.base_color.as_ref();
         let has_uvs = !mesh.uvs.is_empty();
-        let has_pbr_maps = has_uvs
-            && (maps.metallic_roughness.is_some()
-                || maps.normal.is_some()
-                || maps.emissive.is_some()
-                || maps.occlusion.is_some());
+        let tsl_opt = maps.tsl.as_ref();
+        let has_tsl_frag = tsl_opt.is_some_and(|tg| tg.fragment_reachable.iter().any(|&r| r));
+        let has_pbr_maps = has_tsl_frag
+            || (has_uvs
+                && (maps.metallic_roughness.is_some()
+                    || maps.normal.is_some()
+                    || maps.emissive.is_some()
+                    || maps.occlusion.is_some()));
 
         let inst_count = (inst_matrices.len() / 16).max(1);
         let has_inst = inst_matrices.len() >= 16;
@@ -1079,9 +1125,47 @@ fn render_viewport_impl(
                     continue;
                 }
 
-                let wp0 = mat4_transform_point(&model_mat, mesh.positions[i0]);
-                let wp1 = mat4_transform_point(&model_mat, mesh.positions[i1]);
-                let wp2 = mat4_transform_point(&model_mat, mesh.positions[i2]);
+                let uv0 = mesh.uvs.get(i0).copied().unwrap_or([0.0, 0.0]);
+                let uv1 = mesh.uvs.get(i1).copied().unwrap_or([0.0, 0.0]);
+                let uv2 = mesh.uvs.get(i2).copied().unwrap_or([0.0, 0.0]);
+
+                let ln0_raw = mesh.normals.get(i0).copied().unwrap_or([0.0, 1.0, 0.0]);
+                let ln1_raw = mesh.normals.get(i1).copied().unwrap_or([0.0, 1.0, 0.0]);
+                let ln2_raw = mesh.normals.get(i2).copied().unwrap_or([0.0, 1.0, 0.0]);
+
+                let eval_vtx_pos = |vi: usize, uv_v: [f32; 2], ln_v: [f32; 3]| -> [f32; 3] {
+                    let lp = mesh.positions[vi];
+                    if let Some(tg) = tsl_opt.filter(|g| g.uses_vertex_position) {
+                        let wp_init = mat4_transform_point(&model_mat, lp);
+                        let wn_init = mat3_transform_normal(&normal_mat, ln_v);
+                        let v_col = inst_tint
+                            .map(|ic| [ic[0], ic[1], ic[2], 1.0])
+                            .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                        let vctx = crate::tsl::TslEvalContext {
+                            position_local: lp,
+                            position_world: wp_init,
+                            normal_local: ln_v,
+                            normal_world: wn_init,
+                            view_direction: [0.0, 0.0, 1.0],
+                            uv: uv_v,
+                            vertex_color: v_col,
+                            instance_index: inst as f32,
+                            time: time_sec,
+                            uniform_overrides: None,
+                        };
+                        crate::tsl::evaluate_tsl_graph(tg, &vctx, true).position.unwrap_or(lp)
+                    } else {
+                        lp
+                    }
+                };
+
+                let lp0 = eval_vtx_pos(i0, uv0, ln0_raw);
+                let lp1 = eval_vtx_pos(i1, uv1, ln1_raw);
+                let lp2 = eval_vtx_pos(i2, uv2, ln2_raw);
+
+                let wp0 = mat4_transform_point(&model_mat, lp0);
+                let wp1 = mat4_transform_point(&model_mat, lp1);
+                let wp2 = mat4_transform_point(&model_mat, lp2);
 
                 let raw_face = cross3(
                     [wp1[0] - wp0[0], wp1[1] - wp0[1], wp1[2] - wp0[2]],
@@ -1092,48 +1176,60 @@ fn render_viewport_impl(
                     raw_face[1] * det_sign,
                     raw_face[2] * det_sign,
                 ]);
-                let wn0 = mesh
-                    .normals
-                    .get(i0)
-                    .copied()
-                    .filter(|n| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-4)
-                    .map(|n| mat3_transform_normal(&normal_mat, n))
-                    .unwrap_or(face_n);
-                let wn1 = mesh
-                    .normals
-                    .get(i1)
-                    .copied()
-                    .filter(|n| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-4)
-                    .map(|n| mat3_transform_normal(&normal_mat, n))
-                    .unwrap_or(face_n);
-                let wn2 = mesh
-                    .normals
-                    .get(i2)
-                    .copied()
-                    .filter(|n| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-4)
-                    .map(|n| mat3_transform_normal(&normal_mat, n))
-                    .unwrap_or(face_n);
-
-                let uv0 = mesh.uvs.get(i0).copied().unwrap_or([0.0, 0.0]);
-                let uv1 = mesh.uvs.get(i1).copied().unwrap_or([0.0, 0.0]);
-                let uv2 = mesh.uvs.get(i2).copied().unwrap_or([0.0, 0.0]);
+                let displaced_vtx = tsl_opt.is_some_and(|g| g.uses_vertex_position);
+                let wn0 = if displaced_vtx {
+                    face_n
+                } else {
+                    mesh.normals
+                        .get(i0)
+                        .copied()
+                        .filter(|n| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-4)
+                        .map(|n| mat3_transform_normal(&normal_mat, n))
+                        .unwrap_or(face_n)
+                };
+                let wn1 = if displaced_vtx {
+                    face_n
+                } else {
+                    mesh.normals
+                        .get(i1)
+                        .copied()
+                        .filter(|n| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-4)
+                        .map(|n| mat3_transform_normal(&normal_mat, n))
+                        .unwrap_or(face_n)
+                };
+                let wn2 = if displaced_vtx {
+                    face_n
+                } else {
+                    mesh.normals
+                        .get(i2)
+                        .copied()
+                        .filter(|n| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-4)
+                        .map(|n| mat3_transform_normal(&normal_mat, n))
+                        .unwrap_or(face_n)
+                };
 
                 let v0 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp0),
                     world_pos: wp0,
                     world_norm: wn0,
+                    local_pos: lp0,
+                    local_norm: normalize3(ln0_raw),
                     uv: uv0,
                 };
                 let v1 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp1),
                     world_pos: wp1,
                     world_norm: wn1,
+                    local_pos: lp1,
+                    local_norm: normalize3(ln1_raw),
                     uv: uv1,
                 };
                 let v2 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp2),
                     world_pos: wp2,
                     world_norm: wn2,
+                    local_pos: lp2,
+                    local_norm: normalize3(ln2_raw),
                     uv: uv2,
                 };
 
@@ -1347,19 +1443,20 @@ fn render_viewport_impl(
                                         } else {
                                             1.0
                                         };
-                                        let emissive_add = if let Some(ref em_tex) = maps.emissive {
-                                            let em = em_tex.sample_srgb([u, v]);
-                                            [
-                                                mat.emissive_factor[0]
-                                                    * ((em[0] as f32 / 255.0).powf(2.2)),
-                                                mat.emissive_factor[1]
-                                                    * ((em[1] as f32 / 255.0).powf(2.2)),
-                                                mat.emissive_factor[2]
-                                                    * ((em[2] as f32 / 255.0).powf(2.2)),
-                                            ]
-                                        } else {
-                                            mat.emissive_factor
-                                        };
+                                        let mut emissive_add =
+                                            if let Some(ref em_tex) = maps.emissive {
+                                                let em = em_tex.sample_srgb([u, v]);
+                                                [
+                                                    mat.emissive_factor[0]
+                                                        * ((em[0] as f32 / 255.0).powf(2.2)),
+                                                    mat.emissive_factor[1]
+                                                        * ((em[1] as f32 / 255.0).powf(2.2)),
+                                                    mat.emissive_factor[2]
+                                                        * ((em[2] as f32 / 255.0).powf(2.2)),
+                                                ]
+                                            } else {
+                                                mat.emissive_factor
+                                            };
                                         let base_tex_lin = tex_opt.map(|tex| {
                                             let ts = tex.sample_srgb([u, v]);
                                             [
@@ -1369,11 +1466,89 @@ fn render_viewport_impl(
                                                 ts[3] as f32 / 255.0,
                                             ]
                                         });
+                                        let mut pixel_mat;
+                                        let active_mat = if let Some(tg) =
+                                            tsl_opt.filter(|_| has_tsl_frag)
+                                        {
+                                            let lp_interp = [
+                                                b0 * ctri[0].local_pos[0]
+                                                    + b1 * ctri[1].local_pos[0]
+                                                    + b2 * ctri[2].local_pos[0],
+                                                b0 * ctri[0].local_pos[1]
+                                                    + b1 * ctri[1].local_pos[1]
+                                                    + b2 * ctri[2].local_pos[1],
+                                                b0 * ctri[0].local_pos[2]
+                                                    + b1 * ctri[1].local_pos[2]
+                                                    + b2 * ctri[2].local_pos[2],
+                                            ];
+                                            let ln_interp = normalize3([
+                                                b0 * ctri[0].local_norm[0]
+                                                    + b1 * ctri[1].local_norm[0]
+                                                    + b2 * ctri[2].local_norm[0],
+                                                b0 * ctri[0].local_norm[1]
+                                                    + b1 * ctri[1].local_norm[1]
+                                                    + b2 * ctri[2].local_norm[1],
+                                                b0 * ctri[0].local_norm[2]
+                                                    + b1 * ctri[1].local_norm[2]
+                                                    + b2 * ctri[2].local_norm[2],
+                                            ]);
+                                            let view_dir = normalize3([
+                                                eye_pos[0] - wp[0],
+                                                eye_pos[1] - wp[1],
+                                                eye_pos[2] - wp[2],
+                                            ]);
+                                            let v_col = inst_tint
+                                                .map(|ic| [ic[0], ic[1], ic[2], 1.0])
+                                                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                                            let fctx = crate::tsl::TslEvalContext {
+                                                position_local: lp_interp,
+                                                position_world: wp,
+                                                normal_local: ln_interp,
+                                                normal_world: n,
+                                                view_direction: view_dir,
+                                                uv: [u, v],
+                                                vertex_color: v_col,
+                                                instance_index: inst as f32,
+                                                time: time_sec,
+                                                uniform_overrides: None,
+                                            };
+                                            let ev =
+                                                crate::tsl::evaluate_tsl_graph(tg, &fctx, false);
+                                            pixel_mat = mat.clone();
+                                            if let Some(col) = ev.color {
+                                                pixel_mat.base_color[0] = col[0];
+                                                pixel_mat.base_color[1] = col[1];
+                                                pixel_mat.base_color[2] = col[2];
+                                            }
+                                            if let Some(opac) = ev.opacity {
+                                                pixel_mat.base_color[3] = opac;
+                                            }
+                                            if let Some(r) = ev.roughness {
+                                                pixel_mat.roughness = r;
+                                            }
+                                            if let Some(m_val) = ev.metalness {
+                                                pixel_mat.metallic = m_val;
+                                            }
+                                            if let Some(em) = ev.emissive {
+                                                emissive_add = em;
+                                            }
+                                            if let Some(bn) = ev.bump {
+                                                let ns = ev.normal_scale.unwrap_or(1.0);
+                                                n = normalize3([
+                                                    n[0] + (bn[0] - n[0]) * ns,
+                                                    n[1] + (bn[1] - n[1]) * ns,
+                                                    n[2] + (bn[2] - n[2]) * ns,
+                                                ]);
+                                            }
+                                            &pixel_mat
+                                        } else {
+                                            mat
+                                        };
                                         shade_pbr_ext(
                                             wp,
                                             n,
                                             eye_pos,
-                                            mat,
+                                            active_mat,
                                             base_tex_lin,
                                             rough_scale,
                                             metal_scale,
