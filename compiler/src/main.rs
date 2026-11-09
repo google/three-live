@@ -70,6 +70,11 @@ enum DiagnosticFormat {
 #[command(name = "three-live-cli")]
 #[command(about = "three-live toolkit: compile Three.js scripts and models to GLB or USDZ", long_about = None)]
 struct Cli {
+    /// AI texture pack (`scene.textures.json`) used by every compile in this command, so
+    /// `userData.xr.material.prompt` textures match the Web viewer.
+    #[arg(long, global = true, value_name = "PACK")]
+    texture_pack: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -218,6 +223,12 @@ enum Commands {
         command: GymCommands,
     },
 
+    /// AI textures: bake texture packs for `userData.xr.material.prompt`
+    Textures {
+        #[command(subcommand)]
+        command: TextureCommands,
+    },
+
     /// Reconstruct a Three.js scene script from a reference image (PNG/JPEG/WebP file, data URI,
     /// or https:// URL) via an OpenAI-compatible Chat Completions endpoint, with automatic
     /// sandbox + spatial linter (TL100-TL402) repair
@@ -262,6 +273,52 @@ enum Commands {
         /// Maximum error/warning repair turns after the initial draft (0..5)
         #[arg(long, default_value_t = 1)]
         max_repairs: usize,
+
+        /// Output a structured JSON report instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TextureCommands {
+    /// Generate the AI textures a scene asks for (`userData.xr.material.prompt`) through an
+    /// OpenAI-compatible Images endpoint and save them in a texture pack
+    Bake {
+        /// Three.js scene script (.js)
+        input: PathBuf,
+
+        /// Texture pack to write (defaults to <input>.textures.json; extended if it exists)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Regenerate textures even when the pack already has them
+        #[arg(long)]
+        force: bool,
+
+        /// Only textures used by these node names (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+
+        /// Also export the textured scene to binary glTF 2.0
+        #[arg(long)]
+        glb: Option<PathBuf>,
+
+        /// Also export the textured scene to Apple USDZ
+        #[arg(long)]
+        usdz: Option<PathBuf>,
+
+        /// Also render a 4-up PNG of the textured scene
+        #[arg(long)]
+        render: Option<PathBuf>,
+
+        /// OpenAI-compatible Images endpoint (defaults to THREE_LIVE_AI_IMAGE_ENDPOINT)
+        #[arg(long)]
+        ai_image_endpoint: Option<String>,
+
+        /// Image model (defaults to THREE_LIVE_AI_IMAGE_MODEL)
+        #[arg(long)]
+        ai_image_model: Option<String>,
 
         /// Output a structured JSON report instead of plain text
         #[arg(long)]
@@ -631,8 +688,149 @@ fn inspect_usdz(input: &PathBuf, data: &[u8]) {
 
 fn main() {
     let cli = Cli::parse();
+    let pack = cli.texture_pack.as_ref().map(|p| {
+        let text = fs::read_to_string(p).unwrap_or_else(|e| {
+            eprintln!("Error reading --texture-pack {:?}: {}", p, e);
+            std::process::exit(1);
+        });
+        std::rc::Rc::new(
+            three_live_compiler::ai_texture::TexturePack::from_json_str(&text).unwrap_or_else(
+                |e| {
+                    eprintln!("Error in --texture-pack {:?}: {}", p, e);
+                    std::process::exit(1);
+                },
+            ),
+        )
+    });
+    let _ = three_live_compiler::ai_texture::with_texture_pack(pack, || run(cli.command));
+}
 
-    match cli.command {
+fn run_textures(command: TextureCommands) {
+    use three_live_compiler::ai_texture::{
+        bake_textures, generate_texture_http, with_texture_pack, BakeOptions, TexturePack,
+    };
+    let TextureCommands::Bake {
+        input,
+        output,
+        force,
+        only,
+        glb,
+        usdz,
+        render,
+        ai_image_endpoint,
+        ai_image_model,
+        json,
+    } = command;
+    let script = fs::read_to_string(&input).unwrap_or_else(|e| {
+        eprintln!("Error reading {:?}: {}", input, e);
+        std::process::exit(1);
+    });
+    let out_path = output.unwrap_or_else(|| input.with_extension("textures.json"));
+    let mut pack = if out_path.exists() {
+        let text = fs::read_to_string(&out_path).unwrap_or_default();
+        TexturePack::from_json_str(&text).unwrap_or_else(|e| {
+            eprintln!("Error in existing pack {:?}: {}", out_path, e);
+            std::process::exit(1);
+        })
+    } else {
+        TexturePack::default()
+    };
+    let env = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
+    let endpoint = ai_image_endpoint
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| env("THREE_LIVE_AI_IMAGE_ENDPOINT"));
+    let model = ai_image_model
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| env("THREE_LIVE_AI_IMAGE_MODEL"));
+    let api_key = env("THREE_LIVE_AI_KEY").or_else(|| env("OPENAI_API_KEY"));
+    let opts = BakeOptions { force, only };
+    let report = bake_textures(&script, &mut pack, &opts, |spec| {
+        let ep = endpoint.as_deref().ok_or_else(|| {
+            "no image endpoint: pass --ai-image-endpoint or set THREE_LIVE_AI_IMAGE_ENDPOINT"
+                .to_string()
+        })?;
+        let img = generate_texture_http(ep, api_key.as_deref(), model.as_deref(), spec)?;
+        let mut prov = serde_json::json!({"provider": "openai-images"});
+        if let Some(m) = model.as_deref() {
+            prov["model"] = serde_json::json!(m);
+        }
+        Ok((img, prov))
+    })
+    .unwrap_or_else(|e| {
+        eprintln!("textures bake: {}", e);
+        std::process::exit(1);
+    });
+    if !report.generated.is_empty() || !out_path.exists() {
+        let text = pack
+            .to_json()
+            .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
+            .unwrap_or_else(|e| {
+                eprintln!("textures bake: {}", e);
+                std::process::exit(1);
+            });
+        if let Err(e) = fs::write(&out_path, text) {
+            eprintln!("Error writing {:?}: {}", out_path, e);
+            std::process::exit(1);
+        }
+    }
+    let rc = std::rc::Rc::new(pack);
+    let exports = || -> Result<(), String> {
+        if let Some(p) = &glb {
+            fs::write(p, transcode_three_to_glb(&script)?).map_err(|e| e.to_string())?;
+        }
+        if let Some(p) = &usdz {
+            fs::write(p, transcode_three_to_usdz(&script)?).map_err(|e| e.to_string())?;
+        }
+        if let Some(p) = &render {
+            let scene = three_live_compiler::validate_three_script(&script)?;
+            let opts = three_live_compiler::render::RenderOptions {
+                width: 768,
+                height: 768,
+                view: RenderViewMode::Quad,
+                show_grid: true,
+                show_annotations: true,
+                label_override: None,
+            };
+            let (w, h, rgba) = three_live_compiler::render::render_scene_rgba(&scene, &opts);
+            let png = three_live_compiler::render::encode_png_rgba_compressed(w, h, &rgba)?;
+            fs::write(p, png).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    if let (Err(e), _) = with_texture_pack(Some(rc), exports) {
+        eprintln!("textures bake: export failed: {}", e);
+        std::process::exit(1);
+    }
+    if json {
+        let mut v = serde_json::to_value(&report).unwrap_or_default();
+        v["pack"] = serde_json::json!(out_path.display().to_string());
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    } else {
+        for t in &report.generated {
+            println!(
+                "generated  {}  {:?} ({} px) → {}",
+                t.key,
+                t.prompt,
+                t.size,
+                t.meshes.join(", ")
+            );
+        }
+        for t in &report.reused {
+            println!("reused     {}  {:?}", t.key, t.prompt);
+        }
+        for t in &report.failed {
+            eprintln!("failed     {}  {:?}: {}", t.key, t.prompt, t.error.as_deref().unwrap_or(""));
+        }
+        println!("pack: {}", out_path.display());
+    }
+    if !report.failed.is_empty() {
+        std::process::exit(2);
+    }
+}
+
+fn run(command: Commands) {
+    match command {
+        Commands::Textures { command } => run_textures(command),
         Commands::Convert { input, output, format } => {
             let input_bytes = match fs::read(&input) {
                 Ok(b) => b,

@@ -111,7 +111,8 @@ spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
 / `.usdz`, generate a scene from a reference image (`from-image`), or attach
 `three-live-cli mcp` as a zero-dependency **Model Context Protocol (MCP)** stdio
 server (`three_live_validate`, `three_live_render`, `three_live_convert`,
-`three_live_from_image`, `three_live_sim`, `three_live_link`, and the
+`three_live_from_image`, `three_live_bake_textures`, `three_live_sim`,
+`three_live_link`, and the
 `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close` agent
 gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. The
 agent gym lets an agent play a scene step by step (act, observe, react) to check
@@ -133,6 +134,8 @@ $ npx three-live-cli from-image photo.jpg -o scene.js --render compare.png
 $ npx three-live-cli validate scene.js --json
 $ npx three-live-cli link scene.js --qr
 $ npx three-live-cli convert scene.js -o model.usdz
+$ npx three-live-cli textures bake scene.js -o scene.textures.json   # AI textures (needs THREE_LIVE_AI_IMAGE_ENDPOINT)
+$ npx three-live-cli convert scene.js --texture-pack scene.textures.json -o model.glb
 
 # Or register the built-in MCP server for closed-loop visual + spatial AI verification:
 $ claude mcp add three-live -- npx -y -p three-live three-live-cli mcp

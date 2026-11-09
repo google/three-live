@@ -3214,7 +3214,7 @@ fn test_mcp_server_end_to_end_jsonrpc_session() {
     assert_eq!(responses[0]["result"]["serverInfo"]["name"], "three-live-mcp");
 
     assert_eq!(responses[1]["id"], 2);
-    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 10);
 
     assert_eq!(responses[2]["id"], 3);
     assert_eq!(responses[2]["result"]["isError"], false);
