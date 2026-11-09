@@ -26,6 +26,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **RoomPlan priors for image-to-scene (iOS):**
+    `AISpatialPriors.fromCapturedRoom(room, camera:)` (iOS 16+) turns a RoomPlan
+    `CapturedRoom` into metric priors for `compileFromImage`: walls, doors,
+    windows, openings, and floors (iOS 17+) become labeled planes with extents
+    and normals, furniture becomes objects with size and yaw, and `floorY` comes
+    from the lowest floor (or, without floors, the lowest wall or object
+    bottom). The mapping is also available without RoomPlan as
+    `AISpatialPriors.fromRoomScan(surfaces:objects:)` (`AIRoomSurface`,
+    `AIRoomObject`), with at most 32 planes (floors first) and 32 objects.
+
 -   **1024 px AI textures, compressed texture PNGs, and native auto
     generation (B5e):** `userData.xr.material.size` accepts `1024` (snapping:
     ≤ 384 → 256, ≤ 768 → 512, else 1024); the derived normal and ORM maps stay

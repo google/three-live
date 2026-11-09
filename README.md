@@ -238,7 +238,8 @@ against spatial quality gates (minimum 2 meshes, finite bounds, non-empty
 frustum coverage, and zero critical overlap errors) with one-turn auto-repair,
 and hot-swapped into the scene (`el.undoEdit()` reverts). Optional metric
 spatial priors (`userHeight`, `floorNormal`, and 3D detected object bounding
-boxes from ARCore / ARKit / `world-understanding`) anchor real-world scale and
+boxes from ARCore / ARKit / `world-understanding`, or a whole RoomPlan scan on
+iOS via `AISpatialPriors.fromCapturedRoom(room)`) anchor real-world scale and
 placement.
 
 **AI textures (`userData.xr.material.prompt`):** add a texture prompt next to a
