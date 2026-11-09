@@ -21,10 +21,12 @@ import simd
 
 /// One scanned room surface (RoomPlan `CapturedRoom.Surface`), in ARKit world meters.
 ///
-/// Like RoomPlan, `transform` places the surface's center, and the surface spans its local
-/// X (`dimensions.x`, width) and Y (`dimensions.y`, height) axes with its normal along local Z.
+/// Like RoomPlan, `transform` places the surface's center, and a wall-like surface spans its
+/// local X (`dimensions.x`, width) and Y (`dimensions.y`, height) axes with its normal along
+/// local Z. Floors are always horizontal (normal +Y); their extent is their two non-zero
+/// `dimensions`.
 public struct AIRoomSurface: Sendable, Equatable {
-  /// `wall`, `floor`, `door`, `window`, or `opening`.
+  /// `wall`, `floor`, `door`, `window`, or `opening` (case-insensitive; others are ignored).
   public var kind: String
   public var transform: simd_float4x4
   public var dimensions: SIMD3<Float>
@@ -69,8 +71,11 @@ extension AISpatialPriors {
     cameraFovDeg: Double? = nil
   ) -> AISpatialPriors {
     let rank = ["floor": 0, "wall": 1, "door": 2, "window": 3, "opening": 4]
-    let valid = surfaces.filter { s in
-      rank[s.kind] != nil && finite(s.transform) && finite(s.dimensions)
+    // Kinds are matched case-insensitively (`WALL` from Android-style labels works too).
+    let valid: [(kind: String, surface: AIRoomSurface)] = surfaces.compactMap { s in
+      let kind = s.kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      guard rank[kind] != nil, finite(s.transform), finite(s.dimensions) else { return nil }
+      return (kind, s)
     }
     let ordered = valid.enumerated().sorted { a, b in
       let ra = rank[a.element.kind]!
@@ -81,33 +86,44 @@ extension AISpatialPriors {
     var floorY: Double?
     var bottoms: [Double] = []
     var planes: [AISpatialPlane] = []
-    for s in ordered {
+    for (kind, s) in ordered {
       let m = s.transform
       let center = SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
-      let normal = normalize3(SIMD3<Float>(m.columns.2.x, m.columns.2.y, m.columns.2.z))
-      let horizontal = abs(normal.y) > 0.7
-      if s.kind == "floor" {
+      let dims = SIMD3<Float>(abs(s.dimensions.x), abs(s.dimensions.y), abs(s.dimensions.z))
+      let isFloor = kind == "floor"
+      // The kind decides the orientation (floors are horizontal, everything else sits in a
+      // wall), so an unexpected local axis convention can't flip it.
+      let normal: SIMD3<Float>
+      let extent: (Float, Float)
+      if isFloor {
+        normal = SIMD3<Float>(0, 1, 0)
+        // Use the two non-zero sides, whichever local axes they are on.
+        let sides = [dims.x, dims.y, dims.z].filter { $0 > 0 }
+        extent = sides.count >= 2 ? (sides[0], sides[1]) : (0, 0)
         let y = Double(center.y)
         if floorY == nil || y < floorY! { floorY = y }
-      } else if s.kind == "wall" {
-        bottoms.append(Double(center.y) - Double(abs(s.dimensions.y)) / 2)
+      } else {
+        // Wall-like: normal along local Z, kept horizontal.
+        let z = SIMD3<Float>(m.columns.2.x, 0, m.columns.2.z)
+        normal = normalize3(z)
+        extent = (dims.x, dims.y)
+        if kind == "wall" { bottoms.append(Double(center.y) - Double(dims.y) / 2) }
       }
       guard planes.count < maxRoomPriors else { continue }
-      let w = Double(abs(s.dimensions.x))
-      let h = Double(abs(s.dimensions.y))
+      let (w, h) = (Double(extent.0), Double(extent.1))
       planes.append(
         AISpatialPlane(
-          orientation: horizontal ? "horizontal" : "vertical",
+          orientation: isFloor ? "horizontal" : "vertical",
           center: vec(center),
           extent: w > 0 && h > 0 ? [round3(w), round3(h)] : nil,
           normal: normal == .zero ? nil : vec(normal),
-          label: s.kind
+          label: kind
         ))
     }
 
     var mapped: [AISpatialObject] = []
     for o in objects where finite(o.transform) && finite(o.dimensions) {
-      let label = o.category.trimmingCharacters(in: .whitespacesAndNewlines)
+      let label = objectLabel(o.category)
       guard !label.isEmpty else { continue }
       let m = o.transform
       let center = SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
@@ -130,11 +146,19 @@ extension AISpatialPriors {
       objects: mapped)
   }
 
-  /// `"washerDryer"` → `"washer dryer"`.
+  /// Trimmed, lowercased, `_` → space (`"COFFEE_TABLE"` → `"coffee table"`).
+  static func objectLabel(_ raw: String) -> String {
+    raw.replacingOccurrences(of: "_", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  }
+
+  /// `"washerDryer"` → `"washer dryer"` (a space only where lowercase meets uppercase).
   static func roomCategoryLabel(_ raw: String) -> String {
     var out = ""
+    var prevLower = false
     for ch in raw {
-      if ch.isUppercase, !out.isEmpty { out.append(" ") }
+      if ch.isUppercase, prevLower { out.append(" ") }
+      prevLower = ch.isLowercase
       out.append(contentsOf: ch.lowercased())
     }
     return out
@@ -155,17 +179,20 @@ extension AISpatialPriors {
     return len > 1e-6 && len.isFinite ? v / len : .zero
   }
 
-  private static func round3(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+  // Millimeters; `+ 0` turns −0 into 0 so prompts never show "-0".
+  private static func round3(_ v: Double) -> Double { (v * 1000).rounded() / 1000 + 0 }
 
   private static func vec(_ v: SIMD3<Float>) -> [Double] {
     [round3(Double(v.x)), round3(Double(v.y)), round3(Double(v.z))]
   }
 
   #if canImport(RoomPlan) && os(iOS)
-    /// Metric priors from a RoomPlan scan (`RoomCaptureSession` / `RoomBuilder`). Use the same
-    /// `ARSession` world frame as the reference photo's `camera` (e.g. from `fromARFrame`), so
-    /// planes, objects, and camera line up. Floors need iOS 17; on iOS 16 `floorY` falls back to
-    /// the lowest wall or object bottom.
+    /// Metric priors from a RoomPlan scan (`RoomCaptureSession` / `RoomBuilder`). RoomPlan
+    /// reports the room in the capture session's ARKit world frame, so take the reference
+    /// photo's `camera` from the same `ARSession` (e.g. `fromARFrame(frame).camera`) and the
+    /// planes, objects, and camera line up. Rooms merged into a `CapturedStructure` (iOS 17)
+    /// may be re-aligned; use the per-session `CapturedRoom` with that session's camera.
+    /// Floors need iOS 17; on iOS 16 `floorY` falls back to the lowest wall or object bottom.
     @available(iOS 16.0, *)
     public static func fromCapturedRoom(
       _ room: CapturedRoom, camera: AICamera? = nil, cameraFovDeg: Double? = nil
@@ -173,14 +200,17 @@ extension AISpatialPriors {
       func surfaces(_ list: [CapturedRoom.Surface], _ kind: String) -> [AIRoomSurface] {
         list.map { AIRoomSurface(kind: kind, transform: $0.transform, dimensions: $0.dimensions) }
       }
-      var all = surfaces(room.walls, "wall") + surfaces(room.doors, "door")
+      var all =
+        surfaces(room.walls, "wall") + surfaces(room.doors, "door")
         + surfaces(room.windows, "window") + surfaces(room.openings, "opening")
       if #available(iOS 17.0, *) {
         all += surfaces(room.floors, "floor")
       }
       let objects = room.objects.map { o in
         AIRoomObject(
-          category: roomCategoryLabel(String(describing: o.category)),
+          // Case name only, in case a future SDK adds associated values ("table(...)").
+          category: roomCategoryLabel(
+            String(String(describing: o.category).prefix { $0 != "(" })),
           transform: o.transform, dimensions: o.dimensions)
       }
       return fromRoomScan(

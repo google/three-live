@@ -121,7 +121,7 @@ let rate = try await session.start()
 try MicrophoneStreamer(sampleRate: rate) { session.sendAudio($0) }.start()
 ```
 
-## Room Scans as Image-to-Scene Priors (iOS)
+## Room Scans as Image-to-Scene Priors
 
 `compileFromImage` gets real-world scale from metric priors. On LiDAR iPhones
 and iPads, a RoomPlan scan provides the whole room: walls, doors, windows,
@@ -136,8 +136,28 @@ let result = await editor.compileFromImageData(jpeg, prompt: "this living room",
 ```
 
 `AISpatialPriors.fromRoomScan(surfaces:objects:)` does the same mapping from your
-own scan data (`AIRoomSurface` / `AIRoomObject`). Android has no RoomPlan
-equivalent; use `AISpatialPriors.fromWorldUnderstanding` with ARCore planes.
+own scan data (`AIRoomSurface` / `AIRoomObject`).
+
+Android has no RoomPlan equivalent, so `AISpatialPriors.fromRoomScan` (same
+mapping, column-major 4×4 transforms) takes surfaces and objects from whatever
+your app has: Android XR labeled planes (`androidx.xr.arcore` `Plane.Label`
+`WALL` / `FLOOR`), a Meta Quest MRUK room (walls, floor, and furniture anchors),
+or your own scanner. On ARCore phones without labels,
+`AISpatialPriors.fromWorldUnderstanding` still gives planes and detections.
+
+```kotlin
+// `wall.pose` / `item.pose`: an ARCore-style Pose; your scan supplies sizes and labels.
+fun matrix(pose: Pose) = FloatArray(16).also { pose.toMatrix(it, 0) }
+val priors = AISpatialPriors.fromRoomScan(
+  surfaces = walls.map { AIRoomSurface("wall", matrix(it.pose), floatArrayOf(it.width, it.height, 0f)) },
+  objects = furniture.map { AIRoomObject(it.label, matrix(it.pose), floatArrayOf(it.width, it.height, it.depth)) },
+  camera = AICamera(eye, target),
+)
+editor.compileFromBitmap(photo, "this living room", priors)
+```
+
+Surface kinds are case-insensitive (`Plane.Label.WALL.toString()` works), and
+object labels are normalized (`COFFEE_TABLE` → `coffee table`).
 
 ## AI Textures
 

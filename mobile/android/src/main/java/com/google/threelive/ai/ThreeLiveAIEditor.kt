@@ -294,6 +294,22 @@ constructor(
         objects = mappedObjects,
       )
     }
+    /**
+     * Builds metric priors from a room scan: walls, floors, doors, windows, and openings become
+     * labeled planes; furniture becomes objects with size and yaw. `floorY` is the lowest floor,
+     * or without one the lowest wall or object bottom. Floors come first, then walls, doors,
+     * windows, and openings (at most 32 planes and 32 objects). Feed it Android XR labeled planes
+     * (`androidx.xr.arcore` `Plane.Label`), a Meta MRUK room, or your own scanner. Mirrors
+     * `AISpatialPriors.fromRoomScan` on iOS, which `fromCapturedRoom` (RoomPlan) uses.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun fromRoomScan(
+      surfaces: List<AIRoomSurface>,
+      objects: List<AIRoomObject> = emptyList(),
+      camera: AICamera? = null,
+      cameraFovDeg: Double? = null,
+    ): AISpatialPriors = RoomScanPriors.map(surfaces, objects, camera, cameraFovDeg)
   }
 }
 
