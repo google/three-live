@@ -593,6 +593,13 @@ export const aiPlugin: ThreeLivePlugin = {
     const voiceEl = el as AIVoiceElement;
     el.startVoiceEdit = (options?: AIVoiceEditOptions) =>
       startVoiceEdit(voiceEl, options);
+    voiceEl.__tlSelectProvider = () => {
+      try {
+        return resolveProvider(el, {});
+      } catch {
+        return null;
+      }
+    };
     el.selectByVoice = (query: string, options?: {mode?: AISelectionMode}) =>
       selectByVoice(voiceEl, query, options);
     el.connectVoice = (options: AIVoiceSessionOptions) =>

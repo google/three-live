@@ -1315,8 +1315,8 @@ pub fn index_json(index: &[IndexEntry]) -> Value {
     )
 }
 
-/// `select` op: `{source | entries, camera?, query, within?}` → match result + `entries`.
-pub fn select_call(req: &Value) -> Value {
+/// Scene entries and default camera from `{entries}` or `{source}` (runs the scene).
+fn load_scene(req: &Value) -> Result<(Vec<RawEntry>, Camera), Value> {
     let mut fallback = Camera::default();
     let raw = if let Some(entries) = req.get("entries") {
         entries_from_json(entries)
@@ -1332,23 +1332,118 @@ pub fn select_call(req: &Value) -> Value {
                 }
                 entries_from_scene(&scene)
             }
-            Err(e) => return json!({"error": format!("scene failed to run: {}", e)}),
+            Err(e) => return Err(json!({"error": format!("scene failed to run: {}", e)})),
         }
     } else {
-        return json!({"error": "select needs 'entries' or 'source'"});
+        return Err(json!({"error": "needs 'entries' or 'source'"}));
     };
-    let camera = camera_from_json(req.get("camera"), fallback);
+    Ok((raw, camera_from_json(req.get("camera"), fallback)))
+}
+
+fn strings(v: Option<&Value>) -> Option<Vec<String>> {
+    v.and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+}
+
+/// `select` op: `{source | entries, camera?, query, within?, withIndex?}` → match result.
+pub fn select_call(req: &Value) -> Value {
+    let (raw, camera) = match load_scene(req) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
     let index = build_index(&raw);
-    let within: Option<Vec<String>> = req
-        .get("within")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect());
+    let within = strings(req.get("within"));
     let query = req.get("query").and_then(Value::as_str).unwrap_or("");
     let mut out = match_query(&index, query, &camera, within.as_deref()).to_json();
     if req.get("withIndex").and_then(Value::as_bool).unwrap_or(false) {
         out["index"] = index_json(&index);
     }
     out
+}
+
+/// System prompt for tier-2 selection (keep identical to `SELECT_PROMPT` in `ai-select.ts`).
+pub const SELECT_PROMPT: &str = "You find the objects a user means in a 3D scene. Reply with JSON only: {\"ids\": [numbers], \"confidence\": \"high\" or \"low\", \"question\": \"text\"}. Use only ids from the objects list. Left and right are as seen from the camera: \"right\" is the camera's right direction. If several objects fit equally, or none fits, set confidence to \"low\" and ask one short question that names the options.";
+
+/// Chat messages for tier 2 (index, camera, current selection, request).
+pub fn select_messages(
+    index: &[IndexEntry],
+    query: &str,
+    camera: &Camera,
+    selected: &[String],
+) -> Value {
+    let r = |x: f64| (x * 100.0).round() / 100.0;
+    let f = sub(camera.target, camera.eye);
+    let rl = (f[2] * f[2] + f[0] * f[0]).sqrt();
+    let rl = if rl == 0.0 { 1.0 } else { rl };
+    let payload = json!({
+        "camera": {
+            "eye": camera.eye.map(r),
+            "target": camera.target.map(r),
+            "right": [r(-f[2] / rl), 0.0, r(f[0] / rl)],
+        },
+        "objects": index_json(index),
+        "selected": selected.iter().take(50).collect::<Vec<_>>(),
+        "request": query.chars().take(500).collect::<String>(),
+    });
+    json!([
+        {"role": "system", "content": SELECT_PROMPT},
+        {"role": "user", "content": payload.to_string()},
+    ])
+}
+
+/// Parses a tier-2 reply; `names[i]` is the mesh with id `i`. Unknown ids are dropped.
+pub fn parse_select_reply(reply: &str, names: &[String]) -> Value {
+    let v: Value = match (reply.find('{'), reply.rfind('}')) {
+        (Some(a), Some(b)) if b > a => serde_json::from_str(&reply[a..=b]).unwrap_or(Value::Null),
+        _ => Value::Null,
+    };
+    let mut picked: Vec<String> = Vec::new();
+    for id in v.get("ids").and_then(Value::as_array).into_iter().flatten() {
+        if let Some(name) = id.as_u64().and_then(|i| names.get(i as usize)) {
+            if !picked.contains(name) && picked.len() < MAX_MATCH {
+                picked.push(name.clone());
+            }
+        }
+    }
+    let mut question = String::new();
+    let mut in_ctrl = false;
+    for c in v.get("question").and_then(Value::as_str).unwrap_or("").chars() {
+        if c.is_control() && (c as u32) < 0x80 {
+            if !in_ctrl {
+                question.push(' ');
+            }
+            in_ctrl = true;
+        } else {
+            question.push(c);
+            in_ctrl = false;
+        }
+    }
+    let question: String = question.trim().chars().take(300).collect();
+    let high = v.get("confidence").and_then(Value::as_str) == Some("high") && !picked.is_empty();
+    json!({"names": picked, "confidence": if high { "high" } else { "low" }, "question": question})
+}
+
+/// `select_messages` op: `{source | entries, camera?, query, within?, selection?}` →
+/// `{messages, names}` (`names[i]` is id `i`, for `select_parse`).
+pub fn select_messages_call(req: &Value) -> Value {
+    let (mut raw, camera) = match load_scene(req) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if let Some(within) = strings(req.get("within")) {
+        raw.retain(|e| within.contains(&e.name));
+    }
+    let index = build_index(&raw);
+    let selected = strings(req.get("selection")).unwrap_or_default();
+    let query = req.get("query").and_then(Value::as_str).unwrap_or("");
+    let names: Vec<&str> = index.iter().take(300).map(|e| e.name.as_str()).collect();
+    json!({"messages": select_messages(&index, query, &camera, &selected), "names": names})
+}
+
+/// `select_parse` op: `{reply, names}` → `{names, confidence, question}`.
+pub fn select_parse_call(req: &Value) -> Value {
+    let names = strings(req.get("names")).unwrap_or_default();
+    parse_select_reply(req.get("reply").and_then(Value::as_str).unwrap_or(""), &names)
 }
 
 #[cfg(test)]
@@ -1448,6 +1543,48 @@ mod tests {
             let row = format!("['{}', [{}, {}, {}], '{}']", name, rgb[0], rgb[1], rgb[2], family);
             assert!(ts.contains(&row), "palette row {}", row);
         }
+    }
+
+    #[test]
+    fn select_prompt_matches_the_web_plugin() {
+        let ts = include_str!("../../three-live/src/plugins/ai-select.ts");
+        for sentence in SELECT_PROMPT.split(". ") {
+            let escaped = sentence.trim_end_matches('.').replace('\'', "\\'");
+            assert!(ts.contains(&escaped), "ai-select.ts SELECT_PROMPT is missing: {}", sentence);
+        }
+    }
+
+    #[test]
+    fn tier_two_messages_and_parse() {
+        let entries = json!([
+            {"name": "Lamp", "min": [0, 0, 0], "max": [1, 2, 1], "color": [1, 0, 0]},
+            {"name": "Sofa", "min": [2, 0, 0], "max": [4, 1, 1]}
+        ]);
+        let r = select_messages_call(
+            &json!({"entries": entries, "query": "the lamp near the sofa", "selection": ["Sofa"]}),
+        );
+        assert_eq!(r["names"], json!(["Lamp", "Sofa"]));
+        assert_eq!(r["messages"][0]["content"], SELECT_PROMPT);
+        let payload: Value =
+            serde_json::from_str(r["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["objects"][0]["color"], "red");
+        assert_eq!(payload["camera"]["right"], json!([1.0, 0.0, 0.0]));
+        assert_eq!(payload["selected"], json!(["Sofa"]));
+        assert_eq!(payload["request"], "the lamp near the sofa");
+        let names = vec!["Lamp".to_string(), "Sofa".to_string()];
+        let p =
+            parse_select_reply("ok {\"ids\": [0, 0, 7, \"x\"], \"confidence\": \"high\"}", &names);
+        assert_eq!(p, json!({"names": ["Lamp"], "confidence": "high", "question": ""}));
+        let p = parse_select_reply(
+            "{\"ids\": [], \"confidence\": \"high\", \"question\": \"a\\u0007b\"}",
+            &names,
+        );
+        assert_eq!(p, json!({"names": [], "confidence": "low", "question": "a b"}));
+        assert_eq!(parse_select_reply("nope", &names)["confidence"], "low");
+        let p = select_parse_call(
+            &json!({"reply": "{\"ids\":[1],\"confidence\":\"high\"}", "names": names}),
+        );
+        assert_eq!(p["names"], json!(["Sofa"]));
     }
 
     #[test]

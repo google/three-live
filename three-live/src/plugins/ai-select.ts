@@ -17,6 +17,7 @@ import {
   DEFAULT_SELECT_CAMERA,
   matchSelection,
   type SelectCamera,
+  type SelectIndexEntry,
   type SelectMatch,
   type SelectRawEntry,
 } from './ai-select-match';
@@ -249,4 +250,106 @@ export function resolveSelection(
 ): SelectMatch {
   const index = buildSelectIndex(sceneSelectEntries(el));
   return matchSelection(index, query, selectCamera(el), options.within ?? null);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Talk-to-Select tier 2: the code model resolves references tier 1 can't ("the cup next to the
+// sofa", other languages). Shared wording with `compiler/src/ai_select.rs`.
+
+/** System prompt for tier-2 selection. */
+export const SELECT_PROMPT = [
+  'You find the objects a user means in a 3D scene.',
+  'Reply with JSON only: {"ids": [numbers], "confidence": "high" or "low", "question": "text"}.',
+  'Use only ids from the objects list.',
+  'Left and right are as seen from the camera: "right" is the camera\'s right direction.',
+  'If several objects fit equally, or none fits, set confidence to "low" and ask one short question that names the options.',
+].join(' ');
+
+/** The minimal provider surface tier 2 needs (`ThreeLiveAIProvider`). */
+export interface AISelectProvider {
+  complete(request: {
+    messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>;
+    signal?: AbortSignal;
+  }): Promise<string>;
+}
+
+/** Tier-2 result. */
+export interface AIModelSelection {
+  readonly names: string[];
+  readonly confidence: 'high' | 'low';
+  readonly question: string;
+}
+
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** Chat messages for tier 2 (index, camera, current selection, request). */
+export function selectMessages(
+  index: readonly SelectIndexEntry[],
+  query: string,
+  camera: SelectCamera,
+  selected: readonly string[] = [],
+): Array<{role: 'system' | 'user'; content: string}> {
+  const f = [0, 1, 2].map((k) => camera.target[k] - camera.eye[k]);
+  const rl = Math.hypot(f[2], f[0]) || 1;
+  const payload = {
+    camera: {
+      eye: camera.eye.map(round2),
+      target: camera.target.map(round2),
+      right: [round2(-f[2] / rl), 0, round2(f[0] / rl)],
+    },
+    objects: index.slice(0, 300).map((e) => ({
+      id: e.id,
+      name: e.name,
+      color: e.colorName,
+      center: e.center.map(round2),
+      size: round2(Math.cbrt(e.size)),
+    })),
+    selected: selected.slice(0, 50),
+    request: String(query).slice(0, 500),
+  };
+  return [
+    {role: 'system', content: SELECT_PROMPT},
+    {role: 'user', content: JSON.stringify(payload)},
+  ];
+}
+
+/** Parses a tier-2 reply; ids outside the index are dropped. */
+export function parseSelectReply(reply: string, index: readonly SelectIndexEntry[]): AIModelSelection {
+  const text = String(reply ?? '');
+  const a = text.indexOf('{');
+  const b = text.lastIndexOf('}');
+  let v: {ids?: unknown; confidence?: unknown; question?: unknown} = {};
+  if (a >= 0 && b > a) {
+    try {
+      v = JSON.parse(text.slice(a, b + 1)) ?? {};
+    } catch {}
+  }
+  const names: string[] = [];
+  for (const id of Array.isArray(v.ids) ? v.ids : []) {
+    const e = Number.isInteger(id) ? index[id as number] : undefined;
+    if (e && !names.includes(e.name) && names.length < MAX_SELECTION) names.push(e.name);
+  }
+  const question = (typeof v.question === 'string' ? v.question : '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .slice(0, 300);
+  return {names, confidence: v.confidence === 'high' && names.length ? 'high' : 'low', question};
+}
+
+/** Tier 2: asks the code model which meshes `query` means. */
+export async function resolveSelectionWithModel(
+  el: AISelectableElement & {viewer?: unknown},
+  query: string,
+  provider: AISelectProvider,
+  options: {within?: readonly string[] | null; signal?: AbortSignal} = {},
+): Promise<AIModelSelection> {
+  let entries = sceneSelectEntries(el);
+  if (options.within) entries = entries.filter((e) => options.within!.includes(e.name));
+  const index = buildSelectIndex(entries);
+  if (!index.length) return {names: [], confidence: 'low', question: ''};
+  const reply = await provider.complete({
+    messages: selectMessages(index, query, selectCamera(el), getSelection(el)),
+    signal: options.signal,
+  });
+  return parseSelectReply(reply, index);
 }

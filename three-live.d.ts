@@ -172,19 +172,26 @@ export {
   describeVoiceSelection,
   realtimeAdapter,
   selectByVoice,
+  selectNamesByVoice,
   setSelectOnTap,
   speakableName,
   startVoiceEdit,
 } from './three-live/src/plugins/ai-voice';
+export {hideSelectionChips, showSelectionChips} from './three-live/src/plugins/ai-select-chips';
+export type {AISelectChipsState} from './three-live/src/plugins/ai-select-chips';
 /** Multi-select for Tap & Speak / Talk-to-Select (part of `three-live-ai.min.js`). */
 export {
   describeSelection,
   getSelection,
+  parseSelectReply,
   resolveSelection,
+  resolveSelectionWithModel,
   sceneSelectEntries,
   selectCamera,
+  selectMessages,
   setSelection,
 } from './three-live/src/plugins/ai-select';
+export type {AIModelSelection, AISelectProvider} from './three-live/src/plugins/ai-select';
 /** Talk-to-Select tier-1 matcher and push-to-talk grammar (mirrors the Rust core). */
 export {
   buildSelectIndex,

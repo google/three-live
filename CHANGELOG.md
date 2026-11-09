@@ -53,6 +53,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (`ai_call` ops `select` and `parse_command`); a shared fixture keeps the
     two identical.
 
+-   **Talk-to-Select (B2b-4), model fallback, voice tool, and chips:** when
+    the local matcher can't resolve a reference (relations such as "the lamp
+    next to the sofa", unknown words, other languages), the configured code
+    model picks from a compact scene index (`SELECT_PROMPT`; tier 2) and either
+    selects or asks one short question. Realtime voice sessions get a
+    `select_meshes` tool (`query`, `names`, or `mode`) and instructions to
+    select first and read the selection back. Push-to-talk shows confirmation
+    chips (selected meshes with ×, candidate buttons for "Which one?", and
+    Apply for an edit waiting on a model-resolved selection) in an
+    `aria-live` region; `ai-select-chips="off"` or `{chips: false}` disables
+    them. The Rust core adds `select_messages` / `select_parse` and the
+    `select_meshes` tool. Budgets for B2b-4 as a whole:
+    `three-live-ai.min.js` `< 20 KB gz` (was `< 11`), `three-live-full.min.js`
+    `< 160 KB gz` (was `< 151`), `xr-live-full.min.js` `< 260 KB gz` (was
+    `< 251`).
+
 -   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;

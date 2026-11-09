@@ -16,10 +16,13 @@ import {getSharedRegistry, registerPlugin} from '../src/plugin';
 import {aiPlugin, normalizeSelection, selectionSentence, type ThreeLiveAIProvider} from '../src/plugins/ai';
 import {describeSelection, getSelection, MAX_SELECTION, setSelection} from '../src/plugins/ai-select';
 import {
+  parseSelectReply,
   resolveSelection,
   sceneSelectEntries,
+  SELECT_PROMPT,
   selectCamera,
 } from '../src/plugins/ai-select';
+import {chipsEnabled, hideSelectionChips, showSelectionChips} from '../src/plugins/ai-select-chips';
 import {
   buildSelectIndex,
   colorName,
@@ -32,7 +35,9 @@ import {
   type AIVoiceTransport,
   describeVoiceSelection,
   selectByVoice,
+  selectNamesByVoice,
   speakableName,
+  VOICE_TOOLS,
 } from '../src/plugins/ai-voice';
 import fixture from './fixtures/select_cases.json';
 import {Scene, THREE} from '../src/three-author';
@@ -389,7 +394,7 @@ async function run(): Promise<void> {
     {
       const {el, say, requests} = setup([]);
       const r = await el.startVoiceEdit({recognizer: say('select the giraffe and make it red'), speak: false});
-      assert(!r.selection.applied && r.result === null && requests.length === 0, 'mixed with no match: no edit');
+      assert(!r.selection.applied && r.result === null && requests.length === 1, 'mixed with no match: tier 2 is tried, no edit');
       assert(r.selection.say === 'I couldn\'t find "the giraffe".', 'says what was not found');
     }
     {
@@ -405,6 +410,187 @@ async function run(): Promise<void> {
       const r2 = await selectByVoice(el, 'the chair next to the sofa');
       assert(!r2.applied && r2.match?.reason === 'relation', 'relations are left to tier 2');
       assert(describeVoiceSelection('add', {ids: [0], names: ['A_b'], confidence: 'high', candidates: [], reason: 'match'}, ['X', 'A_b'], '') === 'Added A b. 2 selected.', 'add confirmation');
+    }
+  }
+
+  // ---- 4c: tier 2, select_meshes tool, chips ----
+  {
+    const sceneMeshes = [
+      meshAt('Chair_Left', -2, [0.8, 0.02, 0.02]),
+      meshAt('Chair_Middle', 0, [0.02, 0.05, 0.7]),
+      meshAt('Chair_Right', 2, [0.8, 0.02, 0.02]),
+      meshAt('Sofa', 0, [0.2, 0.2, 0.2]),
+    ];
+    const setup = (replies: string[]) => {
+      const f = fakeElement();
+      f.el.viewer.meshes = sceneMeshes;
+      const s = scripted(replies);
+      f.el.aiProvider = s.provider;
+      return {...f, requests: s.requests, say: (text: string) => ({listen: async () => text})};
+    };
+
+    {
+      const {el, requests} = setup(['Sure: {"ids": [2, 99, "x"], "confidence": "high", "question": ""}']);
+      const r = await el.selectByVoice('the chair next to the sofa');
+      assert(r.applied && r.tier === 2 && getSelection(el).join() === 'Chair_Right', 'tier 2 resolves a relation; bad ids are dropped');
+      const [sys, user] = requests[0];
+      const payload = JSON.parse(user.content);
+      assert(sys.content === SELECT_PROMPT, 'tier 2 uses the shared select prompt');
+      assert(payload.objects.length === 4 && payload.objects[0].name === 'Chair_Left' && payload.objects[0].color === 'red', 'tier 2 sees the index');
+      assert(payload.request === 'the chair next to the sofa' && Array.isArray(payload.camera.right), 'tier 2 sees the request and camera');
+    }
+    {
+      const {el} = setup(['{"ids": [0, 2], "confidence": "low", "question": "Which chair: the left or the right one?"}']);
+      setSelection(el, ['Sofa']);
+      const r = await el.selectByVoice('the chair by the window');
+      assert(!r.applied && r.say === 'Which chair: the left or the right one?' && r.match.candidates.join() === 'Chair_Left,Chair_Right', 'tier 2 low confidence asks its question');
+      assert(getSelection(el).join() === 'Sofa', 'and keeps the selection');
+    }
+    {
+      const {el} = setup(['no json here']);
+      const r = await el.selectByVoice('the chair behind the sofa');
+      assert(!r.applied && r.tier === 2 && r.match.confidence === 'none', 'unparseable tier-2 reply → none');
+    }
+    {
+      const {el, requests} = setup([]);
+      const r = await el.selectByVoice('the chair behind the sofa');
+      assert(!r.applied && r.tier === 1 && r.match.reason === 'relation' && requests.length === 1, 'tier-2 failure falls back to tier 1');
+    }
+    {
+      const {el, requests} = setup([]);
+      el.aiProvider = undefined;
+      const r = await el.selectByVoice('the chair behind the sofa');
+      assert(!r.applied && requests.length === 0, 'no code model → no tier 2');
+      await el.selectByVoice('the red chair');
+      assert(requests.length === 0, 'ambiguous references ask the user instead of the model');
+    }
+    {
+      const reply = parseSelectReply('{"ids":[0,0,1],"confidence":"high","question":"a\\u0007b"}', buildSelectIndex([
+        {name: 'A', min: [0, 0, 0], max: [1, 1, 1]},
+        {name: 'B', min: [0, 0, 0], max: [1, 1, 1]},
+      ]));
+      assert(reply.names.join() === 'A,B' && reply.question === 'a b', 'parseSelectReply dedupes and strips control characters');
+      assert(parseSelectReply('{"ids":[],"confidence":"high"}', []).confidence === 'low', 'high with no ids is low');
+    }
+
+    // selectNamesByVoice
+    {
+      const {el} = setup([]);
+      const r = selectNamesByVoice(el, ['Sofa', 'Nope', 42 as any]);
+      assert(r.applied && getSelection(el).join() === 'Sofa', 'selectNamesByVoice ignores unknown names');
+      const r2 = selectNamesByVoice(el, ['Nope']);
+      assert(!r2.applied && getSelection(el).join() === 'Sofa', 'only unknown names → nothing changes');
+    }
+
+    // Realtime select_meshes tool.
+    {
+      assert(VOICE_TOOLS.some((t) => t.name === 'select_meshes'), 'select_meshes is a voice tool');
+      const {el} = setup(['{"ids":[3],"confidence":"high"}']);
+      const sent: any[] = [];
+      const transport: AIVoiceTransport = {send: (m) => sent.push(m), close() {}};
+      const session = await el.connectVoice({transport, microphone: false, playAudio: false});
+      const setupMsg = sent.find((m) => m.type === 'session.update');
+      assert(setupMsg.session.instructions.includes('call select_meshes with their words first'), 'instructions ask for select_meshes first');
+      const call = async (id: string, args: any) => {
+        transport.onMessage!({type: 'response.function_call_arguments.done', call_id: id, name: 'select_meshes', arguments: JSON.stringify(args)});
+        for (let i = 0; i < 20 && !sent.some((m) => m.item?.call_id === id); i++) await tick();
+        return JSON.parse(sent.find((m) => m.item?.call_id === id).item.output);
+      };
+      const before = sent.length;
+      let out = await call('s1', {query: 'the red chairs'});
+      assert(out.changed && out.selected.join() === 'Chair_Left,Chair_Right' && out.say.startsWith('Selected 2'), 'select_meshes by query');
+      assert(!sent.slice(before).some((m) => m.item?.role === 'system'), 'voice selections are not echoed as context');
+      out = await call('s2', {query: 'the red chair'});
+      assert(!out.changed && out.question.startsWith('Which one') && out.candidates.length === 2, 'ambiguous → question + candidates');
+      out = await call('s3', {names: ['Sofa'], mode: 'add'});
+      assert(out.changed && out.selected.join() === 'Chair_Left,Chair_Right,Sofa', 'select_meshes by names (add)');
+      out = await call('s4', {query: 'the thing next to the window'});
+      assert(out.changed && out.selected.join() === 'Sofa', 'select_meshes uses tier 2 for relations');
+      out = await call('s5', {mode: 'clear'});
+      assert(out.changed && out.selected.length === 0, 'select_meshes clear');
+      out = await call('s6', {mode: 'bogus', names: ['Chair_Middle']});
+      assert(out.changed && out.selected.join() === 'Chair_Middle', 'unknown mode → replace');
+      session.close();
+    }
+
+    // Push-to-talk: a mixed command resolved by tier 2 waits for confirmation.
+    {
+      const {el, say, requests} = setup(['{"ids":[1],"confidence":"high"}']);
+      const r = await el.startVoiceEdit({recognizer: say('select the chair near the sofa and paint it gold'), speak: false});
+      assert(r.selection.applied && r.selection.tier === 2 && r.result === null, 'tier-2 mixed: selects but does not edit');
+      assert(requests.length === 1, 'only the selection call was made');
+    }
+  }
+
+  // ---- 4c: chips (fake DOM) ----
+  {
+    class FakeNode {
+      children: FakeNode[] = [];
+      style: Record<string, string> = {};
+      attrs: Record<string, string> = {};
+      textContent = '';
+      type = '';
+      parent: FakeNode | null = null;
+      listeners: Record<string, Array<(e: any) => void>> = {};
+      constructor(public tag: string) {}
+      setAttribute(k: string, v: string) { this.attrs[k] = v; }
+      getAttribute(k: string) { return this.attrs[k] ?? null; }
+      appendChild(c: FakeNode) { c.parent = this; this.children.push(c); return c; }
+      replaceChildren() { this.children = []; }
+      remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
+      addEventListener(t: string, fn: (e: any) => void) { (this.listeners[t] ??= []).push(fn); }
+      click() { for (const fn of this.listeners['click'] ?? []) fn({stopPropagation() {}}); }
+    }
+    const g = globalThis as any;
+    const prevDoc = g.document;
+    g.document = {createElement: (t: string) => new FakeNode(t)};
+    try {
+      const f = fakeElement();
+      const host = new FakeNode('three-live');
+      f.el.appendChild = (n: FakeNode) => host.appendChild(n);
+      f.el.viewer.meshes = [meshAt('Chair_Left', -2, [0.8, 0.02, 0.02]), meshAt('Chair_Right', 2, [0.8, 0.02, 0.02])];
+      const buttons = () => (host.children[0]?.children ?? []).filter((c) => c.tag === 'button');
+      const texts = () => (host.children[0]?.children ?? []).map((c) => c.textContent);
+
+      // Ambiguous push-to-talk → question chips.
+      const scriptedP = scripted(['```js\nscene.add(new THREE.Object3D());\n```']);
+      f.el.aiProvider = undefined;
+      await f.el.startVoiceEdit({recognizer: {listen: async () => 'select the red chair and make it blue'}, speak: false});
+      const root = host.children[0];
+      assert(!!root && root.attrs['role'] === 'status' && root.attrs['aria-live'] === 'polite', 'chips overlay is an aria-live status region');
+      assert(texts()[0] === 'Which one: Chair Left or Chair Right?' && buttons().length === 3, 'question + candidate buttons + dismiss');
+      // Pick a candidate → selected state with Apply for the waiting edit.
+      f.el.aiProvider = scriptedP.provider;
+      buttons()[1].click();
+      assert(getSelection(f.el).join() === 'Chair_Right', 'tapping a candidate selects it');
+      assert(texts().join('|') === 'Selected:|Chair Right ×|Apply: make it blue|✕', 'then shows the selection and Apply');
+      buttons().find((b) => b.textContent.startsWith('Apply'))!.click();
+      for (let i = 0; i < 20 && !scriptedP.requests.length; i++) await tick();
+      const user = scriptedP.requests[0]?.find((m: any) => m.role === 'user')?.content ?? '';
+      assert(user.includes('"Chair_Right"') && user.includes('make it blue'), 'Apply runs the waiting edit on the selection');
+      assert(!texts().some((t) => t.startsWith('Apply')), 'Apply disappears once used');
+      // × removes; the chips follow the selection and close when it is empty.
+      setSelection(f.el, ['Chair_Left', 'Chair_Right']);
+      assert(texts().join('|') === 'Selected:|Chair Left ×|Chair Right ×|✕', 'chips follow selection changes');
+      buttons()[0].click();
+      assert(getSelection(f.el).join() === 'Chair_Right', '× removes that mesh');
+      buttons()[0].click();
+      assert(host.children.length === 0 && !f.el.__tlChips, 'chips close when nothing is selected');
+      // Dismiss.
+      setSelection(f.el, ['Chair_Left']);
+      showSelectionChips(f.el, {});
+      buttons().at(-1)!.click();
+      assert(host.children.length === 0, '✕ dismisses');
+      // An edit utterance closes stale chips; ai-select-chips="off" disables them.
+      showSelectionChips(f.el, {});
+      f.el.aiProvider = scripted(['```js\nscene.add(new THREE.Object3D());\n```']).provider;
+      await f.el.startVoiceEdit({recognizer: {listen: async () => 'make it shiny'}, speak: false});
+      assert(host.children.length === 0, 'a plain edit closes the chips');
+      const off = fakeElement({'ai-select-chips': 'off'});
+      assert(!chipsEnabled(off.el) && showSelectionChips(off.el, {}) === null, 'ai-select-chips="off" disables chips');
+      hideSelectionChips(off.el);
+    } finally {
+      g.document = prevDoc;
     }
   }
 
