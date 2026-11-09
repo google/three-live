@@ -36,7 +36,8 @@ Rules:\n\
 - Supported: core geometries and materials (MeshStandardMaterial / MeshPhysicalMaterial with PBR maps), lights,\n\
   Group, InstancedMesh, THREE.CSG, THREE.CanvasTexture, THREE.ProceduralTexture presets\n\
   (wood, marble, brick, concrete, brushedMetal, rust, leather, fabric, carbonFiber, checkerboard, grid),\n\
-  and declarative mesh.userData.xr traits. Optional per-frame motion: function animate(t) { ... }.";
+  and declarative mesh.userData.xr traits. Optional per-frame motion: function animate(t) { ... }.\n\
+- Keep every userData.xr.material preset; add a prompt (AI texture) only when the instruction asks for a specific surface.";
 
 /// Largest script accepted from a model (matches `SECURITY_3D_MAX_SCRIPT_BYTES`).
 pub const MAX_SCRIPT_BYTES: usize = 1_048_576;

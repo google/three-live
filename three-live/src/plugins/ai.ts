@@ -38,6 +38,13 @@ import {
   setSelectOnTap,
   startVoiceEdit,
 } from './ai-voice';
+import {
+  type AITextureElement,
+  installTextureSupport,
+  onElementCompiled,
+  onElementRun,
+  withElementTexturePack,
+} from './ai-texture';
 import {type AISelectionMode, installSelectionState} from './ai-select';
 import {
   type AIImageInput,
@@ -167,6 +174,7 @@ const SYSTEM_PROMPT = [
   '  Group, InstancedMesh, THREE.CSG, THREE.CanvasTexture, THREE.ProceduralTexture presets',
   '  (wood, marble, brick, concrete, brushedMetal, rust, leather, fabric, carbonFiber, checkerboard, grid),',
   '  and declarative mesh.userData.xr traits. Optional per-frame motion: function animate(t) { ... }.',
+  '- Keep every userData.xr.material preset; add a prompt (AI texture) only when the instruction asks for a specific surface.',
 ].join('\n');
 
 function isAllowedEndpoint(raw: string): boolean {
@@ -647,14 +655,34 @@ export const aiPlugin: ThreeLivePlugin = {
         configurable: true,
       });
     }
-    // Track scripts loaded programmatically so later edits start from them.
+    // Track scripts loaded programmatically so later edits start from them,
+    // compile with the element's AI texture pack (B5), and report misses.
+    const texEl = el as unknown as AITextureElement;
+    installTextureSupport(texEl);
     const original = el.executeScript;
     if (typeof original === 'function') {
-      el.executeScript = (script: string) =>
-        original.call(el, script).then((res: unknown) => {
+      el.executeScript = (script: string) => {
+        onElementRun(texEl, {kind: 'script', value: String(script)});
+        return withElementTexturePack(texEl, () =>
+          original.call(el, script),
+        ).then((res: unknown) => {
           el.__tlAiSource = String(script);
+          onElementCompiled(texEl, res);
           return res;
         });
+      };
+    }
+    const originalSrc = texEl.loadScriptFromSrc;
+    if (typeof originalSrc === 'function') {
+      texEl.loadScriptFromSrc = (src: string) => {
+        onElementRun(texEl, {kind: 'url', value: String(src)});
+        return withElementTexturePack(texEl, () =>
+          originalSrc.call(el, src),
+        ).then((res: unknown) => {
+          onElementCompiled(texEl, res);
+          return res;
+        });
+      };
     }
   },
 };

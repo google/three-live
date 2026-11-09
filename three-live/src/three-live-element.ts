@@ -101,6 +101,10 @@ export type SandboxMode = 'worker' | 'iframe';
 /** Options controlling procedural script execution security policy. */
 export interface ScriptExecutionOptions {
   readonly allowClientScripts?: boolean;
+  /** AI textures for `userData.xr.material.prompt` (B5). */
+  readonly texturePack?: Readonly<
+    Record<string, {readonly size: number; readonly rgba: Uint8Array}>
+  > | null;
 }
 
 export interface ScriptRunner {
@@ -114,6 +118,7 @@ export interface ScriptRunner {
     scriptUrl: string,
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
+    options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void>;
 }
 

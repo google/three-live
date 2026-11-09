@@ -26,6 +26,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **AI PBR textures on the Web (B5b, `three-live-ai`):** texture packs load
+    from `texture-pack="scene.textures.json"`, `el.texturePack`, or an inline
+    `<script type="application/three-live-texture-pack">` and travel with every
+    sandboxed compile. With an OpenAI-compatible Images endpoint
+    (`ai-image-endpoint` / `ai-image-model`, `el.aiImageProvider`, or
+    `createAIImageProvider()`), missing textures are generated (center-crop,
+    resample, seam blend), cached in IndexedDB, and hot-swapped by recompiling
+    the scene; `ai-textures="manual"` waits for `el.generateTextures()`.
+    `el.exportTexturePack()` saves the pack for reproducible results. Events:
+    `three-live-texture-start`, `three-live-texture`, and
+    `three-live-texture-error`. Budgets: `three-live-ai.min.js` `< 29 KB gz`,
+    `three-live-full.min.js` `< 186 KB gz`, `xr-live-full.min.js` `< 295 KB gz`.
+
 -   **AI PBR textures, core (B5a):** `userData.xr.material` accepts an optional
     `prompt` (plus `size: 256 | 512` and `seed`) next to its A8 `preset`.
     Compiling stays a pure function of `(script, texture pack)`: a texture pack
