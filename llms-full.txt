@@ -314,13 +314,30 @@ Or add to `.mcp.json` / `claude_desktop_config.json` / `.cursor/mcp.json`:
 }
 ```
 
-The MCP server exposes 8 tools (`three_live_validate`, `three_live_render`,
-`three_live_convert`, `three_live_sim`, `three_live_link`, `three_live_gym_reset`,
-`three_live_gym_step`, `three_live_gym_close`), 1 resource
+The MCP server exposes 10 tools (`three_live_validate`, `three_live_render`,
+`three_live_convert`, `three_live_sim`, `three_live_link`,
+`three_live_gym_reset`, `three_live_gym_step`, `three_live_gym_close`,
+`three_live_from_image`, `three_live_bake_textures`), 1 resource
 (`three-live://docs/authoring-guide`), and 2 prompts (`author_three_live_scene`,
 `build_from_reference`). Note that `three_live_render` returns MCP `image/png`
 content blocks directly into multimodal LLM context so agents can visually
 self-correct camera framing, overlap, and lighting.
+
+### AI Textures (`three_live_bake_textures`)
+
+`mesh.userData.xr = { material: { preset: 'brick', prompt: '…' } }` asks for an
+AI texture; until a texture pack has it, the preset is shown. Get the geometry
+and presets right first. Then, only if the user wants photoreal surfaces and an
+image endpoint is configured (`THREE_LIVE_AI_IMAGE_ENDPOINT`), call
+`three_live_bake_textures` with `outputPath: 'scene.textures.json'`. It returns
+a preset-vs-AI comparison image. Pass `texturePackPath` to `three_live_render`,
+`three_live_convert`, `three_live_validate`, or `three_live_sim` to see or
+export the textured scene. On the command line:
+
+```bash
+$ npx three-live-cli textures bake scene.js -o scene.textures.json --glb scene.glb
+$ npx three-live-cli render scene.js --texture-pack scene.textures.json -o textured.png
+```
 
 ### Reference-Driven Authoring (`reference`)
 

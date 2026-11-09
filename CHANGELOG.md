@@ -26,6 +26,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **AI texture baking in the CLI and MCP (B5c):** `three-live-cli textures
+    bake scene.js [-o scene.textures.json] [--only A,B] [--force] [--glb]
+    [--usdz] [--render]` generates missing textures through an
+    OpenAI-compatible Images endpoint (`--ai-image-endpoint` /
+    `THREE_LIVE_AI_IMAGE_ENDPOINT`, `--ai-image-model`, `THREE_LIVE_AI_KEY`)
+    and extends the pack. A global `--texture-pack` flag makes `validate`,
+    `render`, `convert`, `sim`, and `gym` match the Web viewer. New MCP tool
+    `three_live_bake_textures` (preset-vs-AI comparison image + report), and
+    `texturePack` / `texturePackPath` arguments on `three_live_validate`,
+    `three_live_render`, `three_live_convert`, and `three_live_sim`. New
+    `ai_call` ops `texture_image_request` and `texture_image_parse`.
+
 -   **AI PBR textures on the Web (B5b, `three-live-ai`):** texture packs load
     from `texture-pack="scene.textures.json"`, `el.texturePack`, or an inline
     `<script type="application/three-live-texture-pack">` and travel with every

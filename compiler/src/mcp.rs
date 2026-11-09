@@ -555,6 +555,25 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
 }
 
 fn mcp_tool_definitions() -> Value {
+    let mut defs = mcp_tool_definitions_base();
+    if let Some(list) = defs.as_array_mut() {
+        for t in list.iter_mut() {
+            if TEXTURE_PACK_PROPS.contains(&t["name"].as_str().unwrap_or("")) {
+                if let (Some(props), Some(extra)) = (
+                    t["inputSchema"]["properties"].as_object_mut(),
+                    texture_pack_schema().as_object(),
+                ) {
+                    for (k, v) in extra {
+                        props.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+    }
+    defs
+}
+
+fn mcp_tool_definitions_base() -> Value {
     json!([
         {
             "name": "three_live_validate",
@@ -982,6 +1001,30 @@ fn mcp_tool_definitions() -> Value {
                 "idempotentHint": false,
                 "openWorldHint": true
             }
+        },
+        {
+            "name": "three_live_bake_textures",
+            "description": "Generate the AI textures a scene asks for (`mesh.userData.xr = { material: { preset, prompt, size: 256 | 512, seed } }`) through an OpenAI-compatible Images endpoint and save them in a texture pack. Use it last, after geometry and presets look right: it needs a configured image endpoint and costs money per texture. Returns a preset-vs-AI comparison image and the bake report. Pass the pack to `three_live_render` / `three_live_convert` (`texturePack` / `texturePackPath`) and ship it with the scene (`<three-live texture-pack=...>`).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "Inline Three.js scene script. Provide either `code` or `inputPath`."},
+                    "inputPath": {"type": "string", "description": "Path to a .js scene script when `code` is not provided."},
+                    "texturePack": {"type": "object", "description": "Optional existing pack to extend (entries it already has are reused)."},
+                    "texturePackPath": {"type": "string", "description": "Optional path to an existing pack JSON file to extend."},
+                    "outputPath": {"type": "string", "description": "Recommended: where to write the pack JSON. Without it the pack is returned inline."},
+                    "only": {"type": "array", "items": {"type": "string"}, "description": "Optional node names; only their textures are generated."},
+                    "force": {"type": "boolean", "default": false, "description": "Regenerate textures the pack already has (bump `seed` instead to keep the old one)."},
+                    "aiImageEndpoint": {"type": "string", "description": "Optional Images endpoint URL (defaults to `THREE_LIVE_AI_IMAGE_ENDPOINT`)."},
+                    "aiImageModel": {"type": "string", "description": "Optional image model (defaults to `THREE_LIVE_AI_IMAGE_MODEL`)."}
+                }
+            },
+            "annotations": {
+                "title": "Bake AI Textures into a Texture Pack",
+                "readOnlyHint": false,
+                "idempotentHint": false,
+                "openWorldHint": true
+            }
         }
     ])
 }
@@ -1108,7 +1151,46 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
     };
     let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
 
-    let result = match tool_name {
+    // Optional AI texture pack for any compiling tool (`userData.xr.material.prompt`).
+    let pack = match texture_pack_from_args(&args) {
+        Ok(p) => p.map(std::rc::Rc::new),
+        Err(e) => return jsonrpc_success_response(id, tool_error_result(e)),
+    };
+    // Without a per-call pack, keep the server-wide one (`three-live-cli --texture-pack … mcp`).
+    let result = match pack {
+        Some(p) => {
+            crate::ai_texture::with_texture_pack(Some(p), || dispatch_tool(tool_name, &args)).0
+        }
+        None => dispatch_tool(tool_name, &args),
+    };
+    match result {
+        Some(result) => jsonrpc_success_response(id, result),
+        None => {
+            jsonrpc_error_response(id, -32602, format!("Unknown tool name: {}", tool_name), None)
+        }
+    }
+}
+
+/// Parses `texturePack` (object or JSON string) or `texturePackPath` from tool arguments.
+fn texture_pack_from_args(args: &Value) -> Result<Option<crate::ai_texture::TexturePack>, String> {
+    use crate::ai_texture::TexturePack;
+    if let Some(v) = args.get("texturePack").filter(|v| !v.is_null()) {
+        return match v {
+            Value::String(s) => TexturePack::from_json_str(s).map(Some),
+            v => TexturePack::from_json(v).map(Some),
+        };
+    }
+    if let Some(p) = args.get("texturePackPath").and_then(Value::as_str) {
+        let text = fs::read_to_string(p)
+            .map_err(|e| format!("Failed reading texturePackPath {:?}: {}", p, e))?;
+        return TexturePack::from_json_str(&text).map(Some);
+    }
+    Ok(None)
+}
+
+fn dispatch_tool(tool_name: &str, args: &Value) -> Option<Value> {
+    let args = args.clone();
+    Some(match tool_name {
         "three_live_validate" => call_tool_validate(&args),
         "three_live_render" => call_tool_render(&args),
         "three_live_convert" => call_tool_convert(&args),
@@ -1118,17 +1200,136 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "three_live_gym_step" => call_tool_gym_step(&args),
         "three_live_gym_close" => call_tool_gym_close(&args),
         "three_live_from_image" => call_tool_from_image(&args),
-        _ => {
-            return jsonrpc_error_response(
-                id,
-                -32602,
-                format!("Unknown tool name: {}", tool_name),
-                None,
+        "three_live_bake_textures" => call_tool_bake_textures(&args),
+        _ => return None,
+    })
+}
+
+const TEXTURE_PACK_PROPS: [&str; 4] =
+    ["three_live_validate", "three_live_render", "three_live_convert", "three_live_sim"];
+
+fn texture_pack_schema() -> Value {
+    json!({
+        "texturePack": {
+            "type": "object",
+            "description": "Optional AI texture pack (`{format: \"three-live-texture-pack\", version: 1, entries}`) so `userData.xr.material.prompt` textures resolve; without it the preset fallback is used."
+        },
+        "texturePackPath": {
+            "type": "string",
+            "description": "Optional path to a texture pack JSON file (e.g. written by `three_live_bake_textures`)."
+        }
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn call_tool_bake_textures(_args: &Value) -> Value {
+    tool_error_result("three_live_bake_textures is unavailable in WebAssembly builds".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn call_tool_bake_textures(args: &Value) -> Value {
+    use crate::ai_texture::{bake_textures, generate_texture_http, with_texture_pack, BakeOptions};
+    let src = match load_source_from_args(args, "inline.js") {
+        Ok(s) => s,
+        Err(e) => return tool_error_result(e),
+    };
+    if src.is_glb {
+        return tool_error_result(
+            "three_live_bake_textures needs a Three.js scene script, not a .glb.".to_string(),
+        );
+    }
+    let script = String::from_utf8_lossy(&src.raw_bytes).to_string();
+    let mut pack = match texture_pack_from_args(args) {
+        Ok(p) => p.unwrap_or_default(),
+        Err(e) => return tool_error_result(e),
+    };
+    let env = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
+    let pick = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    let endpoint = pick("aiImageEndpoint").or_else(|| env("THREE_LIVE_AI_IMAGE_ENDPOINT"));
+    let model = pick("aiImageModel").or_else(|| env("THREE_LIVE_AI_IMAGE_MODEL"));
+    let api_key = env("THREE_LIVE_AI_KEY").or_else(|| env("OPENAI_API_KEY"));
+    let opts = BakeOptions {
+        force: args.get("force").and_then(Value::as_bool).unwrap_or(false),
+        only: args
+            .get("only")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+            .unwrap_or_default(),
+    };
+    let report = match bake_textures(&script, &mut pack, &opts, |spec| {
+        let ep = endpoint.as_deref().ok_or_else(|| {
+            "no image endpoint: pass aiImageEndpoint or set THREE_LIVE_AI_IMAGE_ENDPOINT"
+                .to_string()
+        })?;
+        let img = generate_texture_http(ep, api_key.as_deref(), model.as_deref(), spec)?;
+        let mut prov = json!({"provider": "openai-images"});
+        if let Some(m) = model.as_deref() {
+            prov["model"] = json!(m);
+        }
+        Ok((img, prov))
+    }) {
+        Ok(r) => r,
+        Err(e) => return tool_error_result(e),
+    };
+    let pack_json = match pack.to_json() {
+        Ok(v) => v,
+        Err(e) => return tool_error_result(e),
+    };
+    let output_path = pick("outputPath");
+    if let Some(p) = &output_path {
+        if let Err(e) = fs::write(p, serde_json::to_string_pretty(&pack_json).unwrap_or_default()) {
+            return tool_error_result(format!("Failed writing texture pack to {:?}: {}", p, e));
+        }
+    }
+
+    // Before (preset fallback) | after (AI textures), camera view.
+    let mut content: Vec<Value> = Vec::new();
+    let opts = RenderOptions {
+        width: 384,
+        height: 384,
+        view: RenderViewMode::Camera,
+        show_grid: true,
+        show_annotations: false,
+        label_override: None,
+    };
+    let render = |p: Option<std::rc::Rc<crate::ai_texture::TexturePack>>| {
+        with_texture_pack(p, || crate::validate_three_script(&script))
+            .0
+            .ok()
+            .map(|sc| render_scene_rgba(&sc, &opts))
+    };
+    if let (Some((w, h, a)), Some((_, _, b))) =
+        (render(None), render(Some(std::rc::Rc::new(pack.clone()))))
+    {
+        let (w, h) = (w as usize, h as usize);
+        let mut sheet = vec![0u8; w * 2 * h * 4];
+        for y in 0..h {
+            sheet[y * w * 8..y * w * 8 + w * 4].copy_from_slice(&a[y * w * 4..(y + 1) * w * 4]);
+            sheet[y * w * 8 + w * 4..(y + 1) * w * 8]
+                .copy_from_slice(&b[y * w * 4..(y + 1) * w * 4]);
+        }
+        if let Ok(png) = encode_png_rgba_compressed((w * 2) as u32, h as u32, &sheet) {
+            content.push(
+                json!({"type": "image", "data": encode_base64(&png), "mimeType": "image/png"}),
             );
         }
-    };
-
-    jsonrpc_success_response(id, result)
+    }
+    let mut summary = serde_json::to_value(&report).unwrap_or_else(|_| json!({}));
+    summary["note"] = json!("Image: preset fallback (left) | AI textures (right).");
+    match &output_path {
+        Some(p) => summary["texturePackPath"] = json!(p),
+        None => summary["texturePack"] = pack_json,
+    }
+    content.push(
+        json!({"type": "text", "text": serde_json::to_string_pretty(&summary).unwrap_or_default()}),
+    );
+    json!({"content": content, "isError": !report.failed.is_empty()})
 }
 
 fn call_tool_link(args: &Value) -> Value {
@@ -2156,9 +2357,112 @@ mod tests {
                 "three_live_gym_reset",
                 "three_live_gym_step",
                 "three_live_gym_close",
-                "three_live_from_image"
+                "three_live_from_image",
+                "three_live_bake_textures"
             ]
         );
+    }
+
+    #[test]
+    fn test_mcp_bake_textures_and_texture_pack_args() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().unwrap();
+        let img = encode_png_rgba_compressed(64, 64, &crate::ai_texture::synthetic_albedo(2, 64))
+            .unwrap();
+        let reply =
+            serde_json::to_string(&json!({"data": [{"b64_json": encode_base64(&img)}]})).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut req = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&chunk[..n]);
+                if let Some(h) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&req[..h]).to_ascii_lowercase();
+                    let len = head
+                        .lines()
+                        .find_map(|l| {
+                            l.strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if req.len() >= h + 4 + len {
+                        let body: Value = serde_json::from_slice(&req[h + 4..h + 4 + len]).unwrap();
+                        assert!(body["prompt"].as_str().unwrap().starts_with("mossy stone"));
+                        assert_eq!(body["model"], "img-test");
+                        break;
+                    }
+                }
+            }
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply.len(),
+                reply
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.read(&mut chunk);
+        });
+        let code = "const w = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.2), new THREE.MeshStandardMaterial());\nw.name = 'Wall';\nw.position.y = 0.5;\nw.userData.xr = { material: { preset: 'brick', prompt: 'mossy stone', size: 256 } };\nscene.add(w);\nscene.add(new THREE.AmbientLight(0xffffff, 0.8));";
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+                "name": "three_live_bake_textures",
+                "arguments": {
+                    "code": code,
+                    "aiImageEndpoint": format!("http://{}/v1/images/generations", addr),
+                    "aiImageModel": "img-test"
+                }
+            }
+        });
+        let resp = handle_mcp_request(&req).unwrap();
+        handle.join().unwrap();
+        let result = &resp["result"];
+        assert_eq!(result["isError"], json!(false), "{result}");
+        let blocks = result["content"].as_array().unwrap();
+        assert_eq!(blocks[0]["type"], "image");
+        let summary: Value = serde_json::from_str(blocks[1]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(summary["generated"].as_array().unwrap().len(), 1);
+        assert_eq!(summary["generated"][0]["meshes"], json!(["Wall"]));
+        let pack = summary["texturePack"].clone();
+        assert_eq!(pack["entries"].as_object().unwrap().len(), 1);
+
+        // The pack resolves the prompt in other tools; a broken pack is a tool error.
+        let convert = |tp: Value| {
+            handle_mcp_request(&json!({
+                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                "params": {"name": "three_live_validate", "arguments": {"code": code, "texturePack": tp}}
+            }))
+            .unwrap()
+        };
+        assert_eq!(convert(pack.clone())["result"]["isError"], json!(false));
+        let bad = convert(json!({"format": "nope"}));
+        assert_eq!(bad["result"]["isError"], json!(true), "{bad}");
+        // Nothing to generate on a second bake with the pack.
+        let again = handle_mcp_request(&json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "three_live_bake_textures", "arguments": {"code": code, "texturePack": pack}}
+        }))
+        .unwrap();
+        let blocks = again["result"]["content"].as_array().unwrap();
+        let s2: Value =
+            serde_json::from_str(blocks.last().unwrap()["text"].as_str().unwrap()).unwrap();
+        assert_eq!(s2["reused"].as_array().unwrap().len(), 1);
+        assert!(s2["generated"].as_array().unwrap().is_empty());
+        // Tool schemas advertise the pack arguments.
+        let defs = mcp_tool_definitions();
+        let render =
+            defs.as_array().unwrap().iter().find(|t| t["name"] == "three_live_render").unwrap();
+        assert!(render["inputSchema"]["properties"]["texturePack"].is_object());
     }
 
     #[test]

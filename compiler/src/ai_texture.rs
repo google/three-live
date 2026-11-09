@@ -527,6 +527,157 @@ pub fn register_native_texture_callables(context: &mut Context) -> JsResult<()> 
 }
 
 // ---------------------------------------------------------------------------------------------
+// Generation (CLI / MCP bake): OpenAI-compatible Images endpoints
+// ---------------------------------------------------------------------------------------------
+
+/// Appended to every prompt sent to an image provider (shared with `ai-texture.ts`).
+pub const TEXTURE_PROMPT_SUFFIX: &str = " Seamless tileable PBR albedo texture, flat even lighting, orthographic top-down view, no perspective, no shadows, no text.";
+
+/// JSON body for `POST /v1/images/generations`.
+pub fn image_request_body(spec: &TextureSpec, model: Option<&str>) -> Value {
+    let mut body = json!({
+        "prompt": format!("{}{}", spec.prompt, TEXTURE_PROMPT_SUFFIX),
+        "n": 1,
+        "size": "1024x1024",
+        "response_format": "b64_json",
+    });
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        body["model"] = json!(m);
+    }
+    body
+}
+
+/// Extracts the image bytes from an Images API response (`data[0].b64_json`, or a
+/// `data:image/...;base64` URL). Remote image URLs are refused.
+pub fn parse_image_response(body: &str) -> Result<Vec<u8>, String> {
+    let v: Value = serde_json::from_str(body)
+        .map_err(|_| "image endpoint returned non-JSON content".to_string())?;
+    if let Some(err) = v.get("error") {
+        let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown error");
+        return Err(format!("image endpoint error: {}", msg));
+    }
+    let item = v.get("data").and_then(|d| d.get(0)).ok_or("image endpoint response had no data")?;
+    let b64 = if let Some(b) = item.get("b64_json").and_then(Value::as_str) {
+        b
+    } else if let Some(u) = item.get("url").and_then(Value::as_str) {
+        u.strip_prefix("data:image/").and_then(|r| r.split_once(";base64,")).map(|(_, b)| b).ok_or(
+            "image endpoint returned an image URL; use response_format \"b64_json\"".to_string(),
+        )?
+    } else {
+        return Err("image endpoint response had no image".to_string());
+    };
+    crate::render::decode_base64_str(b64, MAX_SOURCE_IMAGE_BYTES)
+        .ok_or_else(|| "image is not valid base64 or exceeds 16 MB".to_string())
+}
+
+/// Generates one texture image through an OpenAI-compatible Images endpoint.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn generate_texture_http(
+    endpoint: &str,
+    api_key: Option<&str>,
+    model: Option<&str>,
+    spec: &TextureSpec,
+) -> Result<Vec<u8>, String> {
+    let body = serde_json::to_vec(&image_request_body(spec, model))
+        .map_err(|e| format!("failed serializing image request: {}", e))?;
+    let resp = crate::ai_image::post_json_raw(endpoint, api_key, &body)?;
+    parse_image_response(&resp)
+}
+
+/// Options for [`bake_textures`].
+#[derive(Debug, Clone, Default)]
+pub struct BakeOptions {
+    /// Regenerate even when the pack already has the texture.
+    pub force: bool,
+    /// Only textures used by these node names (empty = all).
+    pub only: Vec<String>,
+}
+
+/// One texture handled by [`bake_textures`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BakedTexture {
+    pub key: String,
+    pub prompt: String,
+    pub size: u32,
+    pub seed: u32,
+    pub meshes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Result of [`bake_textures`].
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BakeReport {
+    /// Newly generated (or regenerated with `force`).
+    pub generated: Vec<BakedTexture>,
+    /// Already in the pack and kept.
+    pub reused: Vec<BakedTexture>,
+    /// Generation failed; the scene keeps its preset for these.
+    pub failed: Vec<BakedTexture>,
+}
+
+/// Node names using each texture key (`userData.xr.material.prompt`).
+pub fn texture_meshes(scene: &crate::scene::SceneGraph) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for n in &scene.nodes {
+        let Some(mat) = n.xr_traits.as_ref().and_then(|x| x.get("material")) else {
+            continue;
+        };
+        if let Some(spec) = TextureSpec::from_json(mat) {
+            out.entry(spec.key()).or_default().push(n.name.clone());
+        }
+    }
+    out
+}
+
+/// Compiles `script` against `pack`, generates the missing (or, with `force`, all requested)
+/// textures through `generate`, and adds them to `pack`.
+pub fn bake_textures<F>(
+    script: &str,
+    pack: &mut TexturePack,
+    opts: &BakeOptions,
+    mut generate: F,
+) -> Result<BakeReport, String>
+where
+    F: FnMut(&TextureSpec) -> Result<(Vec<u8>, Value), String>,
+{
+    let snapshot = Rc::new(pack.clone());
+    let (scene, lookups) =
+        with_texture_pack(Some(snapshot), || crate::validate_three_script(script));
+    let scene = scene?;
+    let meshes = texture_meshes(&scene);
+    let mut report = BakeReport::default();
+    for l in lookups {
+        let used_by = meshes.get(&l.key).cloned().unwrap_or_default();
+        if !opts.only.is_empty() && !used_by.iter().any(|m| opts.only.contains(m)) {
+            continue;
+        }
+        let mut item = BakedTexture {
+            key: l.key.clone(),
+            prompt: l.spec.prompt.clone(),
+            size: l.spec.size,
+            seed: l.spec.seed,
+            meshes: used_by,
+            error: None,
+        };
+        if l.hit && !opts.force {
+            report.reused.push(item);
+            continue;
+        }
+        match generate(&l.spec)
+            .and_then(|(img, prov)| add_generated_texture(pack, &l.spec, &img, prov))
+        {
+            Ok(_) => report.generated.push(item),
+            Err(e) => {
+                item.error = Some(e);
+                report.failed.push(item);
+            }
+        }
+    }
+    Ok(report)
+}
+
+// ---------------------------------------------------------------------------------------------
 // `ai_call` ops (mobile apps reuse the Rust implementation)
 // ---------------------------------------------------------------------------------------------
 
@@ -580,6 +731,26 @@ pub fn texture_pack_add_call(req: &Value) -> Value {
         Ok(json!({"key": key, "pack": pack.to_json()?}))
     };
     run().unwrap_or_else(|e| json!({"error": e}))
+}
+
+/// `{"op": "texture_image_request", "spec": {...}, "model"?}` → `{"body"}` (the Images API
+/// request JSON, so native apps send exactly what the CLI and Web send).
+pub fn texture_image_request_call(req: &Value) -> Value {
+    match req.get("spec").and_then(TextureSpec::from_json) {
+        Some(spec) => json!({
+            "key": spec.key(),
+            "body": image_request_body(&spec, req.get("model").and_then(Value::as_str)),
+        }),
+        None => json!({"error": "invalid 'spec'"}),
+    }
+}
+
+/// `{"op": "texture_image_parse", "body": "<response JSON>"}` → `{"image": base64}`.
+pub fn texture_image_parse_call(req: &Value) -> Value {
+    match parse_image_response(req.get("body").and_then(Value::as_str).unwrap_or("")) {
+        Ok(img) => json!({"image": crate::mcp::encode_base64(&img)}),
+        Err(e) => json!({"error": e}),
+    }
 }
 
 /// `{"op": "texture_derive", "albedo": base64 RGBA8, "size", "normalStrength"?, "roughness"?,
@@ -792,6 +963,90 @@ mod tests {
         assert_eq!(lookups.len(), 2);
         assert!(lookups[0].hit && !lookups[1].hit);
         assert_eq!(lookups[1].spec.prompt, "marble");
+    }
+
+    #[test]
+    fn prompt_suffix_matches_the_web_plugin() {
+        let ts = include_str!("../../three-live/src/plugins/ai-texture.ts");
+        assert!(ts.contains(TEXTURE_PROMPT_SUFFIX), "ai-texture.ts TEXTURE_PROMPT_SUFFIX differs");
+    }
+
+    #[test]
+    fn image_requests_and_responses() {
+        let spec = TextureSpec::new("rusty steel", Some(512.0), None).unwrap();
+        let body = image_request_body(&spec, Some(" gpt-image-1 "));
+        assert_eq!(body["prompt"], format!("rusty steel{}", TEXTURE_PROMPT_SUFFIX));
+        assert_eq!(body["model"], "gpt-image-1");
+        assert_eq!(body["response_format"], "b64_json");
+        assert!(image_request_body(&spec, None).get("model").is_none());
+        let png = crate::render::encode_png_rgba_compressed(2, 2, &[9u8; 16]).unwrap();
+        let b64 = crate::mcp::encode_base64(&png);
+        assert_eq!(
+            parse_image_response(&json!({"data": [{"b64_json": b64}]}).to_string()).unwrap(),
+            png
+        );
+        let data_url = format!("data:image/png;base64,{}", b64);
+        assert_eq!(
+            parse_image_response(&json!({"data": [{"url": data_url}]}).to_string()).unwrap(),
+            png
+        );
+        assert!(parse_image_response(&json!({"data": [{"url": "https://x/y.png"}]}).to_string())
+            .unwrap_err()
+            .contains("b64_json"));
+        assert!(parse_image_response(&json!({"error": {"message": "quota"}}).to_string())
+            .unwrap_err()
+            .contains("quota"));
+        assert!(parse_image_response("<html>").is_err());
+        let r = texture_image_request_call(&json!({"spec": {"prompt": "a"}, "model": "m"}));
+        assert_eq!(r["body"]["model"], "m");
+        let p = texture_image_parse_call(
+            &json!({"body": json!({"data": [{"b64_json": b64}]}).to_string()}),
+        );
+        assert!(p["image"].is_string());
+    }
+
+    #[test]
+    fn bake_generates_misses_and_reuses_hits() {
+        let script = r#"
+            const a = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+            a.name = 'Wall';
+            a.userData.xr = { material: { preset: 'brick', prompt: 'mossy stone', size: 256 } };
+            scene.add(a);
+            const b = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+            b.name = 'Floor';
+            b.position.x = 2;
+            b.userData.xr = { material: { preset: 'concrete', prompt: 'terrazzo', size: 256 } };
+            scene.add(b);
+            const c = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+            c.name = 'Rug';
+            c.position.x = 4;
+            c.userData.xr = { material: { preset: 'fabric', prompt: 'fails', size: 256 } };
+            scene.add(c);
+        "#;
+        let png =
+            crate::render::encode_png_rgba_compressed(64, 64, &synthetic_albedo(2, 64)).unwrap();
+        let mut calls = Vec::new();
+        let mut gen = |s: &TextureSpec| {
+            calls.push(s.prompt.clone());
+            if s.prompt == "fails" {
+                Err("provider refused".to_string())
+            } else {
+                Ok((png.clone(), json!({"provider": "fake"})))
+            }
+        };
+        let mut pack = TexturePack::default();
+        let only = BakeOptions { force: false, only: vec!["Wall".into()] };
+        let r = bake_textures(script, &mut pack, &only, &mut gen).unwrap();
+        assert_eq!(r.generated.len(), 1);
+        assert_eq!(r.generated[0].meshes, vec!["Wall".to_string()]);
+        let r = bake_textures(script, &mut pack, &BakeOptions::default(), &mut gen).unwrap();
+        assert_eq!((r.generated.len(), r.reused.len(), r.failed.len()), (1, 1, 1));
+        assert_eq!(r.failed[0].error.as_deref(), Some("provider refused"));
+        assert_eq!(pack.entries.len(), 2);
+        let force = BakeOptions { force: true, only: vec!["Floor".into()] };
+        let r = bake_textures(script, &mut pack, &force, &mut gen).unwrap();
+        assert_eq!(r.generated.len(), 1);
+        assert_eq!(calls, vec!["mossy stone", "terrazzo", "fails", "terrazzo"]);
     }
 
     #[test]
