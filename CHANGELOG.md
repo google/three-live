@@ -26,6 +26,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **AI PBR textures, core (B5a):** `userData.xr.material` accepts an optional
+    `prompt` (plus `size: 256 | 512 | 1024` and `seed`) next to its A8 `preset`.
+    Compiling stays a pure function of `(script, texture pack)`: a texture pack
+    maps an FNV-1a 64 content key of the canonical `{prompt, size, seed}` to a
+    seamless albedo PNG, and the normal and occlusion-roughness-metalness maps
+    are re-derived on-device with byte-identical JS and Rust kernels
+    (`compiler/src/ai_texture.rs`, shared fixture
+    `three-live/tests/fixtures/texture_cases.json`). Pack misses render the
+    preset (or the plain material color). New `ai_call` ops `texture_key`,
+    `texture_derive`, `texture_pack_validate`, and `texture_pack_add`, and new
+    diagnostic `TL206` (prompt without a preset, empty, or longer than 500
+    characters). The compiler never calls an image provider; generation arrives
+    in B5b–B5d.
+
 -   **Runtime Image → Scene (`compileFromImage`, B4):** Synthesizes procedural
     Three.js scenes from photos, sketches, or blueprints across Web
     (`el.compileFromImage(image, { prompt, priors, maxDimension, quality,

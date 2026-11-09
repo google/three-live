@@ -1,0 +1,121 @@
+{
+  "_comment": "Shared by three-live/tests/three_procedural_test.ts and compiler/src/ai_texture.rs. Regenerate only together with both implementations.",
+  "keys": [
+    {
+      "prompt": "  Weathered   stone\twall  ",
+      "size": 512,
+      "seed": 1,
+      "canonicalPrompt": "Weathered stone wall",
+      "canonicalSize": 512,
+      "canonicalSeed": 1,
+      "key": "47cbe9605f790cd4"
+    },
+    {
+      "prompt": "weathered stone wall",
+      "canonicalPrompt": "weathered stone wall",
+      "canonicalSize": 512,
+      "canonicalSeed": 1,
+      "key": "942b10fa1b2dea34"
+    },
+    {
+      "prompt": "Mossy\nKyoto temple stone, seamless",
+      "size": 1000,
+      "seed": 7.4,
+      "canonicalPrompt": "Mossy Kyoto temple stone, seamless",
+      "canonicalSize": 1024,
+      "canonicalSeed": 7,
+      "key": "8b6408592b2e4879"
+    },
+    {
+      "prompt": "café tiles 🧱",
+      "size": 300,
+      "seed": -2.5,
+      "canonicalPrompt": "café tiles 🧱",
+      "canonicalSize": 256,
+      "canonicalSeed": 3,
+      "key": "4b95364a77b857d7"
+    },
+    {
+      "prompt": "x",
+      "size": 700,
+      "seed": 4294967297,
+      "canonicalPrompt": "x",
+      "canonicalSize": 512,
+      "canonicalSeed": 1,
+      "key": "f4db10fdaaddc072"
+    },
+    {
+      "prompt": "   ",
+      "size": 512,
+      "seed": 1
+    },
+    {
+      "prompt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 512,
+      "seed": 1
+    },
+    {
+      "prompt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 256,
+      "seed": 0,
+      "canonicalPrompt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "canonicalSize": 256,
+      "canonicalSeed": 0,
+      "key": "92322e68aebe6dba"
+    }
+  ],
+  "derive": [
+    {
+      "name": "gradient",
+      "albedo": 0,
+      "size": 32,
+      "normalStrength": 1.0,
+      "roughness": 0.6,
+      "metalness": 0.0,
+      "hashes": [
+        707320261,
+        3328598973,
+        2701832533
+      ]
+    },
+    {
+      "name": "checker",
+      "albedo": 1,
+      "size": 32,
+      "normalStrength": 2.0,
+      "roughness": 0.8,
+      "metalness": 1.0,
+      "hashes": [
+        2696945093,
+        2249024837,
+        3823793605
+      ]
+    },
+    {
+      "name": "noise",
+      "albedo": 2,
+      "size": 48,
+      "normalStrength": 0.5,
+      "roughness": 0.35,
+      "metalness": 0.25,
+      "hashes": [
+        3879305753,
+        1065932193,
+        1627553333
+      ]
+    },
+    {
+      "name": "tiny",
+      "albedo": 2,
+      "size": 5,
+      "normalStrength": 1.0,
+      "roughness": 0.5,
+      "metalness": 0.0,
+      "hashes": [
+        3622647971,
+        534438318,
+        2581938984
+      ]
+    }
+  ]
+}

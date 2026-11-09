@@ -17,6 +17,7 @@
 pub mod ai_edit;
 pub mod ai_image;
 pub mod ai_select;
+pub mod ai_texture;
 pub mod ai_voice;
 pub mod constants;
 pub mod engine;

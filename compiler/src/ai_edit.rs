@@ -249,7 +249,9 @@ fn selection_arg(req: &Value) -> Vec<String> {
 
 /// One JSON request → one JSON response; the single entry point mobile apps call.
 ///
-/// Ops: `messages`, `repair`, `extract`, `validate`, `describe`, plus the voice ops handled by
+/// Ops: `messages`, `repair`, `extract`, `validate`, `describe`, the image ops (`image_*`), the AI
+/// texture ops (`texture_key`, `texture_derive`, `texture_pack_validate`, `texture_pack_add`), plus
+/// the voice ops handled by
 /// [`crate::ai_voice::voice_call`] (`voice_setup`, `voice_parse`, `voice_audio`, `voice_text`,
 /// `voice_tool_result`, `voice_tools`).
 pub fn ai_call(request: &str) -> String {
@@ -302,6 +304,10 @@ pub fn ai_call(request: &str) -> String {
         "image_messages" => crate::ai_image::image_messages_call(&req),
         "image_validate" => crate::ai_image::image_validate_call(&req),
         "image_repair" => crate::ai_image::image_repair_call(&req),
+        "texture_key" => crate::ai_texture::texture_key_call(&req),
+        "texture_derive" => crate::ai_texture::texture_derive_call(&req),
+        "texture_pack_validate" => crate::ai_texture::texture_pack_validate_call(&req),
+        "texture_pack_add" => crate::ai_texture::texture_pack_add_call(&req),
         _ if op.starts_with("voice_") => crate::ai_voice::voice_call(op, &req),
         _ => json!({"error": format!("unknown op '{}'", op)}),
     };

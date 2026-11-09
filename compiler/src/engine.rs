@@ -112,6 +112,10 @@ impl ThreeEngine {
         register_native_material_callables(&mut context)
             .map_err(|e| format!("Failed to register native material callables: {}", e))?;
 
+        // 2.1c. Register the AI texture pack lookup (`userData.xr.material.prompt`, B5)
+        crate::ai_texture::register_native_texture_callables(&mut context)
+            .map_err(|e| format!("Failed to register native texture callables: {}", e))?;
+
         // 2.2. Initialize standard Web encoding polyfills backed by native Rust UTF-8 hooks
         let polyfills = r#"
             if (typeof TextEncoder === 'undefined') {
@@ -323,7 +327,9 @@ impl ThreeEngine {
                     '__three_live_native_f32_array__',
                     '__three_live_native_index_array__',
                     '__three_live_native_compute_vertex_normals__',
-                    '__three_live_native_material_preset__'
+                    '__three_live_native_material_preset__',
+                    '__three_live_native_texture_pack__',
+                    '__three_live_native_texture_pack_token__'
                 ];
                 for (const hookName of nativeHooks) {
                     if (typeof globalThis[hookName] === 'function') {

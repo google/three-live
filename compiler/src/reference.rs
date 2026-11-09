@@ -171,7 +171,7 @@ fn check_dims(w: u64, h: u64) -> Result<(), String> {
 // PNG (all color types, bit depths 1/2/4/8/16, tRNS, Adam7)
 // ---------------------------------------------------------------------------------------------
 
-fn decode_png(png: &[u8]) -> Result<ReferenceImage, String> {
+pub(crate) fn decode_png(png: &[u8]) -> Result<ReferenceImage, String> {
     let bad = |m: &str| format!("Invalid PNG reference: {}", m);
     let mut pos = 8usize;
     let mut ihdr: Option<(u32, u32, u8, u8, u8)> = None;
@@ -416,7 +416,7 @@ fn convert_png_pixel(
 // JPEG (baseline + progressive via `jpeg-decoder`, EXIF orientation)
 // ---------------------------------------------------------------------------------------------
 
-fn decode_jpeg(bytes: &[u8]) -> Result<ReferenceImage, String> {
+pub(crate) fn decode_jpeg(bytes: &[u8]) -> Result<ReferenceImage, String> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut dec = jpeg_decoder::Decoder::new(bytes);
         dec.read_info().map_err(|e| format!("Invalid JPEG reference: {}", e))?;
@@ -550,7 +550,7 @@ fn downscale_to(img: ReferenceImage, max_dim: u32) -> ReferenceImage {
 }
 
 /// Area-average resample (used for downscaling; falls back to nearest when upscaling).
-fn resample_area(img: &ReferenceImage, ow: u32, oh: u32) -> Vec<u8> {
+pub(crate) fn resample_area(img: &ReferenceImage, ow: u32, oh: u32) -> Vec<u8> {
     let (sw, sh) = (img.width as usize, img.height as usize);
     let (ow, oh) = (ow as usize, oh as usize);
     let mut out = vec![0u8; ow * oh * 4];

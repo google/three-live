@@ -376,8 +376,17 @@ pub fn generate_material_preset(p: &PresetParams) -> PresetMaps {
             height[y * n + x] = t[3];
         }
     }
+    let normal = height_to_normal(&height, n, p.normal_strength);
+    PresetMaps { albedo, normal, orm }
+}
+
+/// Converts a seamlessly wrapping `n × n` height field into a tangent-space normal map (glTF /
+/// OpenGL convention) using wrap-around central differences. Shared by the presets and by AI
+/// textures (`crate::ai_texture`); mirrors `heightToNormal` in `procedural.ts`.
+pub fn height_to_normal(height: &[f64], n: usize, normal_strength: f64) -> Vec<u8> {
+    let nf = n as f64;
     let mut normal = vec![0u8; n * n * 4];
-    let sscale = p.normal_strength * nf * 0.0625;
+    let sscale = normal_strength * nf * 0.0625;
     for y in 0..n {
         let yu = (y + n - 1) % n;
         let yd = (y + 1) % n;
@@ -396,7 +405,13 @@ pub fn generate_material_preset(p: &PresetParams) -> PresetMaps {
             normal[o + 3] = 255;
         }
     }
-    PresetMaps { albedo, normal, orm }
+    normal
+}
+
+/// Quantizes a `[0, 1]` channel value to a byte (round half up, clamped).
+#[inline]
+pub(crate) fn unit_to_byte(v: f64) -> u8 {
+    to_byte(v)
 }
 
 fn arg_f64(args: &[JsValue], i: usize, ctx: &mut Context) -> JsResult<f64> {

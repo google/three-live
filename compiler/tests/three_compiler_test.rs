@@ -4455,3 +4455,94 @@ fn test_a8_material_presets_use_native_kernels_and_export() {
     assert!(ok.valid, "12 textures pass: {:?}", ok.diagnostics);
     assert!(transcode_three_to_glb(&flat).is_ok());
 }
+
+// ---------------------------------------------------------------------------------------------
+// B5: AI textures (`userData.xr.material.prompt`) resolved from a texture pack
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn test_b5_ai_textures_resolve_from_the_active_pack() {
+    use std::rc::Rc;
+    use three_live_compiler::ai_texture::{
+        derive_texture_maps, synthetic_albedo, with_texture_pack, PackEntry, TexturePack,
+        TextureSpec,
+    };
+    let script = r#"
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.2),
+            new THREE.MeshStandardMaterial({ color: 0x336699 }));
+        wall.name = 'MossWall';
+        wall.position.set(0, 0.5, 0);
+        wall.userData.xr = { material: { preset: 'brick', prompt: ' mossy  stone ', size: 256, seed: 2 } };
+        scene.add(wall);
+        const floor = new THREE.Mesh(new THREE.BoxGeometry(2, 0.1, 2),
+            new THREE.MeshStandardMaterial({ color: 0x336699 }));
+        floor.name = 'Floor';
+        floor.userData.xr = { material: { preset: 'concrete', prompt: 'polished terrazzo', size: 32 } };
+        scene.add(floor);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    "#;
+    let spec = TextureSpec::new("mossy stone", Some(256.0), Some(2.0)).unwrap();
+    let rgba = synthetic_albedo(2, 256);
+    let mut pack = TexturePack::default();
+    pack.entries.insert(
+        spec.key(),
+        PackEntry { spec: spec.clone(), rgba: rgba.clone(), provenance: serde_json::Value::Null },
+    );
+    let (sg, lookups) = with_texture_pack(Some(Rc::new(pack)), || {
+        three_live_compiler::validate_three_script(script).expect("AI texture SceneGraph")
+    });
+    assert_eq!(lookups.len(), 2, "{:?}", lookups);
+    assert!(lookups[0].hit && lookups[0].key == spec.key());
+    assert!(
+        !lookups[1].hit
+            && lookups[1].spec.prompt == "polished terrazzo"
+            && lookups[1].spec.size == 256
+    );
+
+    let decode = |uri: &str| {
+        let png = three_live_compiler::load_reference_bytes(uri).unwrap();
+        three_live_compiler::decode_reference_image(&png).unwrap()
+    };
+    let wall = &sg.materials[0];
+    let (albedo, size) = decode(wall.base_color_texture.as_deref().unwrap());
+    assert_eq!(size, [256, 256]);
+    assert_eq!(albedo.rgba, rgba, "exported albedo == pack albedo");
+    let (normal, _) = decode(wall.normal_texture.as_deref().unwrap());
+    let (want_normal, _) = derive_texture_maps(&rgba, 256, 1.0, 0.85, 0.0);
+    assert_eq!(normal.rgba, want_normal, "exported normal == derived normal");
+    assert!(wall.base_color[0] > 0.99 && wall.base_color[2] > 0.99, "AI albedo is untinted");
+    // The miss falls back to the 32 px concrete preset.
+    let (_, floor_size) = decode(sg.materials[1].base_color_texture.as_deref().unwrap());
+    assert_eq!(floor_size, [32, 32]);
+
+    // Without an active pack the same script compiles to the presets (pure, offline).
+    let plain = three_live_compiler::validate_three_script(script).expect("preset fallback");
+    let (_, plain_size) = decode(plain.materials[0].base_color_texture.as_deref().unwrap());
+    assert_eq!(plain_size, [256, 256]);
+    assert_ne!(
+        plain.materials[0].base_color_texture, wall.base_color_texture,
+        "no pack → brick preset, not the AI albedo"
+    );
+}
+
+#[test]
+fn test_b5_prompt_without_preset_reports_tl206() {
+    let script = r#"
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.2),
+            new THREE.MeshStandardMaterial({ color: 0x336699 }));
+        wall.name = 'Wall';
+        wall.position.set(0, 0.5, 0);
+        wall.userData.xr = { material: { prompt: 'weathered stone' } };
+        scene.add(wall);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    "#;
+    let report = three_live_compiler::validate_and_lint_scene(script, "prompt.js", 1.5);
+    assert!(report.valid, "{:?}", report.diagnostics);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "TL206"),
+        "expected TL206, got {:?}",
+        report.diagnostics
+    );
+    let sg = three_live_compiler::validate_three_script(script).expect("plain color fallback");
+    assert!(sg.materials[0].base_color_texture.is_none());
+}

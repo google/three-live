@@ -5219,7 +5219,6 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       if (Array.isArray(res) && res.length === 3) return res as Uint8Array[];
     }
     const albedo = new Uint8Array(N * N * 4);
-    const normal = new Uint8Array(N * N * 4);
     const orm = new Uint8Array(N * N * 4);
     const height = new Float64Array(N * N);
     for (let y = 0; y < N; y++) {
@@ -5238,6 +5237,17 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         height[y * N + x] = t[3];
       }
     }
+    return [albedo, heightToNormal(height, N, ns), orm];
+  };
+
+  // Wrap-around central-difference normals from a seamless height field. Shared
+  // by presets and AI textures; mirrors `height_to_normal` in material_preset.rs.
+  const heightToNormal = (
+    height: ArrayLike<number>,
+    N: number,
+    ns: number,
+  ): Uint8Array => {
+    const normal = new Uint8Array(N * N * 4);
     const sc = ns * N * 0.0625;
     for (let y = 0; y < N; y++) {
       const yu = (y + N - 1) % N;
@@ -5253,7 +5263,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         normal[o + 3] = 255;
       }
     }
-    return [albedo, normal, orm];
+    return normal;
   };
 
   const presetRgb = (val: unknown, def: number): number[] => {
@@ -5323,6 +5333,243 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   }
   Object.freeze(ProceduralTexture);
 
+  // =========================================================================
+  // B5: AI textures (`userData.xr.material.prompt`). Byte-identical mirror of
+  // `compiler/src/ai_texture.rs`. Compiles stay pure: the albedo comes only
+  // from the host-supplied texture pack (`__three_live_native_texture_pack__`
+  // in Boa, `__three_live_texture_pack__` in Web workers); misses fall back to
+  // the preset (or the plain material color).
+  // =========================================================================
+  const MAX_TEX_PROMPT = 500;
+  const texPrompt = (raw: unknown): string | null => {
+    if (typeof raw !== 'string') return null;
+    let out = '';
+    let pend = false;
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw.charCodeAt(i);
+      if (c <= 0x20 || c === 0x7f) {
+        pend = out.length > 0;
+        continue;
+      }
+      if (pend) {
+        out += ' ';
+        pend = false;
+      }
+      out += raw[i];
+    }
+    return out.length === 0 || out.length > MAX_TEX_PROMPT ? null : out;
+  };
+  const texSize = (raw: unknown): number => {
+    const n = typeof raw === 'number' ? raw : NaN;
+    if (!Number.isFinite(n)) return 512;
+    return n <= 384 ? 256 : n <= 768 ? 512 : 1024;
+  };
+  const texSeed = (raw: unknown): number => {
+    const n = typeof raw === 'number' ? raw : NaN;
+    const v = Number.isFinite(n) ? Math.abs(n) : 1;
+    return Math.floor(v + 0.5) % 4294967296;
+  };
+  const texUtf8 = (s: string): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+        const d = s.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d <= 0xdfff) {
+          c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+          i++;
+        } else {
+          c = 0xfffd;
+        }
+      } else if (c >= 0xd800 && c <= 0xdfff) {
+        c = 0xfffd;
+      }
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) {
+        out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      } else {
+        out.push(
+          0xf0 | (c >> 18),
+          0x80 | ((c >> 12) & 63),
+          0x80 | ((c >> 6) & 63),
+          0x80 | (c & 63),
+        );
+      }
+    }
+    return out;
+  };
+  // FNV-1a 64 over UTF-8, as two 32-bit halves (no BigInt needed).
+  const texKey = (prompt: string, size: number, seed: number): string => {
+    const bytes = texUtf8(
+      `three-live-texture\u001f1\u001f${prompt}\u001f${size}\u001f${seed}`,
+    );
+    let hi = 0xcbf29ce4;
+    let lo = 0x84222325;
+    for (const b of bytes) {
+      lo = (lo ^ b) >>> 0;
+      // (hi:lo) * 0x100000001b3 mod 2^64 = (hi:lo) * 0x1b3 + (lo << 40).
+      const l16 = lo & 0xffff;
+      const h16 = lo >>> 16;
+      const a = l16 * 0x1b3;
+      const bb = h16 * 0x1b3 + (a >>> 16);
+      const newLo = ((bb & 0xffff) << 16) | (a & 0xffff);
+      const carry = Math.floor(bb / 0x10000);
+      hi = (Math.imul(hi, 0x1b3) + carry + ((lo << 8) >>> 0)) >>> 0;
+      lo = newLo >>> 0;
+    }
+    return hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
+  };
+  // Canonical `{prompt, size, seed}` (null for empty / oversized prompts).
+  // tslint:disable-next-line:no-any Material spec bag.
+  const canonicalTextureSpec = (o: any) => {
+    const prompt = texPrompt(o?.prompt);
+    if (prompt === null) return null;
+    const size = texSize(o?.size);
+    const seed = texSeed(o?.seed);
+    return {prompt, size, seed, key: texKey(prompt, size, seed)};
+  };
+  // [normal, orm] from a seamless N×N albedo: high-passed integer luminance
+  // (81·Y − Σ9×9 Y, wrap-around) → height → heightToNormal; ORM G =
+  // roughness + 0.35·(0.5 − h), B = metalness.
+  const deriveTextureMaps = (
+    albedo: Uint8Array,
+    N: number,
+    ns: number,
+    rough: number,
+    metal: number,
+  ): Uint8Array[] => {
+    const lum = new Float64Array(N * N);
+    for (let i = 0; i < N * N; i++) {
+      const o = i * 4;
+      lum[i] = 2126 * albedo[o] + 7152 * albedo[o + 1] + 722 * albedo[o + 2];
+    }
+    const r = Math.min(4, Math.floor((N - 1) / 2));
+    const hsum = new Float64Array(N * N);
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        let s = 0;
+        for (let d = 0; d <= 2 * r; d++)
+          s += lum[y * N + ((x + N + d - r) % N)];
+        hsum[y * N + x] = s;
+      }
+    }
+    const taps = (2 * r + 1) * (2 * r + 1);
+    const hp = new Float64Array(N * N);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        let s = 0;
+        for (let d = 0; d <= 2 * r; d++) {
+          s += hsum[((y + N + d - r) % N) * N + x];
+        }
+        const v = taps * lum[y * N + x] - s;
+        hp[y * N + x] = v;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    const range = hi - lo;
+    const height = new Float64Array(N * N);
+    for (let i = 0; i < N * N; i++) {
+      height[i] = range === 0 ? 0.5 : (hp[i] - lo) / range;
+    }
+    const nsC = Number.isFinite(ns) ? Math.max(0, Math.min(8, ns)) : 1;
+    const normal = heightToNormal(height, N, nsC);
+    const rC = Number.isFinite(rough) ? Math.max(0, Math.min(1, rough)) : 0;
+    const mB = pByte(
+      Number.isFinite(metal) ? Math.max(0, Math.min(1, metal)) : 0,
+    );
+    const orm = new Uint8Array(N * N * 4);
+    for (let i = 0; i < N * N; i++) {
+      const o = i * 4;
+      orm[o] = 255;
+      orm[o + 1] = pByte(rC + 0.35 * (0.5 - height[i]));
+      orm[o + 2] = mB;
+      orm[o + 3] = 255;
+    }
+    return [normal, orm];
+  };
+  // tslint:disable-next-line:no-any Cached AI texture sets.
+  const aiMemo = new Map<string, any>();
+  const aiPackIds = new WeakMap<object, number>();
+  let aiPackSeq = 0;
+  // Resolves `userData.xr.material.prompt` against the texture pack. Returns
+  // spreadable `{map, normalMap?, roughnessMap, metalnessMap}` on a hit, else
+  // null (the caller falls back to the preset / plain color).
+  // tslint:disable-next-line:no-any Material spec bag.
+  const aiTextureMaps = (o: any, kind: number): any => {
+    const spec = canonicalTextureSpec(o);
+    if (!spec) return null;
+    const {prompt, size, seed, key} = spec;
+    const rough = clamp01(
+      finNum(o.roughness, kind >= 0 ? PRESET_DEFAULTS[kind][3] : 0.8),
+    );
+    const metal = clamp01(finNum(o.metalness, 0));
+    const ns = Math.max(0, Math.min(8, finNum(o.normalStrength, 1)));
+    // Textures are shared within one compile (scene texture quotas count
+    // objects) but never across packs: the memo is keyed by a per-compile pack
+    // token (Boa) or the pack object's identity (Web workers).
+    const g = globalThis as Record<string, unknown>;
+    const nat = g['__three_live_native_texture_pack__'];
+    const pack = g['__three_live_texture_pack__'];
+    let token = 0;
+    if (typeof nat === 'function') {
+      const tok = g['__three_live_native_texture_pack_token__'];
+      token = typeof tok === 'function' ? Number(tok()) || 0 : 0;
+    } else if (pack && typeof pack === 'object') {
+      token = aiPackIds.get(pack) ?? 0;
+      if (!token) aiPackIds.set(pack, (token = ++aiPackSeq));
+    }
+    const memoKey = [token, key, ns, rough, metal].join(',');
+    const hit = token ? aiMemo.get(memoKey) : undefined;
+    if (hit) return {...hit};
+    let maps: Uint8Array[] | null = null;
+    if (typeof nat === 'function') {
+      const res = nat(prompt, size, seed, ns, rough, metal);
+      if (Array.isArray(res) && res.length === 3) maps = res as Uint8Array[];
+    } else {
+      // tslint:disable-next-line:no-any Host-supplied pack entry.
+      const e: any =
+        pack &&
+        typeof pack === 'object' &&
+        Object.prototype.hasOwnProperty.call(pack, key)
+          ? (pack as Record<string, unknown>)[key]
+          : null;
+      if (
+        e &&
+        e.size === size &&
+        e.rgba instanceof Uint8Array &&
+        e.rgba.length === size * size * 4
+      ) {
+        maps = [e.rgba, ...deriveTextureMaps(e.rgba, size, ns, rough, metal)];
+      }
+    }
+    if (!maps) return null;
+    const mk = (bytes: Uint8Array, cs: string, role: string) => {
+      const vc = new VirtualCanvas(size, size);
+      vc._data.set(bytes);
+      vc._ver++;
+      const t = new CanvasTexture(vc);
+      t.flipY = false;
+      t.colorSpace = cs;
+      t.name = `ai_${key}_${role}`;
+      return t;
+    };
+    const ormTex = mk(maps[2], 'srgb-linear', 'orm');
+    // tslint:disable-next-line:no-any Spreadable MeshStandardMaterial params.
+    const out: any = {map: mk(maps[0], 'srgb', 'albedo')};
+    if (ns > 0) out.normalMap = mk(maps[1], 'srgb-linear', 'normal');
+    out.roughnessMap = ormTex;
+    out.metalnessMap = ormTex;
+    if (token) {
+      if (aiMemo.size >= 32) aiMemo.clear();
+      aiMemo.set(memoKey, out);
+    }
+    return {...out};
+  };
+
   // Declarative `mesh.userData.xr.material = 'wood' | { preset, ...opts }`:
   // bakes the preset into the mesh's material (tinted by its color unless
   // `color` is given) without overriding maps the author set explicitly.
@@ -5341,8 +5588,14 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
           ? spec
           : null;
     const name = String(o?.preset ?? o?.type ?? '');
-    if (!o || PRESET_NAMES.indexOf(name) < 0) {
-      if (!presetWarned.has(name)) {
+    const kind = PRESET_NAMES.indexOf(name);
+    const hasPrompt = Boolean(o) && o.prompt !== undefined && o.prompt !== null;
+    // An AI texture (B5) needs the pack; the preset (if any) is the fallback.
+    const ai = hasPrompt ? aiTextureMaps(o, kind) : null;
+    if (!o || (kind < 0 && !ai)) {
+      // A prompt without a preset falls back to the plain material color
+      // (TL206 reports it); only unknown preset names warn here.
+      if (!(hasPrompt && name === '') && !presetWarned.has(name)) {
         presetWarned.add(name);
         console.warn(
           `[three-live] userData.xr.material: unknown preset '${name}' (use ${PRESET_NAMES.join(', ')}).`,
@@ -5371,10 +5624,12 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       }
       node.material = mat = copy;
     }
-    const r = makePreset(name, {
-      ...o,
-      color: o.color ?? (mat._presetTint === 0xffffff ? undefined : mat._presetTint),
-    });
+    const r =
+      ai ??
+      makePreset(name, {
+        ...o,
+        color: o.color ?? (mat._presetTint === 0xffffff ? undefined : mat._presetTint),
+      });
     const owned: Record<string, unknown> = mat._presetMaps || {};
     for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) {
       if (!mat[slot] || mat[slot] === owned[slot]) {
@@ -5420,6 +5675,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     Object.assign(reg.authorNamespace, exportsMap);
     reg.createCanvas = createCanvas;
     reg._procMaterialize = materializePreset;
+    // Host-side helpers for the AI texture pipeline (three-live-ai, B5).
+    reg.canonicalTextureSpec = canonicalTextureSpec;
+    reg.deriveTextureMaps = deriveTextureMaps;
     reg.materializeDeclarativeGeometry = (node: unknown) => {
       reg._cadMaterialize?.(node);
       reg._lodMaterialize?.(node);

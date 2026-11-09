@@ -2296,6 +2296,58 @@ export function validateXRTraits(
   };
 
   // Range checks (TL202)
+  // AI texture prompts (B5, TL206): optional decoration over an A8 preset.
+  const materialObj = asRecord(r['material']);
+  if (
+    materialObj &&
+    materialObj['prompt'] !== undefined &&
+    materialObj['prompt'] !== null
+  ) {
+    const p = materialObj['prompt'];
+    const canon =
+      typeof p === 'string'
+        ? p.replace(/[\u0000-\u0020\u007f]+/g, ' ').replace(/^ | $/g, '')
+        : '';
+    if (canon.length === 0) {
+      pushDiag(
+        'TL206',
+        `userData.xr.material.prompt on node '${nodeName}' must be a non-empty string; ignored.`,
+        "Describe the surface, e.g. prompt: 'weathered temple stone with moss'.",
+      );
+    } else if (canon.length > 500) {
+      pushDiag(
+        'TL206',
+        `userData.xr.material.prompt on node '${nodeName}' is ${canon.length} characters (max 500); ignored.`,
+        'Shorten the prompt to at most 500 characters.',
+        'error',
+      );
+    } else if (
+      materialObj['preset'] === undefined &&
+      materialObj['type'] === undefined
+    ) {
+      pushDiag(
+        'TL206',
+        `userData.xr.material on node '${nodeName}' has a prompt but no preset; until its texture pack entry exists it renders the plain material color.`,
+        "Add an offline fallback such as preset: 'brick' (any THREE.ProceduralTexture preset).",
+      );
+    }
+    const sz = materialObj['size'];
+    if (typeof sz === 'number' && sz !== 256 && sz !== 512 && sz !== 1024) {
+      const snapped = !Number.isFinite(sz)
+        ? 512
+        : sz <= 384
+          ? 256
+          : sz <= 768
+            ? 512
+            : 1024;
+      pushDiag(
+        'TL202',
+        `userData.xr.material.size (${sz}) on node '${nodeName}' is not 256, 512, or 1024; the AI texture uses ${snapped}.`,
+        'Use size: 256, 512, or 1024 for AI textures.',
+        'info',
+      );
+    }
+  }
   const scaleObj = asRecord(r['scale']);
   if (scaleObj) {
     checkRange('scale.min', scaleObj['min'], 0.001, 1000);

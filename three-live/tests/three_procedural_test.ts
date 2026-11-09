@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {registerPlugin} from '../src/plugin';
+import {getSharedRegistry, registerPlugin} from '../src/plugin';
 import {cadPlugin} from '../src/plugins/cad';
 import {
   installProceduralExtension,
@@ -37,6 +37,8 @@ import {
   Vector3,
 } from '../src/three-author';
 import {sceneToCanvas3D, sceneToGLB, sceneToUSDZ} from '../src/three-convert';
+import {validateXRTraits} from '../src/xr-trait-schema';
+import textureFixture from './fixtures/texture_cases.json';
 
 registerPlugin(cadPlugin);
 registerPlugin(proceduralPlugin);
@@ -1410,6 +1412,190 @@ function runProceduralTests(): void {
       (m: any) => m.pbrMetallicRoughness?.baseColorTexture,
     ).length === 2,
     'Declarative preset materials export base color textures',
+  );
+
+  // 17. B5: AI textures (userData.xr.material.prompt) resolved from a pack.
+  const reg = getSharedRegistry() as any;
+  const synth = (kind: number, n: number): Uint8Array => {
+    const out = new Uint8Array(n * n * 4);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const o = (y * n + x) * 4;
+        let rgb: number[];
+        if (kind === 0) {
+          rgb = [(x * 8) & 255, (y * 8) & 255, ((x + y) * 4) & 255];
+        } else if (kind === 1) {
+          rgb =
+            (((x >> 2) + (y >> 2)) & 1) === 1 ? [220, 200, 180] : [40, 50, 60];
+        } else {
+          const h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0;
+          rgb = [h & 255, (h >>> 8) & 255, (h >>> 16) & 255];
+        }
+        out.set([rgb[0], rgb[1], rgb[2], 255], o);
+      }
+    }
+    return out;
+  };
+  for (const c of (textureFixture as any).keys) {
+    const spec = reg.canonicalTextureSpec(c);
+    const ok =
+      c.key === undefined
+        ? spec === null
+        : spec !== null &&
+          spec.prompt === c.canonicalPrompt &&
+          spec.size === c.canonicalSize &&
+          spec.seed === c.canonicalSeed &&
+          spec.key === c.key;
+    assert(
+      ok,
+      `AI texture key for ${JSON.stringify(String(c.prompt).slice(0, 40))} matches the Rust fixture (${spec?.key})`,
+    );
+  }
+  for (const c of (textureFixture as any).derive) {
+    const albedo = synth(c.albedo, c.size);
+    const [nm, orm] = reg.deriveTextureMaps(
+      albedo,
+      c.size,
+      c.normalStrength,
+      c.roughness,
+      c.metalness,
+    );
+    const got = [fnv1a(albedo), fnv1a(nm), fnv1a(orm)];
+    assert(
+      JSON.stringify(got) === JSON.stringify(c.hashes),
+      `AI texture derivation '${c.name}' matches the Rust kernels byte-for-byte (${got.join(',')})`,
+    );
+  }
+
+  const g = globalThis as any;
+  const mossSpec = reg.canonicalTextureSpec({
+    prompt: ' mossy  stone ',
+    size: 256,
+    seed: 2,
+  });
+  const mossRgba = synth(2, 256);
+  g.__three_live_texture_pack__ = {
+    [mossSpec.key]: {size: 256, rgba: mossRgba},
+    // Wrong size for its key: ignored.
+    [reg.canonicalTextureSpec({prompt: 'bad', size: 256}).key]: {
+      size: 512,
+      rgba: new Uint8Array(512 * 512 * 4),
+    },
+  };
+  try {
+    const aiScene = new Scene();
+    const hitMat = new MeshStandardMaterial({color: 0x336699});
+    const hitMesh = new Mesh(new BoxGeometry(1, 1, 1), hitMat);
+    hitMesh.name = 'MossWall';
+    hitMesh.userData.xr = {
+      material: {preset: 'brick', prompt: 'mossy stone', size: 256, seed: 2},
+    };
+    const missMat = new MeshStandardMaterial({color: 0x336699});
+    const missMesh = new Mesh(new BoxGeometry(1, 1, 1), missMat);
+    missMesh.name = 'BrickFallback';
+    missMesh.userData.xr = {
+      material: {preset: 'brick', prompt: 'never generated', size: 32},
+    };
+    const bareMat = new MeshStandardMaterial({color: 0x336699});
+    const bareMesh = new Mesh(new BoxGeometry(1, 1, 1), bareMat);
+    bareMesh.name = 'PromptOnly';
+    bareMesh.userData.xr = {material: {prompt: 'bad', size: 256}};
+    aiScene.add(hitMesh, missMesh, bareMesh);
+    aiScene.updateMatrixWorld(true);
+    const hm = hitMat as any;
+    assert(
+      hm.map?.name === `ai_${mossSpec.key}_albedo` &&
+        fnv1a(hm.map.image._data) === fnv1a(mossRgba) &&
+        hm.normalMap?.name === `ai_${mossSpec.key}_normal` &&
+        hm.roughnessMap === hm.metalnessMap &&
+        hm.color.getHex() === 0xffffff,
+      'Pack hit replaces the preset with the AI albedo plus derived normal and ORM maps (untinted)',
+    );
+    assert(
+      String((missMat as any).map?.name).startsWith('brick_') &&
+        !(bareMat as any).map &&
+        bareMat.color.getHex() === 0x336699,
+      'Pack misses fall back to the preset, or to the plain color without a preset (and wrong-size entries are ignored)',
+    );
+    const aiGltf = sceneToCanvas3D(aiScene).gltf;
+    const hitNode = aiGltf.nodes.find((n: any) => n.name === 'MossWall');
+    assert(
+      aiGltf.materials.filter(
+        (m: any) => m.pbrMetallicRoughness?.baseColorTexture,
+      ).length === 2 && hitNode?.extras?.xr?.material?.prompt === 'mossy stone',
+      'AI textures export as ordinary glTF textures and keep the prompt spec in node extras.xr',
+    );
+  } finally {
+    delete g.__three_live_texture_pack__;
+  }
+  // Purity: once the pack is gone, the same spec compiles to the preset again
+  // (no AI textures memoized across packs), and two meshes sharing a prompt
+  // share one texture set within a compile.
+  const afterScene = new Scene();
+  const afterMat = new MeshStandardMaterial({color: 0x336699});
+  const afterMesh = new Mesh(new BoxGeometry(1, 1, 1), afterMat);
+  afterMesh.name = 'MossWallAgain';
+  afterMesh.userData.xr = {
+    material: {preset: 'brick', prompt: 'mossy stone', size: 256, seed: 2},
+  };
+  afterScene.add(afterMesh);
+  afterScene.updateMatrixWorld(true);
+  g.__three_live_texture_pack__ = {[mossSpec.key]: {size: 256, rgba: mossRgba}};
+  let sharedA: any;
+  let sharedB: any;
+  try {
+    const twinScene = new Scene();
+    const twinA = new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshStandardMaterial(),
+    );
+    twinA.name = 'TwinA';
+    twinA.userData.xr = {
+      material: {preset: 'brick', prompt: 'mossy stone', size: 256, seed: 2},
+    };
+    const twinB = new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshStandardMaterial(),
+    );
+    twinB.name = 'TwinB';
+    twinB.userData.xr = {
+      material: {preset: 'brick', prompt: 'mossy stone', size: 256, seed: 2},
+    };
+    twinScene.add(twinA, twinB);
+    twinScene.updateMatrixWorld(true);
+    sharedA = (twinA.material as any).map;
+    sharedB = (twinB.material as any).map;
+  } finally {
+    delete g.__three_live_texture_pack__;
+  }
+  assert(
+    String((afterMat as any).map?.name).startsWith('brick_') &&
+      sharedA?.name === `ai_${mossSpec.key}_albedo` &&
+      sharedA === sharedB,
+    'AI textures never outlive their pack and are shared by meshes with the same spec',
+  );
+
+  const tl206 = (xr: unknown) =>
+    validateXRTraits(xr, 'Wall').filter(
+      (d) => d.code === 'TL206' || d.code === 'TL202',
+    );
+  const noPreset = tl206({material: {prompt: 'stone'}});
+  const tooLong = tl206({material: {preset: 'brick', prompt: 'a'.repeat(501)}});
+  const emptyPrompt = tl206({material: {preset: 'brick', prompt: '  \n '}});
+  const oddSize = tl206({material: {preset: 'brick', prompt: 'x', size: 300}});
+  const clean = tl206({
+    material: {preset: 'brick', prompt: 'stone', size: 512},
+  });
+  assert(
+    noPreset.length === 1 &&
+      noPreset[0].severity === 'warning' &&
+      tooLong.length === 1 &&
+      tooLong[0].severity === 'error' &&
+      emptyPrompt.length === 1 &&
+      oddSize.length === 1 &&
+      oddSize[0].code === 'TL202' &&
+      clean.length === 0,
+    'TL206 flags prompts without a preset (warning), oversized (error) or empty prompts, and odd AI texture sizes',
   );
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
