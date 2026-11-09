@@ -351,6 +351,12 @@ final class AIEditorTests: XCTestCase {
     XCTAssertTrue(
       imgRes.warnings.isEmpty, "Repaired scene should have 0 warnings: \(imgRes.warnings)")
     XCTAssertEqual(editor.source, cleanDeskScene)
+    guard provider.requests.count >= 2, provider.requests[0].count >= 2,
+      provider.requests[1].count >= 4
+    else {
+      XCTFail("Expected 2 provider requests with repair turn, got: \(provider.requests.count)")
+      return
+    }
     XCTAssertEqual(provider.requests[0][1].imageUrls.count, 1)
     XCTAssertTrue(provider.requests[0][1].imageUrls[0].hasPrefix("data:image/png;base64,"))
     XCTAssertTrue(
