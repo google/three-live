@@ -808,7 +808,7 @@ fn post_http_plain(rest: &str, api_key: Option<&str>, body_bytes: &[u8]) -> Resu
 
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(15))
         .map_err(|e| format!("Failed connecting to AI endpoint {}: {}", host_port, e))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(180)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
 
     let mut req_head = format!(
@@ -858,7 +858,7 @@ fn post_http_plain(rest: &str, api_key: Option<&str>, body_bytes: &[u8]) -> Resu
         let preview: String = body_str.chars().take(240).collect();
         return Err(format!("AI endpoint HTTP {}: {}", status_code, preview));
     }
-    extract_completion_content(&body_str)
+    Ok(body_str)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -873,7 +873,7 @@ fn post_https_curl(
     let mut cmd = Command::new("curl");
     cmd.arg("-sS")
         .arg("--max-time")
-        .arg("60")
+        .arg("180")
         .arg("-X")
         .arg("POST")
         .arg("-H")
@@ -904,8 +904,28 @@ fn post_https_curl(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("HTTPS AI request failed: {}", stderr.trim()));
     }
-    let body_str = String::from_utf8_lossy(&output.stdout).to_string();
-    extract_completion_content(&body_str)
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// POSTs a JSON body to an `http://` (pure-Rust `TcpStream`) or `https://` (`curl`) endpoint
+/// and returns the response body (non-2xx `http://` responses are errors).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn post_json_raw(
+    endpoint: &str,
+    api_key: Option<&str>,
+    body_bytes: &[u8],
+) -> Result<String, String> {
+    let ep = endpoint.trim();
+    if ep.is_empty() || ep.bytes().any(|b| b <= 0x20 || b == 0x7f) {
+        return Err("AI endpoint URL is empty or contains invalid characters.".to_string());
+    }
+    if let Some(rest) = ep.strip_prefix("http://").or_else(|| ep.strip_prefix("HTTP://")) {
+        return post_http_plain(rest, api_key, body_bytes);
+    }
+    if ep.starts_with("https://") || ep.starts_with("HTTPS://") {
+        return post_https_curl(ep, api_key, body_bytes);
+    }
+    Err("AI endpoint must start with http:// or https://.".to_string())
 }
 
 /// Calls an OpenAI-compatible Chat Completions endpoint (`http://` via pure-Rust `TcpStream`
@@ -917,10 +937,6 @@ pub fn complete_ai_chat(
     model: &str,
     messages: &Value,
 ) -> Result<String, String> {
-    let ep = endpoint.trim();
-    if ep.is_empty() || ep.bytes().any(|b| b <= 0x20 || b == 0x7f) {
-        return Err("AI endpoint URL is empty or contains invalid characters.".to_string());
-    }
     let payload = json!({
         "model": if model.trim().is_empty() { DEFAULT_AI_MODEL } else { model.trim() },
         "messages": messages,
@@ -928,13 +944,7 @@ pub fn complete_ai_chat(
     });
     let body_bytes =
         serde_json::to_vec(&payload).map_err(|e| format!("Failed serializing request: {}", e))?;
-    if let Some(rest) = ep.strip_prefix("http://").or_else(|| ep.strip_prefix("HTTP://")) {
-        return post_http_plain(rest, api_key, &body_bytes);
-    }
-    if ep.starts_with("https://") || ep.starts_with("HTTPS://") {
-        return post_https_curl(ep, api_key, &body_bytes);
-    }
-    Err("AI endpoint must start with http:// or https://.".to_string())
+    post_json_raw(endpoint, api_key, &body_bytes).and_then(|b| extract_completion_content(&b))
 }
 
 /// Runs [`compile_from_image_with_provider`] against an OpenAI-compatible HTTP/HTTPS endpoint.
