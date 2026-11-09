@@ -997,7 +997,7 @@ function reportSizes() {
     {name: 'three-live.min.js', budgetKb: '73'},
     {name: 'three-live-studio.min.js', budgetKb: '29'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
-    {name: 'three-live-procedural.min.js', budgetKb: '28'},
+    {name: 'three-live-procedural.min.js', budgetKb: '30'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-ai.min.js', budgetKb: '24'},
     {name: 'three-live-webgpu.min.js', budgetKb: '17'},

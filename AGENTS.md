@@ -31,7 +31,7 @@ Goal                                                                            
 Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 73 KB gz`
 Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots        | `<three-live>` | `three-live-studio.min.js`    | `< 29 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                | `<three-live>` | `three-live-cad.min.js`        | `< 10 KB gz`
-Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers     | `<three-live>` | `three-live-procedural.min.js` | `< 28 KB gz`
+Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers     | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                 | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
 Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select      | `<three-live>` | `three-live-ai.min.js`         | `< 24 KB gz`
 Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`)             | `<three-live>` | `three-live-webgpu.min.js`     | `< 17 KB gz`

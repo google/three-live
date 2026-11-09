@@ -403,7 +403,7 @@ live Three.js scenes:
 *   **Core 3D, CAD, procedural, animation, and WebGPU plugins (`three-live`, 18
     plugins):** Optional domain bundles (`three-live-studio.min.js` at
     `< 29 KB gz`, `three-live-cad.min.js` at `< 10 KB gz`,
-    `three-live-procedural.min.js` at `< 28 KB gz`,
+    `three-live-procedural.min.js` at `< 30 KB gz`,
     `three-live-animation.min.js` at `< 11 KB gz`, `three-live-ai.min.js` at
     `< 24 KB gz`, and `three-live-webgpu.min.js` at `< 17 KB gz`, or
     `< 180 KB gz` combined in `three-live-full.min.js`) add `KHR_interactivity`
@@ -529,7 +529,7 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live.min.js`** | **`< 73 KB gz`** | Standard `<three-live>` + **`three-author`** (live Three.js compiler, `InstancedMesh` GPU instancing, `KHR_interactivity` compiler, 5 tone-mapping modes, contact shadows) + AR packager. |
 |  | **`three-live-studio.min.js`** | **`< 29 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
-|  | **`three-live-procedural.min.js`** | **`< 28 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
+|  | **`three-live-procedural.min.js`** | **`< 30 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
 |  | **`three-live-ai.min.js`** | **`< 24 KB gz`** | Opt-in bring-your-own-LLM scene editing & image-to-scene synthesis: `el.editScene(instruction)` and `el.compileFromImage(image, {prompt, priors})` with sandbox validation, spatial lint checks, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak and Talk-to-Select voice editing: tap/voice selection, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. Also included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-webgpu.min.js`** | **`< 17 KB gz`** | Opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`): compiles multi-thousand-part CAD and glTF assemblies into pre-recorded render bundles backed by storage buffers, with 1×1-scissor `pickMeshGPU` and automatic WebGL2 fallback for WebXR, `bloom`/`outline`, transmission, and custom shaders. |
