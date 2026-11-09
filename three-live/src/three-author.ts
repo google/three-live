@@ -3012,8 +3012,15 @@ export interface ScriptExecutionHandle {
 export type SandboxMode = 'worker' | 'iframe';
 
 /** Options controlling procedural script execution security policy. */
+/** Decoded AI texture pack entries (content key → seamless RGBA8 albedo). */
+export type SandboxTexturePack = Readonly<
+  Record<string, {readonly size: number; readonly rgba: Uint8Array}>
+>;
+
 export interface ScriptExecutionOptions {
   readonly allowClientScripts?: boolean;
+  /** AI textures for `userData.xr.material.prompt` (B5). */
+  readonly texturePack?: SandboxTexturePack | null;
 }
 
 export interface ScriptRunner {
@@ -3027,6 +3034,7 @@ export interface ScriptRunner {
     scriptUrl: string,
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
+    options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void>;
 }
 
@@ -3515,6 +3523,29 @@ function sandboxWorkerMain(
     if (started) return;
     started = true;
 
+    // AI texture pack (B5): plain data read by the procedural plugin. Keep
+    // only well-formed entries; scripts may read it but gain nothing.
+    const tp = data.texturePack;
+    if (tp && typeof tp === 'object') {
+      const clean = Object.create(null);
+      let count = 0;
+      for (const k of Object.keys(tp)) {
+        const e = tp[k];
+        const sz = e && e.size;
+        if (
+          count < 64 &&
+          /^[0-9a-f]{16}$/.test(k) &&
+          (sz === 256 || sz === 512) &&
+          e.rgba instanceof Uint8Array &&
+          e.rgba.length === sz * sz * 4
+        ) {
+          clean[k] = Object.freeze({size: sz, rgba: e.rgba});
+          count++;
+        }
+      }
+      scope.__three_live_texture_pack__ = Object.freeze(clean);
+    }
+
     try {
       let scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
@@ -3854,9 +3885,10 @@ function dispatchValidatedSandboxMessage(
   }
 }
 
-type SandboxExecutionJob =
+type SandboxExecutionJob = (
   | {readonly kind: 'script'; readonly script: string}
-  | {readonly kind: 'url'; readonly scriptUrl: string};
+  | {readonly kind: 'url'; readonly scriptUrl: string}
+) & {readonly texturePack?: SandboxTexturePack | null};
 
 function executeInSandboxIframe(
   job: SandboxExecutionJob,
@@ -3901,12 +3933,14 @@ function executeInSandboxIframe(
             nonce,
             workerSource,
             scriptUrl: job.scriptUrl,
+            texturePack: job.texturePack ?? null,
           }
         : {
             type: 'SANDBOX_RUN',
             nonce,
             workerSource,
             script: job.script,
+            texturePack: job.texturePack ?? null,
           },
       '*',
     );
@@ -4127,9 +4161,15 @@ function runSandboxedJob(
       type: 'EXECUTE_URL',
       scriptUrl: job.scriptUrl,
       nonce,
+      texturePack: job.texturePack ?? null,
     });
   } else {
-    worker.postMessage({type: 'EXECUTE', script: job.script, nonce});
+    worker.postMessage({
+      type: 'EXECUTE',
+      script: job.script,
+      nonce,
+      texturePack: job.texturePack ?? null,
+    });
   }
   return Promise.resolve({terminate: shutdown});
 }
@@ -4192,7 +4232,7 @@ export const authorScriptRunner: ScriptRunner = {
     }
 
     return runSandboxedJob(
-      {kind: 'script', script},
+      {kind: 'script', script, texturePack: options?.texturePack},
       sandbox,
       callbacks,
       reject,
@@ -4203,6 +4243,7 @@ export const authorScriptRunner: ScriptRunner = {
     scriptUrl: string,
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
+    options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void> {
     const reject = makeRunnerReject(callbacks);
 
@@ -4218,7 +4259,11 @@ export const authorScriptRunner: ScriptRunner = {
     }
 
     return runSandboxedJob(
-      {kind: 'url', scriptUrl: resolvedScriptUrl},
+      {
+        kind: 'url',
+        scriptUrl: resolvedScriptUrl,
+        texturePack: options?.texturePack,
+      },
       sandbox,
       callbacks,
       reject,

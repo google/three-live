@@ -182,6 +182,30 @@ export type {
   AISpatialPriors,
   CompileFromImageOptions,
 } from './three-live/src/plugins/ai-image';
+/** AI PBR textures: texture packs and image providers (part of `three-live-ai.min.js`). */
+export {
+  browserImageCodec,
+  createAIImageProvider,
+  indexedDbTextureCache,
+  parseTexturePack,
+  prepareAlbedo,
+  serializeTexturePack,
+  TEXTURE_PROMPT_SUFFIX,
+  textureRequests,
+} from './three-live/src/plugins/ai-texture';
+export type {
+  AIImageProviderOptions,
+  AITextureSpec,
+  GenerateTexturesOptions,
+  GenerateTexturesResult,
+  TextureCache,
+  TextureCacheRecord,
+  TextureImageCodec,
+  TextureMiss,
+  TexturePackEntry,
+  TexturePackJSON,
+  ThreeLiveImageProvider,
+} from './three-live/src/plugins/ai-texture';
 /** "Tap & Speak" voice editing (part of `three-live-ai.min.js`). */
 export {
   hideSelectionChips,
@@ -353,6 +377,14 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
+  /** `three-live-ai`: OpenAI-compatible Images endpoint (`/v1/images/generations`) for AI textures (`userData.xr.material.prompt`). */
+  'ai-image-endpoint'?: string;
+  /** `three-live-ai`: model name sent to `ai-image-endpoint`. */
+  'ai-image-model'?: string;
+  /** `three-live-ai`: `'auto'` (default) generates missing AI textures when an image endpoint is configured; `'manual'` waits for `el.generateTextures()`. */
+  'ai-textures'?: 'auto' | 'manual';
+  /** `three-live-ai`: URL of a texture pack (`scene.textures.json`) for AI textures. */
+  'texture-pack'?: string;
   /** `three-live-webgpu`: scene rendering backend (`'auto'`, `'webgpu'`, or `'webgl2'`). */
   renderer?: 'auto' | 'webgpu' | 'webgl2' | string;
   /** `xr-live-webgpu`: Gaussian splatting backend (`'auto'`, `'webgpu'`, `'hybrid'`, or `'webgl2'`). */

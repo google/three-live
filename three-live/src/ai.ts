@@ -81,11 +81,44 @@ export type {
   VoiceCommand,
 } from './plugins/ai-select-match';
 
+import {
+  browserImageCodec,
+  createAIImageProvider,
+  indexedDbTextureCache,
+  parseTexturePack,
+  prepareAlbedo,
+  serializeTexturePack,
+  TEXTURE_PROMPT_SUFFIX,
+  textureRequests,
+} from './plugins/ai-texture';
+
 registerPlugin(aiPlugin);
+
+export type {
+  AIImageProviderOptions,
+  AITextureSpec,
+  GenerateTexturesOptions,
+  GenerateTexturesResult,
+  TextureCache,
+  TextureCacheRecord,
+  TextureImageCodec,
+  TextureMiss,
+  TexturePackEntry,
+  TexturePackJSON,
+  ThreeLiveImageProvider,
+} from './plugins/ai-texture';
 
 export {
   AIVoiceSession,
   aiPlugin,
+  browserImageCodec,
+  createAIImageProvider,
+  indexedDbTextureCache,
+  parseTexturePack,
+  prepareAlbedo,
+  serializeTexturePack,
+  TEXTURE_PROMPT_SUFFIX,
+  textureRequests,
   buildImageMessages,
   buildImageUserText,
   compileFromImage,
