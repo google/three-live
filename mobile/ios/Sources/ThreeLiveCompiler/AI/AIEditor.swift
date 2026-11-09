@@ -158,7 +158,7 @@ public final class NativeAICore: AICore, @unchecked Sendable {
     // scene on the compiler thread; the other ops are pure.
     let op = request["op"] as? String ?? ""
     let usesEngine =
-      op == "validate" || op == "image_validate"
+      op == "validate" || op == "image_validate" || op == "texture_requests"
       || ((op == "select" || op == "select_messages") && request["source"] != nil)
     let reply = try await ThreeCompiler.aiCall(text, onCompilerThread: usesEngine)
     guard let obj = (try? JSONSerialization.jsonObject(with: Data(reply.utf8))) as? [String: Any]

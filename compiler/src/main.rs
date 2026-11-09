@@ -693,7 +693,7 @@ fn main() {
             eprintln!("Error reading --texture-pack {:?}: {}", p, e);
             std::process::exit(1);
         });
-        std::rc::Rc::new(
+        std::sync::Arc::new(
             three_live_compiler::ai_texture::TexturePack::from_json_str(&text).unwrap_or_else(
                 |e| {
                     eprintln!("Error in --texture-pack {:?}: {}", p, e);
@@ -773,7 +773,7 @@ fn run_textures(command: TextureCommands) {
             std::process::exit(1);
         }
     }
-    let rc = std::rc::Rc::new(pack);
+    let rc = std::sync::Arc::new(pack);
     let exports = || -> Result<(), String> {
         if let Some(p) = &glb {
             fs::write(p, transcode_three_to_glb(&script)?).map_err(|e| e.to_string())?;

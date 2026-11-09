@@ -166,6 +166,7 @@ object NativeAICore : AICore {
     val usesEngine =
       request["op"] == "validate" ||
         request["op"] == "image_validate" ||
+        request["op"] == "texture_requests" ||
         (request["op"] in ENGINE_SELECT_OPS && request["source"] != null)
     val reply = if (usesEngine) ThreeCompiler.aiCall(text) else ThreeCompiler.aiCallPure(text)
     return MiniJson.parseObjectOrNull(reply)

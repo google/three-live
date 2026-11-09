@@ -4462,7 +4462,7 @@ fn test_a8_material_presets_use_native_kernels_and_export() {
 
 #[test]
 fn test_b5_ai_textures_resolve_from_the_active_pack() {
-    use std::rc::Rc;
+    use std::sync::Arc;
     use three_live_compiler::ai_texture::{
         derive_texture_maps, synthetic_albedo, with_texture_pack, PackEntry, TexturePack,
         TextureSpec,
@@ -4488,7 +4488,7 @@ fn test_b5_ai_textures_resolve_from_the_active_pack() {
         spec.key(),
         PackEntry { spec: spec.clone(), rgba: rgba.clone(), provenance: serde_json::Value::Null },
     );
-    let (sg, lookups) = with_texture_pack(Some(Rc::new(pack)), || {
+    let (sg, lookups) = with_texture_pack(Some(Arc::new(pack)), || {
         three_live_compiler::validate_three_script(script).expect("AI texture SceneGraph")
     });
     assert_eq!(lookups.len(), 2, "{:?}", lookups);
