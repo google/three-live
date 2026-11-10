@@ -99,5 +99,23 @@
       ],
       "expected": "The script compiled, but the Three-Live linter reported warnings that should be fixed:\n- [TL205] Interactive node has no name\n- [TL303] 1 of 2 meshes are outside the camera frustum\nFix every warning above (assign unique `.name` values before attaching `userData.xr`, use only canonical `userData.xr` traits, replace unsupported classes with supported Three-Live primitives, and frame `camera.position` and `camera.lookAt` so all meshes are inside the frustum) while keeping the full scene intact.\nReturn the complete corrected script in a single ```js code block."
     }
+  ],
+  "visualRefinement": [
+    {
+      "name": "camera comparison sheet only without metrics",
+      "turn": 1,
+      "totalTurns": 3,
+      "hasQuad": false,
+      "metricsNote": "",
+      "expected": "Visual refinement pass 1/3. Inspect the attached `REFERENCE | RENDER (CAMERA) | OVERLAY 50/50` comparison sheet:\n- 50/50 Overlay Alignment: Adjust `camera` (`fov`, `position`, `lookAt`) and major architectural/object silhouettes until ghosted double-edges disappear in `OVERLAY 50/50`.\n- 3D Depth & Grounding: Give parts real metric depth along `Z` (never flat 2D billboards), rest grounded objects cleanly on supporting surfaces (`y = 0`), and use `side: THREE.FrontSide` on room ceilings/walls where appropriate.\n- Materials & TSL Patterns: Match sRGB colors, roughness, and metalness; upgrade flat solid colors on patterned wood, rugs, textiles, foliage, or art to loop-free `THREE.TSL` `MeshStandardNodeMaterial` (`<= 128` nodes).\n- Secondary Details: Add visible hardware, trim/moldings, lighting fixtures, and props while keeping every existing named part intact.\nReturn only the complete refined script in a single ```js code block."
+    },
+    {
+      "name": "comparison sheet plus 4-up quad and metrics",
+      "turn": 2,
+      "totalTurns": 2,
+      "hasQuad": true,
+      "metricsNote": "silhouetteIoU=0.71; aspectError=+0.08",
+      "expected": "Visual refinement pass 2/2. Inspect the attached `REFERENCE | RENDER (CAMERA) | OVERLAY 50/50` comparison sheet and `CAMERA | FRONT | TOP | ISO` 4-up depth check:\n- 50/50 Overlay Alignment: Adjust `camera` (`fov`, `position`, `lookAt`) and major architectural/object silhouettes until ghosted double-edges disappear in `OVERLAY 50/50`.\n- 3D Depth & Grounding: Give parts real metric depth along `Z` (never flat 2D billboards), rest grounded objects cleanly on supporting surfaces (`y = 0`), and use `side: THREE.FrontSide` on room ceilings/walls where appropriate.\n- Materials & TSL Patterns: Match sRGB colors, roughness, and metalness; upgrade flat solid colors on patterned wood, rugs, textiles, foliage, or art to loop-free `THREE.TSL` `MeshStandardNodeMaterial` (`<= 128` nodes).\n- Secondary Details: Add visible hardware, trim/moldings, lighting fixtures, and props while keeping every existing named part intact.\nMetrics: silhouetteIoU=0.71; aspectError=+0.08\nReturn only the complete refined script in a single ```js code block."
+    }
   ]
 }

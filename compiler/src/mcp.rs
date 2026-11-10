@@ -953,7 +953,7 @@ fn mcp_tool_definitions_base() -> Value {
         },
         {
             "name": "three_live_from_image",
-            "description": "Reconstruct a Three.js scene script from a reference image (local PNG/JPEG/WebP file path, `data:image/...;base64` URI, or `https://` URL) using a multimodal Chat Completions endpoint, with automatic sandbox + spatial linter (`TL100-TL402`) repair and optional metric spatial priors (`AISpatialPriors`). Also returns a rendered `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF` comparison sheet (or 4-up contact sheet) when `includeContactSheet` is true.",
+            "description": "Reconstruct a Three.js scene script from a reference image (local PNG/JPEG/WebP file path, `data:image/...;base64` URI, or `https://` URL) using a multimodal Chat Completions endpoint, with automatic sandbox + spatial linter (`TL100-TL502`) repair, optional closed-loop 50/50 overlay + 4-up visual refinement (`visualTurns`: 0..5), and optional metric spatial priors (`AISpatialPriors`). Also returns a rendered `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF` comparison sheet (or 4-up contact sheet) when `includeContactSheet` is true.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -984,6 +984,18 @@ fn mcp_tool_definitions_base() -> Value {
                         "default": 1,
                         "description": "Maximum error/warning repair turns after the initial draft (default 1, max 5)."
                     },
+                    "visualTurns": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5,
+                        "default": 0,
+                        "description": "Closed-loop rendered `REFERENCE | RENDER | OVERLAY 50/50` + 4-up visual critique passes after initial compilation (default 0, max 5)."
+                    },
+                    "includeQuadView": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "When `visualTurns > 0`, also attach a 512x512 `CAMERA | FRONT | TOP | ISO` 4-up depth check on each visual turn (default true)."
+                    },
                     "outputPath": {
                         "type": "string",
                         "description": "Optional file path (.js) to save the generated Three.js scene script on disk."
@@ -992,6 +1004,10 @@ fn mcp_tool_definitions_base() -> Value {
                         "type": "boolean",
                         "default": true,
                         "description": "When true (default), renders a reference comparison sheet (or 4-up contact sheet) PNG and includes it as an image content block."
+                    },
+                    "includeComparisonImage": {
+                        "type": "boolean",
+                        "description": "Alias for `includeContactSheet`: attach the final `REFERENCE | RENDER | OVERLAY 50/50` PNG as an MCP image content block."
                     }
                 },
                 "required": ["image"]
@@ -2086,8 +2102,25 @@ fn call_tool_from_image(args: &Value) -> Value {
     }
     let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or("").to_string();
     let priors = args.get("priors").cloned();
-    let max_repairs =
-        args.get("maxRepairs").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(1).min(5);
+    let max_repairs = args
+        .get("maxRepairs")
+        .or_else(|| args.get("max_repairs"))
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(1)
+        .min(5);
+    let visual_turns = args
+        .get("visualTurns")
+        .or_else(|| args.get("visual_turns"))
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(0)
+        .min(crate::ai_image::MAX_VISUAL_TURNS);
+    let include_quad_view = args
+        .get("includeQuadView")
+        .or_else(|| args.get("include_quad_view"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let endpoint = args
         .get("aiEndpoint")
         .and_then(Value::as_str)
@@ -2106,7 +2139,12 @@ fn call_tool_from_image(args: &Value) -> Value {
         .unwrap_or_else(|| crate::ai_image::DEFAULT_AI_MODEL.to_string());
     let api_key =
         std::env::var("THREE_LIVE_AI_KEY").ok().or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let include_sheet = args.get("includeContactSheet").and_then(Value::as_bool).unwrap_or(true);
+    let include_sheet = args
+        .get("includeComparisonImage")
+        .or_else(|| args.get("include_comparison_image"))
+        .or_else(|| args.get("includeContactSheet"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let output_path =
         args.get("outputPath").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
 
@@ -2115,6 +2153,9 @@ fn call_tool_from_image(args: &Value) -> Value {
         prompt,
         priors,
         max_repairs,
+        visual_turns,
+        include_quad_view,
+        save_steps_dir: None,
     };
     let (report, ref_img) =
         match crate::ai_image::compile_from_image_http(&cfg, &endpoint, api_key.as_deref(), &model)
@@ -2719,5 +2760,93 @@ mod tests {
         let (_, json_body) = out_str2.split_once("\r\n\r\n").unwrap();
         let parsed2: Value = serde_json::from_str(json_body).unwrap();
         assert_eq!(parsed2["id"], 2);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_mcp_from_image_visual_turns_and_comparison_image() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().unwrap();
+
+        let handle = std::thread::spawn(move || {
+            for turn_idx in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut req_bytes = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let n = stream.read(&mut chunk).expect("read");
+                    if n == 0 {
+                        break;
+                    }
+                    req_bytes.extend_from_slice(&chunk[..n]);
+                    if let Some(hdr_end) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let hdr_str = String::from_utf8_lossy(&req_bytes[..hdr_end]);
+                        let content_len = hdr_str
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if req_bytes.len() >= hdr_end + 4 + content_len {
+                            break;
+                        }
+                    }
+                }
+                let script = if turn_idx == 0 {
+                    "```js\nconst l = new THREE.AmbientLight(0xffffff, 0.8); scene.add(l);\nconst d = new THREE.DirectionalLight(0xffffff, 1.0); d.position.set(2, 4, 3); scene.add(d);\nconst b = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 1), new THREE.MeshStandardMaterial({ color: 0x336699 })); b.name = 'Base'; b.position.set(0, 0.25, 0); scene.add(b);\ncamera.position.set(0, 1, 3); camera.lookAt(0, 0.25, 0);\n```"
+                } else {
+                    "```js\nconst l = new THREE.AmbientLight(0xffffff, 0.8); scene.add(l);\nconst d = new THREE.DirectionalLight(0xffffff, 1.0); d.position.set(2, 4, 3); scene.add(d);\nconst b = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 1), new THREE.MeshStandardMaterial({ color: 0x336699 })); b.name = 'Base'; b.position.set(0, 0.25, 0); scene.add(b);\nconst s = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0xfef3c7 })); s.name = 'Shade'; s.position.set(0, 0.65, 0); scene.add(s);\ncamera.position.set(0, 1, 3); camera.lookAt(0, 0.4, 0);\n```"
+                };
+                let reply_json = serde_json::to_string(&json!({
+                    "choices": [{ "message": { "content": script } }]
+                }))
+                .unwrap();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reply_json.len(),
+                    reply_json
+                );
+                stream.write_all(resp.as_bytes()).unwrap();
+                stream.flush().unwrap();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let _ = stream.read(&mut chunk);
+            }
+        });
+
+        let rgba = vec![51u8, 102, 153, 255];
+        let data_url = crate::reference::encode_rgba_png_data_url(1, 1, &rgba).unwrap();
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {
+                "name": "three_live_from_image",
+                "arguments": {
+                    "image": data_url,
+                    "visual_turns": 1,
+                    "include_comparison_image": true,
+                    "aiEndpoint": format!("http://{}/v1/chat/completions", addr),
+                    "aiModel": "test-vlm"
+                }
+            }
+        });
+        let resp = handle_mcp_request(&req).unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(resp["result"]["isError"], false);
+        let content = resp["result"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["mimeType"], "image/png");
+        let report_json: Value =
+            serde_json::from_str(content[1]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(report_json["applied"], true);
+        assert_eq!(report_json["visualTurnsUsed"], 1);
+        assert_eq!(report_json["meshCount"], 2);
     }
 }

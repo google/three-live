@@ -184,13 +184,17 @@ export type {
 export {
   buildImageMessages,
   buildImageUserText,
+  buildVisualRefinementPrompt,
+  buildVisualTurnMessages,
   compileFromImage,
   detectImageMime,
   formatSpatialPriors,
   IMAGE_SYSTEM_PROMPT,
   imageRepairMessage,
   isAllowedImageUrl,
+  MAX_VISUAL_TURNS,
   normalizeImageInput,
+  renderComparisonSheetDataUrl,
 } from './three-live/src/plugins/ai-image';
 export type {
   AIImageInput,

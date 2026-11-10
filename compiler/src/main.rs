@@ -275,6 +275,18 @@ enum Commands {
         #[arg(long, default_value_t = 1)]
         max_repairs: usize,
 
+        /// Closed-loop rendered 50/50 overlay + 4-up visual critique passes (0..5)
+        #[arg(long, default_value_t = 0)]
+        visual_turns: usize,
+
+        /// Omit the 512x512 4-up orthographic/iso depth-check sheet during --visual-turns
+        #[arg(long)]
+        no_quad_view: bool,
+
+        /// Optional directory to save step_XX.js, step_XX_cmp.png, and step_XX_quad.png per turn
+        #[arg(long)]
+        save_steps: Option<PathBuf>,
+
         /// Output a structured JSON report instead of plain text
         #[arg(long)]
         json: bool,
@@ -1505,6 +1517,9 @@ fn run(command: Commands) {
             ai_endpoint,
             ai_model,
             max_repairs,
+            visual_turns,
+            no_quad_view,
+            save_steps,
             json,
         } => {
             let priors_val = if let Some(ref priors_path) = priors {
@@ -1547,6 +1562,9 @@ fn run(command: Commands) {
                 prompt,
                 priors: priors_val,
                 max_repairs: max_repairs.min(5),
+                visual_turns: visual_turns.min(three_live_compiler::ai_image::MAX_VISUAL_TURNS),
+                include_quad_view: !no_quad_view,
+                save_steps_dir: save_steps,
             };
             let (report, ref_img) = match three_live_compiler::ai_image::compile_from_image_http(
                 &cfg,
