@@ -30,7 +30,7 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** Uniform slot metadata inside a validated `GOOGLE_material_tsl` graph. */
+/** Uniform slot metadata inside a validated `extras.tsl` graph. */
 data class TslUniformSlot(
   val name: String,
   val slot: Int,
@@ -38,7 +38,7 @@ data class TslUniformSlot(
   val defaultVec4: FloatArray,
 )
 
-/** Single validated SSA node inside `GOOGLE_material_tsl`. */
+/** Single validated SSA node inside `extras.tsl`. */
 class TslValidatedNode(
   val op: String,
   val type: String,
@@ -59,7 +59,7 @@ class TslEvaluatedFactors(
 )
 
 /**
- * Validated `GOOGLE_material_tsl` graph with structural hash, Filament `.mat` emitter & CPU eval.
+ * Validated `extras.tsl` graph with structural hash, Filament `.mat` emitter & CPU eval.
  */
 class TslValidatedGraph(
   val materialName: String,
@@ -139,11 +139,11 @@ data class TslValidationFailure(val code: String, val message: String)
 
 /**
  * Pure-Kotlin validator, Filament `.mat` emitter, and deterministic CPU fallback evaluator for
- * `GOOGLE_material_tsl` v1. Keeps zero Android/Filament binary dependencies so `:mobile:android`
+ * `extras.tsl` v1. Keeps zero Android/Filament binary dependencies so `:mobile:android`
  * JVM unit tests verify 100% cross-platform parity with Web and Rust.
  */
 object TslMaterialCompiler {
-  const val EXTENSION_NAME: String = "GOOGLE_material_tsl"
+  const val EXTRAS_KEY: String = "tsl"
   const val MAX_NODES: Int = 128
   const val MAX_UNIFORMS: Int = 16
   const val TIME_PERIOD_SEC: Float = 3600f
@@ -277,7 +277,7 @@ object TslMaterialCompiler {
     return (h0 xor bits) * 16777619u
   }
 
-  /** Validates a parsed MiniJson `GOOGLE_material_tsl` map, returning either graph or failure. */
+  /** Validates a parsed MiniJson `extras.tsl` map, returning either graph or failure. */
   fun validateDetailed(
     raw: Any?,
     materialLabel: String = "Material",
@@ -285,7 +285,7 @@ object TslMaterialCompiler {
     val obj =
       MiniJson.asMap(raw)
         ?: return null to
-          TslValidationFailure("TL501", "Invalid GOOGLE_material_tsl on '$materialLabel'.")
+          TslValidationFailure("TL501", "Invalid extras.tsl on '$materialLabel'.")
     val ver = (obj["version"] as? Number)?.toDouble()
     if (ver != 1.0) {
       return null to TslValidationFailure("TL501", "Unsupported TSL version on '$materialLabel'.")

@@ -239,7 +239,7 @@ export interface SharedThreeLiveRegistry {
   tslUsdzSerializer?: TslUsdzSerializer;
 }
 
-/** Compiled WebGPU WGSL shaders for a validated `GOOGLE_material_tsl` graph. */
+/** Compiled WebGPU WGSL shaders for a validated `extras.tsl` graph. */
 export interface CompiledTslWgsl {
   readonly hash: string;
   readonly pbrWgsl: string;

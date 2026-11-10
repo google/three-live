@@ -386,14 +386,14 @@ core viewer/author bundles when omitted:
     (`float`), `normalScaleNode` (`float`), `bumpNode` (`vec3` via
     `TSL.bumpFromHeight(h, strength)`), and `positionNode` (`vec3` local-space
     vertex displacement with displaced shadow-map depth passes).
--   **Bounded Loop-Free `GOOGLE_material_tsl` v1 IR (`TL501`–`TL504`):**
+-   **Bounded Loop-Free `extras.tsl` v1 IR (`TL501`–`TL504`):**
     Topologically sorted, hash-consed SSA DAG (`<= 128` nodes, `<= 16` uniforms,
     zero cycles, no `TSL.Loop` / `TSL.While`, safe
     `div`/`sqrt`/`pow`/`log`/`normalize` NaN/Inf guards, and indexed
     `uTslParams[0..15]` uniform packing so user strings never enter shader
     source code).
--   **5-Target Native Compilation:** Compiles from one `GOOGLE_material_tsl`
-    extension to WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, Apple
+-   **5-Target Native Compilation:** Compiles from one `materials[m].extras.tsl`
+    payload to WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, Apple
     RealityKit `.usdz` `UsdShade` / MaterialX (`ND_*`) `NodeGraph`s, Android
     Filament (`compileOnly` `filamat-android` `MaterialBuilder` disk cache with
     automatic CPU PBR fallback), and the Rust CLI/MCP headless PBR rasterizer.
@@ -527,7 +527,7 @@ assets to be located.
     `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial`, and
     `MeshStandardNodeMaterial` / `THREE.TSL` (when `three-live-tsl` or
     `three-live-full` is loaded; mapped to glTF PBR metallic-roughness + PBR
-    Next + `GOOGLE_material_tsl`, plus `mesh.userData.variants` for
+    Next + `extras.tsl`, plus `mesh.userData.variants` for
     `KHR_materials_variants`).
 -   **Scene Graph & GPU Instancing:** `Scene`, `Group`, `Mesh`, `InstancedMesh`
     (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`),

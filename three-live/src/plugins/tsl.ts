@@ -20,7 +20,7 @@
  * and `<xr-live>`.
  *
  * Installs `THREE.TSL` & `MeshStandardNodeMaterial` on both the main thread and
- * sandboxed Web Workers, compiles validated `GOOGLE_material_tsl` graphs to
+ * sandboxed Web Workers, compiles validated `extras.tsl` graphs to
  * WebGL2 GLSL ES 300 (with structural-hash shader caching and zero-allocation
  * uniform binding) and WebGPU WGSL `GPURenderBundle`s, drives `TSL.time`
  * animation ticks automatically, and exposes `setMaterialUniform` for 60 Hz
@@ -37,7 +37,7 @@ import {installTslExtension} from '../tsl/author';
 import {compileTslToGlsl} from '../tsl/glsl';
 import {
   packUniformVec4,
-  TSL_EXTENSION_NAME,
+  TSL_EXTRAS_KEY,
   TSL_TIME_PERIOD_SEC,
   tslSafeMod,
   validateTslGraph,
@@ -122,7 +122,7 @@ function buildViewerStateFromGltf(
   const rawMats = Array.isArray(gltf?.materials) ? gltf.materials : [];
   for (let i = 0; i < rawMats.length; i++) {
     const mat = rawMats[i];
-    const rawExt = mat?.extensions?.[TSL_EXTENSION_NAME];
+    const rawExt = mat?.extras?.[TSL_EXTRAS_KEY];
     if (!rawExt) continue;
     const matName =
       typeof mat.name === 'string' && mat.name.length > 0
@@ -323,7 +323,7 @@ export const tslPlugin: ThreeLivePlugin = {
   onBuildPrimitiveVAO(_gl, _vao, primitiveDef: any, gltf: any): any {
     const matIdx = primitiveDef?.material;
     if (typeof matIdx !== 'number') return null;
-    const rawExt = gltf?.materials?.[matIdx]?.extensions?.[TSL_EXTENSION_NAME];
+    const rawExt = gltf?.materials?.[matIdx]?.extras?.[TSL_EXTRAS_KEY];
     if (!rawExt) return null;
     const res = validateTslGraph(
       rawExt,
@@ -335,7 +335,7 @@ export const tslPlugin: ThreeLivePlugin = {
 
   // tslint:disable-next-line:no-any
   onResolveShader(_primitiveDef: any, materialDef: any, defaultVS, defaultFS) {
-    const rawExt = materialDef?.extensions?.[TSL_EXTENSION_NAME];
+    const rawExt = materialDef?.extras?.[TSL_EXTRAS_KEY];
     if (!rawExt) return null;
     const res = validateTslGraph(rawExt, materialDef?.name || 'Material');
     if (!res.ok) {
@@ -404,7 +404,7 @@ export const tslPlugin: ThreeLivePlugin = {
     const matIdx = primitiveGpu?.materialIndex;
     if (
       typeof matIdx !== 'number' ||
-      !gltf?.materials?.[matIdx]?.extensions?.[TSL_EXTENSION_NAME]
+      !gltf?.materials?.[matIdx]?.extras?.[TSL_EXTRAS_KEY]
     ) {
       return;
     }

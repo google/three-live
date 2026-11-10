@@ -4707,8 +4707,8 @@ fn test_tsl_node_material_glb_roundtrip_diagnostics_and_rasterizer() {
     );
     assert_eq!(sg.materials.len(), 2);
     assert!(sg.materials[0].alpha_blend, "Transparent TSL material sets alpha_blend");
-    assert!(sg.materials[0].tsl.is_some(), "HoloShield carries GOOGLE_material_tsl");
-    assert!(sg.materials[1].tsl.is_some(), "TriplanarMetal carries GOOGLE_material_tsl");
+    assert!(sg.materials[0].tsl.is_some(), "HoloShield carries extras.tsl");
+    assert!(sg.materials[1].tsl.is_some(), "TriplanarMetal carries extras.tsl");
 
     // Round-trip through binary GLB (`write_glb` -> `read_glb`)
     let glb = transcode_three_to_glb(script).expect("TSL GLB should compile");
@@ -4716,13 +4716,13 @@ fn test_tsl_node_material_glb_roundtrip_diagnostics_and_rasterizer() {
     let gltf: serde_json::Value =
         serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON");
     assert!(
-        gltf["extensionsUsed"]
-            .as_array()
-            .is_some_and(|exts| exts.iter().any(|e| e == "GOOGLE_material_tsl")),
-        "GLB extensionsUsed must declare GOOGLE_material_tsl"
+        gltf["extensionsUsed"].as_array().map_or(true, |exts| !exts
+            .iter()
+            .any(|e| e.as_str().is_some_and(|s| s.contains("material_tsl")))),
+        "GLB extensionsUsed must not declare unratified TSL extension"
     );
     assert_eq!(gltf["materials"][0]["alphaMode"], "BLEND");
-    assert_eq!(gltf["materials"][0]["extensions"]["GOOGLE_material_tsl"]["version"], 1);
+    assert_eq!(gltf["materials"][0]["extras"]["tsl"]["version"], 1);
 
     let rt = three_live_compiler::read_glb(&glb).expect("read_glb should parse TSL GLB");
     assert!(rt.materials[0].tsl.is_some());

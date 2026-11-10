@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 -   **Loop-Free Node Materials (`three-live-tsl` / `tslPlugin` /
-    `GOOGLE_material_tsl`):** Opt-in cross-platform procedural PBR shader graph
+    `extras.tsl`):** Opt-in cross-platform procedural PBR shader graph
     authoring via `THREE.MeshStandardNodeMaterial` (`MeshPhysicalNodeMaterial`)
     and `THREE.TSL` (`colorNode`, `opacityNode`, `emissiveNode`,
     `roughnessNode`, `metalnessNode`, `normalScaleNode`, `bumpNode`, and vertex
@@ -35,7 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (`three-live/tsl`, `< 19 KB gz`, 0 B overhead on core viewer/author bundles)
     and built into `three-live-full.min.js` and `xr-live-full.min.js`.
     Deduplicates common subexpressions into a canonical, topologically sorted
-    SSA DAG (`gltf.materials[m].extensions.GOOGLE_material_tsl`, `<= 128` nodes,
+    SSA DAG (`gltf.materials[m].extras.tsl`, `<= 128` nodes,
     `<= 16` uniforms, 45
     math/vector/Fresnel/simplexNoise2D/3D/Voronoi/triplanar/bump ops) verified
     in `O(N)` with identical FNV-1a structural hashes and `TL501`–`TL504`

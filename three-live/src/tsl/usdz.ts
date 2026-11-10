@@ -16,7 +16,7 @@
  */
 
 /**
- * @fileoverview Loop-Free TSL (`GOOGLE_material_tsl`) -> Apple RealityKit /
+ * @fileoverview Loop-Free TSL (`extras.tsl`) -> Apple RealityKit /
  * Quick Look USDZ `UsdShade` + MaterialX (`ND_*`) `NodeGraph` Compiler.
  */
 
@@ -29,7 +29,7 @@ import {
   type ValidatedTslGraph,
 } from './ir';
 
-/** Result of compiling a `GOOGLE_material_tsl` graph to USDA `NodeGraph`. */
+/** Result of compiling an `extras.tsl` graph to USDA `NodeGraph`. */
 export interface CompiledTslUsda {
   readonly nodeGraphUsda: string;
   readonly surfaceConnections: Readonly<Record<string, string>>;
@@ -66,7 +66,7 @@ function fmtUsdTuple(vals: readonly number[], arity: number): string {
 }
 
 /**
- * Compiles a validated or raw `GOOGLE_material_tsl` graph into an Apple
+ * Compiles a validated or raw `extras.tsl` graph into an Apple
  * RealityKit-compatible `def NodeGraph "TSLGraph"` block and `UsdPreviewSurface`
  * input connections.
  */

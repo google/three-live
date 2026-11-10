@@ -90,7 +90,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     /** The active `KHR_materials_variants` variant changed (`null` when reset to default). */
     fun onVariantChanged(variantName: String?) {}
 
-    /** A `GOOGLE_material_tsl` material's 68-float uniform/time staging buffer changed. */
+    /** An `extras.tsl` material's 68-float uniform/time staging buffer changed. */
     fun onTslUniformsChanged(materialIndex: Int, buf68: FloatArray) {}
   }
 
@@ -384,7 +384,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
       val ef = MiniJson.asList(mat["emissiveFactor"])
       if (ef != null) for (k in 0 until 3) emissive[i * 3 + k] = numOr(ef.getOrNull(k), 0.0)
       alphaCutoff[i] = numOr(mat["alphaCutoff"], 0.5)
-      val rawTsl = MiniJson.asMap(mat["extensions"])?.get(TslMaterialCompiler.EXTENSION_NAME)
+      val rawTsl = MiniJson.asMap(mat["extras"])?.get(TslMaterialCompiler.EXTRAS_KEY)
       if (rawTsl != null) {
         val g = TslMaterialCompiler.validate(rawTsl, mName.ifEmpty { "Material_$i" })
         if (g != null) {
@@ -783,7 +783,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
   fun tslUniformBuffer(materialIndex: Int): FloatArray? =
     tslBuffers.getOrNull(materialIndex)?.copyOf()
 
-  /** Validated `GOOGLE_material_tsl` graph on [materialIndex], or `null` when absent. */
+  /** Validated `extras.tsl` graph on [materialIndex], or `null` when absent. */
   fun tslMaterialGraph(materialIndex: Int): TslValidatedGraph? = tslGraphs.getOrNull(materialIndex)
 
   /** Scalar convenience overload for [setMaterialUniform]. */

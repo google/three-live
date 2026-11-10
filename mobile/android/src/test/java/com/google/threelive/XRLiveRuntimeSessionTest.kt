@@ -2564,14 +2564,13 @@ class XRLiveRuntimeSessionTest {
     val gltf =
       """{
         "asset": {"version": "2.0"},
-        "extensionsUsed": ["GOOGLE_material_tsl"],
         "nodes": [{"name": "Shield", "mesh": 0}],
         "meshes": [{"primitives": [{"material": 0}]}],
         "materials": [{
           "name": "HoloShield",
           "pbrMetallicRoughness": {"baseColorFactor": [0.1, 0.2, 0.3, 1.0]},
-          "extensions": {
-            "GOOGLE_material_tsl": {
+          "extras": {
+            "tsl": {
               "version": 1,
               "uniforms": {"uSpeed": {"type": "float", "value": 2.0}},
               "nodes": [

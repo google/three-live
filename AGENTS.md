@@ -36,7 +36,7 @@ Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineC
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                                     | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
 Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select                          | `<three-live>` | `three-live-ai.min.js`         | `< 29 KB gz`
 Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`)                                 | `<three-live>` | `three-live-webgpu.min.js`     | `< 23 KB gz`
-Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`GOOGLE_material_tsl` -> GLSL/WGSL/USDZ)          | `<three-live>` | `three-live-tsl.min.js`        | `< 19 KB gz`
+Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ)                   | `<three-live>` | `three-live-tsl.min.js`        | `< 19 KB gz`
 Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL                                      | `<three-live>` | `three-live-full.min.js`       | `< 219 KB gz`
 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`                                 | `<xr-live>`    | `xr-live.min.js`               | `< 89 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP                                   | `<xr-live>`    | `xr-live-sensors.min.js`       | `< 10 KB gz`
@@ -153,7 +153,7 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         (`three-live/src/plugins/postprocessing.ts`), analytical 2-bone & FABRIK
         IK (`three-live/src/plugins/ik.ts`), loop-free `THREE.TSL` &
         `MeshStandardNodeMaterial` (`three-live/src/tsl/` +
-        `three-live/src/plugins/tsl.ts` compiling `GOOGLE_material_tsl` to
+        `three-live/src/plugins/tsl.ts` compiling `extras.tsl` to
         WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and USDZ
         `UsdShade` / MaterialX), Worker/iframe sandboxing, and plugin hooks
         (`three-live/src/plugin.ts`).
@@ -172,7 +172,7 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
     -   Embeds `compiler/assets/three-author-engine.min.js` inside an isolated
         Boa JS context with strict opcode/wall-clock watchdogs, outputting
         `.glb` (including `EXT_mesh_gpu_instancing`, `KHR_materials_variants`,
-        `KHR_audio_emitter`, and validated `GOOGLE_material_tsl` SSA node graphs
+        `KHR_audio_emitter`, and validated `extras.tsl` SSA node graphs
         via `compiler/src/tsl.rs`) and `.usdz` (including `PointInstancer`,
         `VariantSets`, `SpatialAudio`, and `UsdShade` / MaterialX `NodeGraph`s)
         bytes via C FFI (`compiler/include/three_live.h`) and `three-live-cli`.

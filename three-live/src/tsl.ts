@@ -33,7 +33,7 @@ export {
   MAX_TSL_NODES,
   MAX_TSL_UNIFORMS,
   packUniformVec4,
-  TSL_EXTENSION_NAME,
+  TSL_EXTRAS_KEY,
   TSL_TIME_PERIOD_SEC,
   tslSafeMod,
   tslTypeArity,

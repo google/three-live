@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Canonical Loop-Free TSL (`GOOGLE_material_tsl`) Validator, Deterministic CPU
+//! Canonical Loop-Free TSL (`extras.tsl`) Validator, Deterministic CPU
 //! Evaluator, and Static PBR Fallback Texture Baker (`TL501–TL504`).
 //!
 //! Kept in 1:1 numerical lockstep with `three-live/src/tsl/ir.ts`.
@@ -21,8 +21,8 @@ use crate::render::encode_png_rgba_compressed;
 use crate::scene::Diagnostic;
 use std::collections::BTreeMap;
 
-/// glTF 2.0 material extension name for loop-free TSL node graphs.
-pub const TSL_EXTENSION_NAME: &str = "GOOGLE_material_tsl";
+/// glTF 2.0 material `extras` key for loop-free TSL node graphs (`materials[i].extras.tsl`).
+pub const TSL_EXTRAS_KEY: &str = "tsl";
 
 /// Hard per-material SSA node quota preventing GPU ALU amplification / TDR.
 pub const MAX_TSL_NODES: usize = 128;
@@ -294,7 +294,7 @@ fn resolve_broadcast(a: TslType, b: TslType) -> Option<TslType> {
     }
 }
 
-/// Validates a `GOOGLE_material_tsl` JSON value in `O(N)` time.
+/// Validates an `extras.tsl` JSON value in `O(N)` time.
 pub fn validate_tsl_graph(
     raw: &serde_json::Value,
     material_label: &str,
@@ -304,10 +304,7 @@ pub fn validate_tsl_graph(
     let Some(obj) = raw.as_object() else {
         return Err(make_diag(
             "TL501",
-            format!(
-                "Invalid GOOGLE_material_tsl payload on '{}': expected an object.",
-                material_label
-            ),
+            format!("Invalid extras.tsl payload on '{}': expected an object.", material_label),
             DEFAULT_HINT,
             material_label,
         ));
@@ -316,10 +313,7 @@ pub fn validate_tsl_graph(
     if obj.get("version").and_then(|v| v.as_u64()) != Some(1) {
         return Err(make_diag(
             "TL501",
-            format!(
-                "Unsupported GOOGLE_material_tsl version on '{}' (expected 1).",
-                material_label
-            ),
+            format!("Unsupported extras.tsl version on '{}' (expected 1).", material_label),
             DEFAULT_HINT,
             material_label,
         ));
@@ -407,7 +401,7 @@ pub fn validate_tsl_graph(
     let Some(raw_nodes) = obj.get("nodes").and_then(|v| v.as_array()) else {
         return Err(make_diag(
             "TL501",
-            format!("GOOGLE_material_tsl on '{}' is missing nodes array.", material_label),
+            format!("extras.tsl on '{}' is missing nodes array.", material_label),
             DEFAULT_HINT,
             material_label,
         ));
@@ -415,7 +409,7 @@ pub fn validate_tsl_graph(
     if raw_nodes.is_empty() {
         return Err(make_diag(
             "TL501",
-            format!("GOOGLE_material_tsl on '{}' must contain at least 1 node.", material_label),
+            format!("extras.tsl on '{}' must contain at least 1 node.", material_label),
             DEFAULT_HINT,
             material_label,
         ));
@@ -1059,7 +1053,7 @@ pub fn validate_tsl_graph(
     let Some(raw_outputs) = obj.get("outputs").and_then(|v| v.as_object()) else {
         return Err(make_diag(
             "TL501",
-            format!("Missing outputs object in GOOGLE_material_tsl on '{}'.", material_label),
+            format!("Missing outputs object in extras.tsl on '{}'.", material_label),
             DEFAULT_HINT,
             material_label,
         ));
@@ -1129,7 +1123,7 @@ pub fn validate_tsl_graph(
     if output_count == 0 {
         return Err(make_diag(
             "TL501",
-            format!("GOOGLE_material_tsl on '{}' specifies no active outputs.", material_label),
+            format!("extras.tsl on '{}' specifies no active outputs.", material_label),
             DEFAULT_HINT,
             material_label,
         ));
