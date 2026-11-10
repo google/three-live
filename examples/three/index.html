@@ -592,7 +592,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">76.8 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">77.0 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -2061,6 +2061,11 @@ for (let t = 0; t < 5; t++) {
   // Live Procedural Compiler
   document.getElementById("btn-compile").addEventListener("click", async () => {
     try {
+      if (el.viewer) {
+        el.viewer.customTarget = null;
+        el.viewer.customDistance = false;
+        el.viewer.resetTurntableRotation?.(0);
+      }
       currentGLBBuffer = await el.executeScript(codeEditor.value);
       arStatus.textContent = "Procedural script compiled & loaded!";
       window.onSceneCompiled?.();

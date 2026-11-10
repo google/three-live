@@ -394,6 +394,7 @@ export function rayIntersectsTriangle(
   v2z: number,
   outHit: RayHit,
   epsilon = 0.0,
+  cullBack = false,
 ): boolean {
   const e1x = v1x - v0x,
     e1y = v1y - v0y,
@@ -405,7 +406,7 @@ export function rayIntersectsTriangle(
   const hy = rdZ * e2x - rdX * e2z;
   const hz = rdX * e2y - rdY * e2x;
   const a = e1x * hx + e1y * hy + e1z * hz;
-  if (a > -1e-7 && a < 1e-7) return false;
+  if (cullBack ? a <= 1e-7 : a > -1e-7 && a < 1e-7) return false;
   const f = 1.0 / a;
   const sx = roX - v0x,
     sy = roY - v0y,

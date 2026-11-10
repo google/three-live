@@ -663,7 +663,8 @@ function serializeScene(
     const matDef: Record<string, unknown> = {
       name: m.name || '',
       pbrMetallicRoughness: pbr,
-      doubleSided: m.side === 2 || Boolean(m.doubleSided),
+      doubleSided:
+        m.side !== undefined ? m.side === 2 : Boolean(m.doubleSided ?? true),
       ...(opacity < 1 || m.transparent || Boolean((m as any).opacityNode)
         ? {alphaMode: 'BLEND'}
         : {}),

@@ -60,6 +60,10 @@ export const PART_STEREO_SHIFT = 8;
 export const PART_FLAG_CAST_SHADOW = 1024;
 /** Part flag: instance samples multi-light shadow maps in `fsMain`. */
 export const PART_FLAG_RECEIVE_SHADOW = 2048;
+/** Part flag: primitive is single-sided (`doubleSided === false`, cull back). */
+export const PART_FLAG_CULL_BACK = 4096;
+/** Part flag: instance world matrix has negative 3x3 determinant (mirrored). */
+export const PART_FLAG_NEG_DET = 8192;
 
 /** Scene flag bit: equirectangular `environment-image` texture is bound. */
 export const SCENE_FLAG_HAS_ENV_MAP = 1;
@@ -650,6 +654,9 @@ fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) v
 
   let p = parts[in.instIdx];
   let pFlags = p.flags;
+  if ((pFlags & 4096u) != 0u && frontFacing == ((pFlags & 8192u) != 0u)) {
+    discard;
+  }
   let secOn = (sc.flags.w & 2u) != 0u && (pFlags & 64u) == 0u;
   if (secOn && dot(in.worldPos, sc.sectionPlane.xyz) > sc.sectionPlane.w) {
     discard;
@@ -869,8 +876,11 @@ fn vsPick(
 }
 
 @fragment
-fn fsPick(in: PickVsOut) -> @location(0) vec4<f32> {
+fn fsPick(in: PickVsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4<f32> {
   let p = parts[in.instIdx];
+  if ((p.flags & 4096u) != 0u && frontFacing == ((p.flags & 8192u) != 0u)) {
+    discard;
+  }
   let secOn = (sc.flags.w & 2u) != 0u && (p.flags & 64u) == 0u;
   if (secOn && dot(in.worldPos, sc.sectionPlane.xyz) > sc.sectionPlane.w) {
     discard;

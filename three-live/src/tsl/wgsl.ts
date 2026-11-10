@@ -145,7 +145,7 @@ function emitWgslHelpers(f: TslHelperFlags, isFragment: boolean): string {
   }
   if (f.bump && isFragment) {
     out.push(
-      'fn _tslBump(dhx:f32,dhy:f32,st:f32,nw:vec3<f32>,dx:vec3<f32>,dy:vec3<f32>)->vec3<f32>{let n=_tslNorm3(nw);let r1=cross(dy,n);let r2=cross(n,dx);let det=dot(dx,r1);if(abs(det)<1e-8){return n;}return _tslNorm3(abs(det)*n-st*select(1.0,-1.0,det<0.0)*(dhx*r1+dhy*r2));}',
+      'fn _tslBump(dhx:f32,dhy:f32,st:f32,nw:vec3<f32>,dx:vec3<f32>,dy:vec3<f32>)->vec3<f32>{let n=_tslNorm3(nw);let r1=cross(dy,n);let r2=cross(n,dx);let det=dot(dx,r1);let ad=abs(det);if(ad<1e-8){return n;}let g=st*select(1.0,-1.0,det<0.0)*(dhx*r1+dhy*r2);return _tslNorm3(ad*n-g*min(1.0,0.85*ad/max(length(g),1e-8)));}',
     );
   }
   return out.join('\n');

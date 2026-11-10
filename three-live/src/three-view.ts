@@ -643,23 +643,23 @@ export function evaluateToneMapping(
   exposure = 1.0,
 ): [number, number, number] {
   mode = normalizeToneMapping(mode);
-  const exp = Number.isFinite(exposure) ? Math.max(0, exposure) : 1.0;
+  const exp = Number.isFinite(exposure) ? Math.max(0, exposure) : 1;
   let [r, g, b] = [0, 1, 2].map((i) =>
     Math.max(0, (Number(rgb[i]) || 0) * exp),
   );
-  const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+  const c01 = (v: number): number => Math.max(0, Math.min(1, v));
   const map3 = (fn: (v: number) => number): [number, number, number] => [
     fn(r),
     fn(g),
     fn(b),
   ];
 
-  if (mode === 'none') return map3(clamp01);
+  if (mode === 'none') return map3(c01);
   if (mode === 'reinhard') return map3((v) => v / (v + 1));
   if (mode === 'aces') {
     return map3((x) => {
       const c = x * 0.6;
-      return clamp01((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14));
+      return c01((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14));
     });
   }
   if (mode === 'agx') {
@@ -668,7 +668,7 @@ export function evaluateToneMapping(
       0.04232824 * r + 0.87846864 * g + 0.07916613 * b,
       0.04237565 * r + 0.0784336 * g + 0.87914297 * b,
     ].map((v) => {
-      const ev = clamp01((Math.log2(Math.max(v, 1e-6)) + 12.47393) / 16.5);
+      const ev = c01((Math.log2(Math.max(v, 1e-6)) + 12.47393) / 16.5);
       const x2 = ev * ev;
       const x4 = x2 * x2;
       return (
@@ -685,22 +685,21 @@ export function evaluateToneMapping(
       1.196879 * sr - 0.09802088 * sg - 0.09902974 * sb,
       -0.05289685 * sr + 1.15190313 * sg - 0.09896118 * sb,
       -0.05297164 * sr - 0.09804345 * sg + 1.15107367 * sb,
-    ].map((o) => clamp01(Math.pow(Math.max(o, 0), 2.2))) as [
+    ].map((o) => c01(Math.pow(Math.max(o, 0), 2.2))) as [
       number,
       number,
       number,
     ];
   }
-  // Khronos PBR Neutral ('neutral')
   const x = Math.min(r, g, b);
-  const offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-  [r, g, b] = map3((v) => v - offset);
-  const peak = Math.max(r, g, b);
-  if (peak < 0.76) return map3(clamp01);
-  const newPeak = 1.0 - 0.0576 / (peak - 0.52);
-  const scale = newPeak / peak;
-  const gt = 1.0 - 1.0 / (0.15 * (peak - newPeak) + 1.0);
-  return map3((v) => clamp01(v * scale + (newPeak - v * scale) * gt));
+  const off = x < 0.08 ? x - 6.25 * x * x : 0.04;
+  [r, g, b] = map3((v) => v - off);
+  const p = Math.max(r, g, b);
+  if (p < 0.76) return map3(c01);
+  const np = 1 - 0.0576 / (p - 0.52);
+  const s = np / p;
+  const gt = 1 - 1 / (0.15 * (p - np) + 1);
+  return map3((v) => c01(v * s + (np - v * s) * gt));
 }
 
 const VS_PICK = `#version 300 es
@@ -793,6 +792,7 @@ interface PrimitiveGpu {
   programCache?: Map<number, ResolvedProgram>;
   isTransmissive?: boolean;
   alphaMode?: string;
+  doubleSided?: boolean;
 }
 
 interface MeshGpu {
@@ -1021,11 +1021,34 @@ interface GpuBuildTrack {
   buffers: WebGLBuffer[];
 }
 
-function drawPrim(gl: WebGL2RenderingContext, prim: PrimitiveGpu): void {
+function drawPrim(
+  gl: WebGL2RenderingContext,
+  prim: PrimitiveGpu,
+  m?: ArrayLike<number>,
+): void {
+  const cull = prim.doubleSided === false;
+  if (cull) {
+    gl.enable?.(gl.CULL_FACE);
+    gl.cullFace?.(gl.BACK);
+    if (m) {
+      gl.frontFace?.(
+        m[0] * (m[5] * m[10] - m[6] * m[9]) -
+          m[4] * (m[1] * m[10] - m[2] * m[9]) +
+          m[8] * (m[1] * m[6] - m[2] * m[5]) <
+          0
+          ? gl.CW
+          : gl.CCW,
+      );
+    }
+  }
   if (prim.indices) {
     gl.drawElements(gl.TRIANGLES, prim.indexCount, prim.indexType, 0);
   } else {
     gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
+  }
+  if (cull) {
+    gl.frontFace?.(gl.CCW);
+    gl.disable?.(gl.CULL_FACE);
   }
 }
 
@@ -1050,6 +1073,7 @@ function extractMaterialProps(
   | 'emissiveFactor'
   | 'isTransmissive'
   | 'alphaMode'
+  | 'doubleSided'
 > {
   const pbr = mat?.pbrMetallicRoughness;
   const bcf = pbr?.baseColorFactor;
@@ -1080,6 +1104,7 @@ function extractMaterialProps(
       (mat?.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0) >
       0,
     alphaMode: typeof mat?.alphaMode === 'string' ? mat.alphaMode : undefined,
+    doubleSided: mat?.doubleSided !== false,
   };
 }
 
@@ -1901,14 +1926,19 @@ export class ThreeView {
     return getDecoder(type);
   }
 
-  private boundPointerDown: ((e: PointerEvent) => void) | null = null;
-  private boundPointerMove: ((e: PointerEvent) => void) | null = null;
-  private boundPointerUp: ((e: PointerEvent) => void) | null = null;
-  private boundWheel: ((e: WheelEvent) => void) | null = null;
-  private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
-  private boundContextMenu: ((e: MouseEvent) => void) | null = null;
-  private boundSetCamera: ((e: any) => void) | null = null;
-  private boundResetCamera: (() => void) | null = null;
+  private evts: Array<[EventTarget, string, EventListener]> = [];
+
+  private onEvt(
+    target: EventTarget,
+    evt: string,
+    // tslint:disable-next-line:no-any
+    fn: (e: any) => void,
+    opts?: AddEventListenerOptions,
+  ): void {
+    if (typeof target?.addEventListener !== 'function') return;
+    target.addEventListener(evt, fn as EventListener, opts);
+    this.evts.push([target, evt, fn as EventListener]);
+  }
 
   constructor(
     container: HTMLElement,
@@ -2039,8 +2069,6 @@ export class ThreeView {
   public contextLost = false;
   private lastGlbData: GLBData | null = null;
   private lastLimits: HostSceneLimits | undefined;
-  private boundContextLost: ((e: Event) => void) | null = null;
-  private boundContextRestored: (() => void) | null = null;
 
   /**
    * Handles WebGL context loss: stops rendering while lost, then on restore
@@ -2049,15 +2077,12 @@ export class ThreeView {
    */
   private setupContextLossHandling(): void {
     const c = this.canvas as HTMLCanvasElement;
-    if (typeof c?.addEventListener !== 'function') return;
-    this.boundContextLost = (e: Event) => {
+    this.onEvt(c, 'webglcontextlost', (e: Event) => {
       e.preventDefault?.();
       this.contextLost = true;
       this.stop();
-    };
-    this.boundContextRestored = () => this.restoreContext();
-    c.addEventListener('webglcontextlost', this.boundContextLost);
-    c.addEventListener('webglcontextrestored', this.boundContextRestored);
+    });
+    this.onEvt(c, 'webglcontextrestored', () => this.restoreContext());
   }
 
   private initGlState(): void {
@@ -2602,6 +2627,7 @@ export class ThreeView {
       ? this.gltf.materials
       : [{name: 'DefaultMaterial', pbrMetallicRoughness: {}}];
     return rawMats.map((gMat: any, idx: number) => {
+      const pbr = gMat.pbrMetallicRoughness;
       const matchingPrims = this.meshes.flatMap((m) =>
         m.primitives.filter(
           (p) =>
@@ -2609,24 +2635,12 @@ export class ThreeView {
             (rawMats.length === 1 && p.materialIndex === undefined),
         ),
       );
-      const firstPrim = matchingPrims[0];
-      const baseColorFactor: [number, number, number, number] = firstPrim
-        ? [...firstPrim.baseColor]
-        : gMat.pbrMetallicRoughness?.baseColorFactor || [0.8, 0.8, 0.8, 1.0];
-      const metallicFactor = firstPrim
-        ? firstPrim.metallic
-        : (gMat.pbrMetallicRoughness?.metallicFactor ?? 0.1);
-      const roughnessFactor = firstPrim
-        ? firstPrim.roughness
-        : (gMat.pbrMetallicRoughness?.roughnessFactor ?? 0.5);
-
+      const fp = matchingPrims[0];
       // tslint:disable-next-line:no-any
       const setField = (prop: string, primProp: string, val: any) => {
         // tslint:disable-next-line:no-any
         (pbrProxy as any)[prop] = val;
-        if (gMat.pbrMetallicRoughness) {
-          gMat.pbrMetallicRoughness[prop] = val;
-        }
+        if (pbr) pbr[prop] = val;
         for (const p of matchingPrims) {
           // tslint:disable-next-line:no-any
           (p as any)[primProp] = val;
@@ -2634,15 +2648,22 @@ export class ThreeView {
         this.render();
       };
       const pbrProxy = {
-        baseColorFactor,
-        metallicFactor,
-        roughnessFactor,
+        baseColorFactor: (fp
+          ? [...fp.baseColor]
+          : pbr?.baseColorFactor || [0.8, 0.8, 0.8, 1]) as [
+          number,
+          number,
+          number,
+          number,
+        ],
+        metallicFactor: fp ? fp.metallic : (pbr?.metallicFactor ?? 0.1),
+        roughnessFactor: fp ? fp.roughness : (pbr?.roughnessFactor ?? 0.5),
         setBaseColorFactor: (rgba: [number, number, number, number]) =>
           setField('baseColorFactor', 'baseColor', [
             rgba[0],
             rgba[1],
             rgba[2],
-            rgba[3] ?? 1.0,
+            rgba[3] ?? 1,
           ]),
         setMetallicFactor: (val: number) =>
           setField('metallicFactor', 'metallic', val),
@@ -2908,32 +2929,23 @@ export class ThreeView {
     distance?: number,
     zoom?: number,
   ): void {
+    this.setCamera(thetaDeg, phiDeg, distance, zoom);
     if (thetaDeg !== undefined) {
-      this.initialTheta =
-        this.targetTheta =
-        this.currTheta =
-          this.clampTheta((thetaDeg * Math.PI) / 180);
+      this.initialTheta = this.currTheta = this.targetTheta;
     }
     if (phiDeg !== undefined) {
-      this.initialPhi =
-        this.targetPhi =
-        this.currPhi =
-          this.clampPhi((phiDeg * Math.PI) / 180);
+      this.initialPhi = this.currPhi = this.targetPhi;
     }
-    const distArg =
-      distance !== undefined && distance > 0
-        ? distance
-        : zoom !== undefined && zoom > 0
-          ? (this.bounds.radius * 2.5) / zoom
-          : null;
-    this.customDistance = distArg !== null;
+    const hasDist = Boolean((distance && distance > 0) || (zoom && zoom > 0));
+    this.customDistance = hasDist;
     this.initialDistance =
-      this.targetDistance =
       this.currDistance =
-        this.clampDistance(
-          distArg ??
-            (this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5),
-        );
+      this.targetDistance =
+        hasDist
+          ? this.targetDistance
+          : this.clampDistance(
+              this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5,
+            );
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
       this.render();
@@ -3032,12 +3044,9 @@ export class ThreeView {
     const c = this.canvas;
     const now = nowMs;
 
-    this.boundContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-    };
-    c.addEventListener('contextmenu', this.boundContextMenu);
+    this.onEvt(c, 'contextmenu', (e: MouseEvent) => e.preventDefault());
 
-    this.boundPointerDown = (e: PointerEvent) => {
+    this.onEvt(c, 'pointerdown', (e: PointerEvent) => {
       if (!this.interactive) return;
       this.isPointerDown = true;
       this.lastInteractionTime = now();
@@ -3048,10 +3057,9 @@ export class ThreeView {
       this.isPanning =
         e.button === 2 || e.shiftKey || this.activePointers.size === 2;
       c.setPointerCapture(e.pointerId);
-    };
-    c.addEventListener('pointerdown', this.boundPointerDown);
+    });
 
-    this.boundPointerMove = (e: PointerEvent) => {
+    this.onEvt(c, 'pointermove', (e: PointerEvent) => {
       if (!this.isPointerDown || !this.interactive) return;
       this.lastInteractionTime = now();
       const prev = this.activePointers.get(e.pointerId) || {
@@ -3090,10 +3098,9 @@ export class ThreeView {
         this.targetTheta = this.clampTheta(this.targetTheta - dx * 0.008);
         this.targetPhi = this.clampPhi(this.targetPhi + dy * 0.008);
       }
-    };
-    c.addEventListener('pointermove', this.boundPointerMove);
+    });
 
-    this.boundPointerUp = (e: PointerEvent) => {
+    this.onEvt(c, 'pointerup', (e: PointerEvent) => {
       this.lastInteractionTime = now();
       this.activePointers.delete(e.pointerId);
       if (this.activePointers.size === 0) {
@@ -3117,33 +3124,32 @@ export class ThreeView {
         );
         this.performMeshPick(clickX, clickY, true);
       }
-    };
-    c.addEventListener('pointerup', this.boundPointerUp);
+    });
 
-    this.boundWheel = (e: WheelEvent) => {
-      if (!this.interactive) return;
-      e.preventDefault();
-      this.lastInteractionTime = now();
-      const factor = Math.exp(e.deltaY * 0.001);
-      this.targetDistance = this.clampDistance(this.targetDistance * factor);
-    };
-    c.addEventListener('wheel', this.boundWheel, {passive: false});
+    this.onEvt(
+      c,
+      'wheel',
+      (e: WheelEvent) => {
+        if (!this.interactive) return;
+        e.preventDefault();
+        this.lastInteractionTime = now();
+        const factor = Math.exp(e.deltaY * 0.001);
+        this.targetDistance = this.clampDistance(this.targetDistance * factor);
+      },
+      {passive: false},
+    );
 
     // Event-driven programmatic camera control
-    this.boundSetCamera = (e: any) => {
+    this.onEvt(this.container, 'setCamera', (e: any) => {
       const d = e.detail || {};
       if (d.reset) {
         this.resetCamera();
       } else {
         this.setCamera(d.theta, d.phi, d.distance, d.zoom);
       }
-    };
-    this.container.addEventListener('setCamera', this.boundSetCamera);
+    });
 
-    this.boundResetCamera = () => {
-      this.resetCamera();
-    };
-    this.container.addEventListener('resetCamera', this.boundResetCamera);
+    this.onEvt(this.container, 'resetCamera', () => this.resetCamera());
 
     // Keyboard navigation for accessibility (WCAG 2.1.1 Keyboard Accessible)
     if (c.tabIndex !== undefined && c.tabIndex < 0) {
@@ -3156,7 +3162,7 @@ export class ThreeView {
       c.setAttribute?.('aria-label', 'Interactive 3D model viewport');
     }
 
-    this.boundKeyDown = (e: KeyboardEvent) => {
+    this.onEvt(c, 'keydown', (e: KeyboardEvent) => {
       if (!this.interactive) return;
       switch (e.key) {
         case 'ArrowLeft':
@@ -3187,46 +3193,13 @@ export class ThreeView {
       }
       this.lastInteractionTime = now();
       e.preventDefault();
-    };
-    c.addEventListener('keydown', this.boundKeyDown);
+    });
   }
 
   private teardownEvents(): void {
-    const rm = (
-      target: EventTarget,
-      evt: string,
-      key:
-        | 'boundContextLost'
-        | 'boundContextRestored'
-        | 'boundContextMenu'
-        | 'boundPointerDown'
-        | 'boundPointerMove'
-        | 'boundPointerUp'
-        | 'boundWheel'
-        | 'boundKeyDown'
-        | 'boundSetCamera'
-        | 'boundResetCamera',
-    ) => {
-      if (this[key]) {
-        target.removeEventListener(evt, this[key] as EventListener);
-        this[key] = null;
-      }
-    };
-    const c = this.canvas;
-    for (const [evt, key] of [
-      ['webglcontextlost', 'boundContextLost'],
-      ['webglcontextrestored', 'boundContextRestored'],
-      ['contextmenu', 'boundContextMenu'],
-      ['pointerdown', 'boundPointerDown'],
-      ['pointermove', 'boundPointerMove'],
-      ['pointerup', 'boundPointerUp'],
-      ['wheel', 'boundWheel'],
-      ['keydown', 'boundKeyDown'],
-    ] as const) {
-      rm(c, evt, key);
+    for (const [t, evt, fn] of this.evts.splice(0)) {
+      t.removeEventListener?.(evt, fn);
     }
-    rm(this.container, 'setCamera', 'boundSetCamera');
-    rm(this.container, 'resetCamera', 'boundResetCamera');
   }
 
   public raycastFromScreenPoint(
@@ -3303,7 +3276,7 @@ export class ThreeView {
               );
               mat4Multiply(this.mvpMatrix, vp, instModel);
               gl.uniformMatrix4fv(this.uPick.uMVP, false, this.mvpMatrix);
-              drawPrim(gl, prim);
+              drawPrim(gl, prim, instModel);
             }
           }
         } else {
@@ -3312,7 +3285,7 @@ export class ThreeView {
 
           for (const prim of mesh.primitives) {
             gl.bindVertexArray(prim.vao);
-            drawPrim(gl, prim);
+            drawPrim(gl, prim, this.modelMatrix);
           }
         }
       }
@@ -3413,6 +3386,7 @@ export class ThreeView {
               pos[i2 + 2],
               outHit,
               1e-4,
+              prim.doubleSided === false,
             );
           }
         }
@@ -3704,10 +3678,22 @@ export class ThreeView {
       this.autoRotate &&
       now - this.lastInteractionTime >= this.autoRotateDelay
     ) {
-      this.turntableRotation += this.autoRotateSpeed * dt;
-      this.updateTurntableMatrix();
-      for (const plugin of registeredPlugins) {
-        plugin.onCameraChange?.(this, this.container);
+      const bMin = this.bounds.min,
+        bMax = this.bounds.max,
+        [cx, , cz] = this.bounds.center,
+        [ex, ey, ez] = getOrbitEye(this);
+      if (
+        !bMin ||
+        ey < bMin[1] - 0.15 ||
+        ey > bMax[1] + 0.15 ||
+        Math.hypot(ex - cx, ez - cz) >=
+          Math.hypot(bMax[0] - bMin[0], bMax[2] - bMin[2]) * 0.5 + 0.15
+      ) {
+        this.turntableRotation += this.autoRotateSpeed * dt;
+        this.updateTurntableMatrix();
+        for (const plugin of registeredPlugins) {
+          plugin.onCameraChange?.(this, this.container);
+        }
       }
     }
     this.currTheta += (this.targetTheta - this.currTheta) * 0.12;
@@ -3739,19 +3725,10 @@ export class ThreeView {
         zoom,
         distance: Math.round(this.currDistance * 100) / 100,
       };
-
-      if (this.opts.onCameraChange) {
-        this.opts.onCameraChange(detail);
-      }
-      if (
-        typeof CustomEvent !== 'undefined' &&
-        typeof this.container.dispatchEvent === 'function'
-      ) {
-        this.container.dispatchEvent(
-          new CustomEvent('cameraChange', {
-            bubbles: true,
-            detail,
-          }),
+      this.opts.onCameraChange?.(detail);
+      if (typeof CustomEvent !== 'undefined') {
+        this.container.dispatchEvent?.(
+          new CustomEvent('cameraChange', {bubbles: true, detail}),
         );
       }
     }
@@ -4234,10 +4211,10 @@ export class ThreeView {
                   b[3],
                 ]);
               }
-              drawPrim(gl, prim);
+              drawPrim(gl, prim, instModel);
             }
           } else {
-            drawPrim(gl, prim);
+            drawPrim(gl, prim, this.modelMatrix);
           }
           if (isBlend) {
             gl.depthMask?.(true);

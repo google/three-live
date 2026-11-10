@@ -859,7 +859,7 @@ object TslMaterialCompiler {
     }
     if ("bumpFromHeight" in ops && isFragment) {
       out.add(
-        "    vec3 _tslBump(float h,float st,vec3 nw,vec3 wp){vec3 n=_tslNorm(nw),dx=dFdx(wp),dy=dFdy(wp),r1=cross(dy,n),r2=cross(n,dx);float det=dot(dx,r1);return abs(det)<1e-8?n:_tslNorm(abs(det)*n-st*(det<0.0?-1.0:1.0)*(dFdx(h)*r1+dFdy(h)*r2));}"
+        "    vec3 _tslBump(float h,float st,vec3 nw,vec3 wp){vec3 n=_tslNorm(nw),dx=dFdx(wp),dy=dFdy(wp),r1=cross(dy,n),r2=cross(n,dx);float ad=abs(dot(dx,r1));if(ad<1e-8)return n;vec3 g=st*(dot(dx,r1)<0.0?-1.0:1.0)*(dFdx(h)*r1+dFdy(h)*r2);float gl=length(g);return _tslNorm(ad*n-g*min(1.0,0.85*ad/max(gl,1e-8)));}"
       )
     }
     return out.joinToString("\n")

@@ -2756,6 +2756,157 @@ async function runThreeViewTests() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Room Orbit, Single-Sided Back-Face Culling & Wall Contact-Shadow Regression
+  // ---------------------------------------------------------------------------
+  {
+    const cullEvents: string[] = [];
+    const cullGl: any = new Proxy(
+      {
+        CULL_FACE: 0x0b44,
+        BACK: 0x0405,
+        CW: 0x0900,
+        CCW: 0x0901,
+        TRIANGLES: 4,
+        UNSIGNED_SHORT: 5123,
+        FLOAT: 5126,
+        ARRAY_BUFFER: 34962,
+        ELEMENT_ARRAY_BUFFER: 34963,
+        STATIC_DRAW: 35044,
+        DEPTH_TEST: 2929,
+        COLOR_BUFFER_BIT: 16384,
+        DEPTH_BUFFER_BIT: 256,
+        canvas: mockCanvas,
+        enable: (cap: number) => {
+          if (cap === 0x0b44) cullEvents.push('enable');
+        },
+        disable: (cap: number) => {
+          if (cap === 0x0b44) cullEvents.push('disable');
+        },
+        frontFace: (mode: number) => {
+          cullEvents.push(mode === 0x0900 ? 'cw' : 'ccw');
+        },
+        cullFace: () => {},
+        createProgram: () => ({}),
+        createShader: () => ({}),
+        createBuffer: () => ({}),
+        createVertexArray: () => ({}),
+        createFramebuffer: () => null,
+        getShaderParameter: () => true,
+        getProgramParameter: () => true,
+        getUniformLocation: () => ({}),
+      },
+      {
+        get(t, p) {
+          return p in t ? (t as any)[p] : () => {};
+        },
+      },
+    );
+    const roomScene = new THREE.Scene();
+    const ceilingMat = new THREE.MeshStandardMaterial({
+      name: 'RoomCeilingMat',
+      color: 0xf4ebe0,
+      side: THREE.FrontSide,
+    });
+    assert(
+      ceilingMat.doubleSided === false && ceilingMat.side === THREE.FrontSide,
+      'side: THREE.FrontSide sets material.doubleSided === false',
+    );
+    const defaultMat = new THREE.MeshStandardMaterial({color: 0xcccccc});
+    assert(
+      defaultMat.doubleSided === true,
+      'default Material keeps doubleSided === true',
+    );
+
+    const ceiling = new THREE.Mesh(
+      new THREE.PlaneGeometry(5, 5),
+      ceilingMat,
+    );
+    ceiling.name = 'Bedroom_Ceiling';
+    ceiling.rotation.x = Math.PI / 2;
+    ceiling.position.set(0, 2.68, 0);
+    roomScene.add(ceiling);
+
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(4.6, 2.68, 0.12),
+      defaultMat,
+    );
+    wall.name = 'BackWall_CenterPier';
+    wall.position.set(0, 1.34, -1.66);
+    roomScene.add(wall);
+
+    const floor = new THREE.Mesh(
+      new THREE.BoxGeometry(4.6, 0.02, 4.6),
+      defaultMat,
+    );
+    floor.name = 'Hardwood_Plank_Floor';
+    floor.position.set(0, -0.01, 0.6);
+    roomScene.add(floor);
+
+    const bed = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 0.65, 1.8),
+      defaultMat,
+    );
+    bed.name = 'Master_Bed';
+    bed.position.set(0, 0.325, -0.5);
+    roomScene.add(bed);
+
+    const roomGlb = parseGLB(roomScene.toGLB());
+    assert(
+      roomGlb.gltf.materials[0].doubleSided === false &&
+        roomGlb.gltf.materials[1].doubleSided === true,
+      'scene.toGLB() preserves doubleSided: false for FrontSide materials',
+    );
+
+    const cullCanvas: any = {
+      ...mockCanvas,
+      getContext: () => cullGl,
+    };
+    const roomView = new ThreeView(cullCanvas, cullCanvas, {autoStart: false});
+    roomView.loadGLBData(roomGlb);
+    cullEvents.length = 0;
+    roomView.render();
+    assert(
+      cullEvents.includes('enable') && cullEvents.includes('ccw'),
+      'ThreeView enables CULL_FACE when drawing single-sided (doubleSided: false) primitives',
+    );
+
+    // Interior camera suppression of turntable auto-rotate
+    roomView.setAutoRotate(true);
+    roomView.setAutoRotateSpeed(Math.PI / 2);
+    roomView.setAutoRotateDelay(0);
+    roomView.setTarget(0, -0.04, 0.06);
+    roomView.setCamera(333, 2, 3.3);
+    roomView.jumpCameraToGoal();
+    roomView.resetTurntableRotation(0);
+    (roomView as any).update(1.0);
+    assert(
+      roomView.turntableRotation === 0,
+      'autoRotate pauses turntableRotation while camera eye is inside room swept bounds',
+    );
+
+    // Zooming outside the room resumes turntable auto-rotate
+    roomView.setTarget(0, 1.34, 0.35);
+    roomView.setCamera(0, 25, 9.5);
+    roomView.jumpCameraToGoal();
+    (roomView as any).update(1.0);
+    assert(
+      Math.abs(roomView.turntableRotation - Math.PI / 2) < 1e-4,
+      'autoRotate resumes turntableRotation once camera orbits outside room swept bounds',
+    );
+
+    // CPU raycast from above skips single-sided downward-facing ceiling and picks Master_Bed!
+    roomView.resetTurntableRotation(0);
+    roomView.setTarget(0, 0.325, -0.5);
+    roomView.setCamera(0, 85, 6.0);
+    roomView.jumpCameraToGoal();
+    const pickFromAbove = roomView.raycastFromScreenPoint(200, 200);
+    assert(
+      pickFromAbove?.meshName === 'Master_Bed',
+      `raycastFromScreenPoint sees through back-culled FrontSide ceiling to Master_Bed (got ${pickFromAbove?.meshName})`,
+    );
+  }
+
   console.log(
     `\n🏆 three-view Test Results: ${passed} Passed, ${failed} Failed.`,
   );
