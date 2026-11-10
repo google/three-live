@@ -296,14 +296,14 @@ renders the same way without a network:
 
         ```kotlin
         dependencies {
-          implementation("com.github.google.three-live:compiler:v1.3.2")
+          implementation("com.github.google.three-live:compiler:v1.4.0")
           // Optional adapters: :filament, :firebase-ai, :detect-mlkit, :hands-androidxr, :hands-mediapipe
         }
         ```
     *   **GitHub Packages Maven
         (`https://maven.pkg.github.com/google/three-live`):** Configure the
         repository in `settings.gradle.kts` and add
-        `implementation("com.google.threelive:compiler:1.3.2")` (plus optional
+        `implementation("com.google.threelive:compiler:1.4.0")` (plus optional
         `:filament`, `:firebase-ai`, `:detect-mlkit`, `:hands-androidxr`,
         `:hands-mediapipe`).
     *   **Prebuilt AAR:** Download `three-live-compiler-release.aar` (includes
@@ -312,9 +312,9 @@ renders the same way without a network:
         **[GitHub Releases](https://github.com/google/three-live/releases)**
         into `app/libs/` and add
         `implementation(files("libs/three-live-compiler-release.aar"))`.
-    *   **Maven Local (`com.google.threelive:compiler:1.3.2`):** Run
+    *   **Maven Local (`com.google.threelive:compiler:1.4.0`):** Run
         `./gradlew :mobile:android:publishReleasePublicationToMavenLocal` and
-        add `implementation("com.google.threelive:compiler:1.3.2")`.
+        add `implementation("com.google.threelive:compiler:1.4.0")`.
     *   **From source:** Run `make android` (or
         `bash scripts/build_android_aar.sh`).
 *   **2. iOS, macOS, and visionOS (Swift Package Manager):**
