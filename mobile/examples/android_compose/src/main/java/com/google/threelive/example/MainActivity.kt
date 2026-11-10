@@ -91,6 +91,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   val coroutineScope = rememberCoroutineScope()
   var selectedMode by remember { mutableStateOf(StudioMode.THREE_LIVE) }
   var selectedPresetIndex by remember { mutableStateOf(0) }
+  var selectedAiEditIndex by remember { mutableStateOf(-1) }
   val activePresets = remember(selectedMode) { SampleScenes.presetsFor(selectedMode) }
   var jsScriptText by remember { mutableStateOf(SampleScenes.THREE_LIVE_PRESETS[0].script) }
 
@@ -599,6 +600,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                   if (selectedMode != mode) {
                     selectedMode = mode
                     selectedPresetIndex = 0
+                    selectedAiEditIndex = -1
                     val firstPreset = SampleScenes.presetsFor(mode).first()
                     jsScriptText = firstPreset.script
                     triggerCompileAndRender()
@@ -625,11 +627,50 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                 selected = (selectedPresetIndex == index),
                 onClick = {
                   selectedPresetIndex = index
+                  selectedAiEditIndex = -1
                   jsScriptText = preset.script
                   triggerCompileAndRender()
                 },
                 label = { Text(preset.name) },
               )
+            }
+          }
+
+          // Instant Sample AI Edits Row (pre-baked edits; live edits use Firebase AI / API key)
+          val activePreset = activePresets.getOrNull(selectedPresetIndex)
+          if (activePreset != null && activePreset.sampleEdits.isNotEmpty()) {
+            Row(
+              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                "✦ AI Edits:",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+              )
+              activePreset.sampleEdits.forEachIndexed { editIndex, edit ->
+                FilterChip(
+                  selected = (selectedAiEditIndex == editIndex),
+                  onClick = {
+                    selectedAiEditIndex = editIndex
+                    jsScriptText = edit.script
+                    triggerCompileAndRender()
+                  },
+                  label = { Text("“${edit.prompt}”", fontSize = 11.sp) },
+                )
+              }
+              if (selectedAiEditIndex >= 0) {
+                AssistChip(
+                  onClick = {
+                    selectedAiEditIndex = -1
+                    jsScriptText = activePreset.script
+                    triggerCompileAndRender()
+                  },
+                  label = { Text("↺ Reset", fontSize = 11.sp) },
+                )
+              }
             }
           }
 

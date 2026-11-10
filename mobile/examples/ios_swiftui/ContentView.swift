@@ -26,6 +26,7 @@
     @State private var selectedMode: StudioMode = .threeLive
     @State private var renderedMode: StudioMode = .threeLive
     @State private var selectedPresetIndex = 0
+    @State private var selectedAiEditIndex = -1
     @State private var jsScriptText = SampleScenes.threeLivePresets[0].script
     @State private var isCompiling = false
     @State private var compileGeneration: Int = 0
@@ -311,6 +312,7 @@
                 .pickerStyle(.segmented)
                 .onChange(of: selectedMode) { newMode in
                   selectedPresetIndex = 0
+                  selectedAiEditIndex = -1
                   let presets = SampleScenes.presets(for: newMode)
                   if let first = presets.first {
                     jsScriptText = first.script
@@ -327,6 +329,7 @@
                     ForEach(0..<activePresets.count, id: \.self) { idx in
                       Button(action: {
                         selectedPresetIndex = idx
+                        selectedAiEditIndex = -1
                         jsScriptText = activePresets[idx].script
                         Task { await compileAndRender() }
                       }) {
@@ -341,6 +344,56 @@
                           )
                           .foregroundColor(selectedPresetIndex == idx ? .accentColor : .primary)
                           .cornerRadius(8)
+                      }
+                    }
+                  }
+                }
+
+                // Instant Sample AI Edits Row (pre-baked edits; live edits use Firebase AI / API key)
+                if selectedPresetIndex < activePresets.count,
+                  !activePresets[selectedPresetIndex].sampleEdits.isEmpty
+                {
+                  let currentPreset = activePresets[selectedPresetIndex]
+                  ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                      Text("✦ AI Edits:")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.purple)
+                      ForEach(0..<currentPreset.sampleEdits.count, id: \.self) { editIdx in
+                        let edit = currentPreset.sampleEdits[editIdx]
+                        Button(action: {
+                          selectedAiEditIndex = editIdx
+                          jsScriptText = edit.script
+                          Task { await compileAndRender() }
+                        }) {
+                          Text("“\(edit.prompt)”")
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                              selectedAiEditIndex == editIdx
+                                ? Color.purple.opacity(0.22)
+                                : Color(UIColor.secondarySystemBackground)
+                            )
+                            .foregroundColor(selectedAiEditIndex == editIdx ? .purple : .primary)
+                            .cornerRadius(8)
+                        }
+                      }
+                      if selectedAiEditIndex >= 0 {
+                        Button(action: {
+                          selectedAiEditIndex = -1
+                          jsScriptText = currentPreset.script
+                          Task { await compileAndRender() }
+                        }) {
+                          Text("↺ Reset")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color(UIColor.tertiarySystemBackground))
+                            .foregroundColor(.secondary)
+                            .cornerRadius(8)
+                        }
                       }
                     }
                   }
