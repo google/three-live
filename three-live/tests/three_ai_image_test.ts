@@ -24,6 +24,8 @@ import {
   type AISpatialPriors,
   buildImageMessages,
   buildImageUserText,
+  buildVisualRefinementPrompt,
+  buildVisualTurnMessages,
   compileFromImage,
   detectImageMime,
   formatSpatialPriors,
@@ -35,7 +37,9 @@ import {
   MAX_PRIOR_LABEL_CHARS,
   MAX_PRIOR_OBJECTS,
   MAX_PRIOR_PLANES,
+  MAX_VISUAL_TURNS,
   normalizeImageInput,
+  renderComparisonSheetDataUrl,
 } from '../src/plugins/ai-image';
 import {Scene, THREE} from '../src/three-author';
 import fixture from './fixtures/image_cases.json';
@@ -247,6 +251,20 @@ async function runTests(): Promise<void> {
       `fixture repairs case '${c.name}' matches expected output`,
     );
   }
+
+  for (const c of (fixture as any).visualRefinement) {
+    const got = buildVisualRefinementPrompt(
+      c.turn,
+      c.totalTurns,
+      c.hasQuad,
+      c.metricsNote,
+    );
+    assert(
+      got === c.expected,
+      `fixture visualRefinement case '${c.name}' matches expected output`,
+    );
+  }
+  assert(MAX_VISUAL_TURNS === 5, 'MAX_VISUAL_TURNS equals 5');
 
   // 2. URL validation (`isAllowedImageUrl`)
   assert(
@@ -733,6 +751,152 @@ async function runTests(): Promise<void> {
       firstAborted && firstRejectErr !== null && res2.applied,
       'newer compileFromImage call aborts in-flight earlier call',
     );
+  }
+
+  // Closed-loop visualTurns: rolling 4-message context, inner repair, early-stop, progress events
+  {
+    const {el, events} = fakeElement('');
+    const refinedDesk = `${CLEAN_DESK_SCRIPT}\nconst rug = new THREE.Mesh(new THREE.BoxGeometry(2, 0.02, 1.4), new THREE.MeshStandardMaterial({ color: 0xd6cfc7 })); rug.name = 'Rug'; rug.position.set(0, 0.01, 0); scene.add(rug);`;
+    const cmpSheetUrl = 'data:image/jpeg;base64,/9j/4AAQ';
+    const {provider, requests} = scriptedProvider([
+      // Stage 1: initial compile
+      `\`\`\`js\n${CLEAN_DESK_SCRIPT}\n\`\`\``,
+      // Visual Turn 1: syntax error -> triggers 1 inner repair
+      '```js\nconst broken = new THREE.Mesh(\n```',
+      // Visual Turn 1 inner repair: valid refinedDesk
+      `\`\`\`js\n${refinedDesk}\n\`\`\``,
+      // Visual Turn 2: identical script -> early-stops before Turn 3!
+      `\`\`\`js\n${refinedDesk}\n\`\`\``,
+    ]);
+    let renderCalls = 0;
+    const res = await compileFromImage(el, VALID_PNG, {
+      prompt: 'Add rug',
+      visualTurns: 99, // clamped to MAX_VISUAL_TURNS (5)
+      provider,
+      renderComparison: async () => {
+        renderCalls++;
+        return cmpSheetUrl;
+      },
+    });
+    assert(
+      res.applied &&
+        res.visualTurnsUsed === 1 &&
+        res.repairs === 1 &&
+        res.code === refinedDesk &&
+        renderCalls === 2 &&
+        requests.length === 4,
+      'visualTurns clamps to 5, repairs inner slip, promotes upgrade, and early-stops on convergence',
+    );
+    assert(
+      requests[1].length === 4 &&
+        requests[2].length === 6 &&
+        requests[3].length === 4 &&
+        Array.isArray(requests[3][3].content) &&
+        (requests[3][3].content[0] as any).image_url.url === cmpSheetUrl &&
+        String((requests[3][3].content[1] as any).text).includes(
+          'Visual refinement pass 2/5',
+        ),
+      'visualTurns prunes rolling vision context back to 4 messages on each pass',
+    );
+    const progEvts = events.filter(
+      (e) => e.type === 'three-live-image-progress',
+    );
+    assert(
+      progEvts.length === 2 &&
+        progEvts[0].detail.phase === 'compile' &&
+        progEvts[1].detail.phase === 'visual' &&
+        progEvts[1].detail.turn === 1 &&
+        progEvts[1].detail.overlayDataUrl === cmpSheetUrl,
+      'compileFromImage dispatches three-live-image-progress events per visual turn',
+    );
+  }
+
+  // Non-regression ratchet & offscreen renderer context disposal
+  {
+    const {el} = fakeElement('');
+    const {provider} = scriptedProvider([
+      `\`\`\`js\n${CLEAN_DESK_SCRIPT}\n\`\`\``,
+      '```js\nconst g = new THREE.Group(); scene.add(g);\n```',
+      '```js\nconst g = new THREE.Group(); scene.add(g);\n```',
+    ]);
+    const rRes = await compileFromImage(el, VALID_PNG, {
+      visualTurns: 2,
+      provider,
+      renderComparison: () => 'data:image/png;base64,iVBORw0KGgo=',
+    });
+    assert(
+      rRes.applied &&
+        rRes.visualTurnsUsed === 0 &&
+        rRes.code === CLEAN_DESK_SCRIPT,
+      'visualTurns non-regression ratchet preserves previous valid scene on failed refinement',
+    );
+
+    // Verify renderComparisonSheetDataUrl disposes WebGL context via WEBGL_lose_context
+    let lostCtx = false;
+    let disposed = false;
+    class MockViewer {
+      gl = {
+        getExtension: (n: string) =>
+          n === 'WEBGL_lose_context'
+            ? {
+                loseContext() {
+                  lostCtx = true;
+                },
+              }
+            : null,
+      };
+      bounds = {center: [0, 0.4, 0] as [number, number, number]};
+      loadModel() {}
+      setFieldOfView() {}
+      setTarget() {}
+      setInitialCamera() {}
+      update() {}
+      render() {}
+      dispose() {
+        disposed = true;
+      }
+    }
+    const prevDoc = (globalThis as any).document;
+    const prevImg = (globalThis as any).Image;
+    (globalThis as any).document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        appendChild() {},
+        getContext: () => ({
+          fillStyle: '',
+          globalAlpha: 1,
+          font: '',
+          fillRect() {},
+          drawImage() {},
+          fillText() {},
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,/9j/4AAQ',
+      }),
+    };
+    (globalThis as any).Image = class {
+      naturalWidth = 320;
+      naturalHeight = 240;
+      onload: (() => void) | null = null;
+      set src(_v: string) {
+        if (this.onload) this.onload();
+      }
+    };
+    try {
+      const sheetUrl = await renderComparisonSheetDataUrl(
+        {viewer: new MockViewer()} as any,
+        'camera.fov = 38; camera.position.set(0, 1.2, 3); camera.lookAt(0, 0.4, 0);',
+        new ArrayBuffer(16),
+        'data:image/png;base64,iVBORw0KGgo=',
+      );
+      assert(
+        sheetUrl === 'data:image/jpeg;base64,/9j/4AAQ' && lostCtx && disposed,
+        'renderComparisonSheetDataUrl composites 3-panel sheet and releases WebGL context immediately',
+      );
+    } finally {
+      (globalThis as any).document = prevDoc;
+      (globalThis as any).Image = prevImg;
+    }
   }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);

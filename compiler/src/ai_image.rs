@@ -35,6 +35,8 @@ pub const MAX_PRIOR_OBJECTS: usize = 32;
 pub const MAX_PRIOR_LABEL_CHARS: usize = 80;
 /// Maximum characters in a user prompt instruction.
 pub const MAX_IMAGE_PROMPT_CHARS: usize = 2000;
+/// Maximum closed-loop visual refinement turns (`--visual-turns N`, `0..=5`).
+pub const MAX_VISUAL_TURNS: usize = 5;
 const MAX_WARNINGS: usize = 20;
 
 /// System prompt for reconstructing a 3D scene from a reference image.
@@ -375,6 +377,85 @@ pub fn image_repair_message(error: Option<&str>, warnings: &[String]) -> String 
     "Return the complete corrected script in a single ```js code block.".to_string()
 }
 
+/// Builds the structured visual-critique prompt for closed-loop visual refinement
+/// (`--visual-turns N`, mirrored by `buildVisualRefinementPrompt` in `ai-image.ts`).
+pub fn build_visual_refinement_prompt(
+    turn: usize,
+    total_turns: usize,
+    has_quad: bool,
+    metrics_note: Option<&str>,
+) -> String {
+    let total = total_turns.clamp(1, MAX_VISUAL_TURNS);
+    let t = turn.clamp(1, total);
+    let sheet_desc = if has_quad {
+        "`REFERENCE | RENDER (CAMERA) | OVERLAY 50/50` comparison sheet and `CAMERA | FRONT | TOP | ISO` 4-up depth check"
+    } else {
+        "`REFERENCE | RENDER (CAMERA) | OVERLAY 50/50` comparison sheet"
+    };
+    let mut out = format!(
+        "Visual refinement pass {}/{}. Inspect the attached {}:\n\
+         - 50/50 Overlay Alignment: Adjust `camera` (`fov`, `position`, `lookAt`) and major architectural/object silhouettes until ghosted double-edges disappear in `OVERLAY 50/50`.\n\
+         - 3D Depth & Grounding: Give parts real metric depth along `Z` (never flat 2D billboards), rest grounded objects cleanly on supporting surfaces (`y = 0`), and use `side: THREE.FrontSide` on room ceilings/walls where appropriate.\n\
+         - Materials & TSL Patterns: Match sRGB colors, roughness, and metalness; upgrade flat solid colors on patterned wood, rugs, textiles, foliage, or art to loop-free `THREE.TSL` `MeshStandardNodeMaterial` (`<= 128` nodes).\n\
+         - Secondary Details: Add visible hardware, trim/moldings, lighting fixtures, and props while keeping every existing named part intact.\n",
+        t, total, sheet_desc
+    );
+    let clean_note: String = metrics_note.unwrap_or("").trim().chars().take(400).collect();
+    if !clean_note.is_empty() {
+        out.push_str(&format!("Metrics: {}\n", clean_note));
+    }
+    out.push_str("Return only the complete refined script in a single ```js code block.");
+    out
+}
+
+/// Builds the rolling 4-message Chat Completions context for visual turn `turn`:
+/// `[system_msg, initial_user_msg, assistant(best_code), user_multimodal(comparison, quad?, prompt)]`.
+pub fn build_visual_turn_messages(
+    initial_messages: &[Value],
+    best_code: &str,
+    comparison_url: &str,
+    quad_url: Option<&str>,
+    turn: usize,
+    total_turns: usize,
+    metrics_note: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    if initial_messages.len() < 2 {
+        return Err(
+            "build_visual_turn_messages requires initial [system, user] messages.".to_string()
+        );
+    }
+    let cmp_trimmed = comparison_url.trim();
+    if !is_allowed_image_url(cmp_trimmed) {
+        return Err("build_visual_turn_messages: invalid comparison image URL.".to_string());
+    }
+    let clean_quad = quad_url.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(q) = clean_quad {
+        if !is_allowed_image_url(q) {
+            return Err("build_visual_turn_messages: invalid quad image URL.".to_string());
+        }
+    }
+    let prompt_text =
+        build_visual_refinement_prompt(turn, total_turns, clean_quad.is_some(), metrics_note);
+    let mut parts = vec![json!({ "type": "image_url", "image_url": { "url": cmp_trimmed } })];
+    if let Some(q) = clean_quad {
+        parts.push(json!({ "type": "image_url", "image_url": { "url": q } }));
+    }
+    parts.push(json!({ "type": "text", "text": prompt_text }));
+
+    Ok(vec![
+        initial_messages[0].clone(),
+        initial_messages[1].clone(),
+        json!({
+            "role": "assistant",
+            "content": format!("```js\n{}\n```", best_code.trim()),
+        }),
+        json!({
+            "role": "user",
+            "content": parts,
+        }),
+    ])
+}
+
 /// Compiles `code` with the warm sandboxed engine and runs the spatial linter (`TL100-TL402`).
 /// Returns `ok = true` when the script compiles and contains at least one mesh, along with any
 /// repairable warnings (`TL102`, `TL2xx`, `TL3xx`, `TL4xx`).
@@ -494,6 +575,26 @@ pub struct FromImageConfig {
     pub prompt: String,
     pub priors: Option<Value>,
     pub max_repairs: usize,
+    /// Closed-loop rendered 50/50 overlay + 4-up visual critique passes (`0..=5`, default `0`).
+    pub visual_turns: usize,
+    /// Attach a `512x512` `CAMERA | FRONT | TOP | ISO` 4-up sheet on each visual turn (default `true`).
+    pub include_quad_view: bool,
+    /// Optional directory to write `step_XX.js`, `step_XX_cmp.png`, and `step_XX_quad.png` snapshots.
+    pub save_steps_dir: Option<std::path::PathBuf>,
+}
+
+impl Default for FromImageConfig {
+    fn default() -> Self {
+        Self {
+            image_spec: String::new(),
+            prompt: String::new(),
+            priors: None,
+            max_repairs: 1,
+            visual_turns: 0,
+            include_quad_view: true,
+            save_steps_dir: None,
+        }
+    }
 }
 
 /// Structured result of [`compile_from_image_with_provider`].
@@ -503,6 +604,7 @@ pub struct FromImageReport {
     pub applied: bool,
     pub code: String,
     pub turns: usize,
+    pub visual_turns_used: usize,
     pub mesh_names: Vec<String>,
     pub mesh_count: usize,
     pub warnings: Vec<String>,
@@ -569,9 +671,94 @@ fn compute_ref_metrics(
     Some(cmp.metrics)
 }
 
+fn render_visual_turn_sheets(
+    code: &str,
+    ref_img: Option<&crate::reference::ReferenceImage>,
+    include_quad_view: bool,
+) -> Result<
+    (String, Option<String>, Option<crate::reference::ReferenceMetrics>, Vec<u8>, Option<Vec<u8>>),
+    String,
+> {
+    let scene = crate::validate_three_script(code)?;
+    let (cmp_url, metrics, cmp_png) = if let Some(img) = ref_img {
+        let cmp = crate::reference::compare_scene_to_reference(
+            &scene,
+            img,
+            [img.width, img.height],
+            crate::render::RenderViewMode::Camera,
+            512,
+            false,
+            false,
+        );
+        let png = crate::render::encode_png_rgba_compressed(cmp.width, cmp.height, &cmp.rgba)?;
+        let url = format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png));
+        (url, Some(cmp.metrics), png)
+    } else {
+        let rgba = crate::render::render_viewport_rgba(
+            &scene,
+            512,
+            512,
+            crate::render::RenderViewMode::Camera,
+            false,
+            false,
+            Some("RENDER (CAMERA)"),
+        );
+        let png = crate::render::encode_png_rgba_compressed(512, 512, &rgba)?;
+        let url = format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png));
+        (url, None, png)
+    };
+
+    let (quad_url, quad_png) = if include_quad_view {
+        let opts = crate::render::RenderOptions {
+            width: 512,
+            height: 512,
+            view: crate::render::RenderViewMode::Quad,
+            show_grid: true,
+            show_annotations: true,
+            label_override: None,
+        };
+        let (qw, qh, qrgba) = crate::render::render_scene_rgba(&scene, &opts);
+        let png = crate::render::encode_png_rgba_compressed(qw, qh, &qrgba)?;
+        let url = format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png));
+        (Some(url), Some(png))
+    } else {
+        (None, None)
+    };
+    Ok((cmp_url, quad_url, metrics, cmp_png, quad_png))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_visual_step_artifacts(
+    dir: Option<&std::path::Path>,
+    step_idx: usize,
+    code: &str,
+    cmp_png: &[u8],
+    quad_png: Option<&[u8]>,
+) {
+    let Some(dir) = dir else { return };
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(format!("step_{:02}.js", step_idx)), code);
+    if !cmp_png.is_empty() {
+        let _ = std::fs::write(dir.join(format!("step_{:02}_cmp.png", step_idx)), cmp_png);
+    }
+    if let Some(q) = quad_png.filter(|b| !b.is_empty()) {
+        let _ = std::fs::write(dir.join(format!("step_{:02}_quad.png", step_idx)), q);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_visual_step_artifacts(
+    _dir: Option<&std::path::Path>,
+    _step_idx: usize,
+    _code: &str,
+    _cmp_png: &[u8],
+    _quad_png: Option<&[u8]>,
+) {
+}
+
 /// Runs the multimodal `build_image_messages` -> `provider` -> `validate_image_scene` ->
-/// auto-repair loop (repairing both compile errors and spatial/schema warnings, with fallback
-/// to the best compiling candidate if a warning-repair turn fails to compile).
+/// auto-repair loop (Stage 1), followed by up to `cfg.visual_turns` (`0..=5`) closed-loop
+/// rendered `REFERENCE | RENDER | OVERLAY 50/50` + 4-up critique turns (Stage 2).
 pub fn compile_from_image_with_provider<F>(
     cfg: &FromImageConfig,
     mut provider: F,
@@ -581,48 +768,25 @@ where
 {
     let (image_url, ref_img) = encode_image_spec_to_data_url(&cfg.image_spec)?;
     let initial = build_image_messages(&image_url, &cfg.prompt, cfg.priors.as_ref())?;
-    let mut messages = initial.as_array().cloned().unwrap_or_default();
+    let initial_messages = initial.as_array().cloned().unwrap_or_default();
+    let mut messages = initial_messages.clone();
     let max_repairs = cfg.max_repairs.min(5);
+    let visual_turns = cfg.visual_turns.min(MAX_VISUAL_TURNS);
 
+    let mut stage1_winner: Option<(String, ImageSceneValidation)> = None;
     let mut best_candidate: Option<(String, ImageSceneValidation)> = None;
     let mut last_code = String::new();
     let mut last_val: Option<ImageSceneValidation> = None;
     let mut turns = 0usize;
+    let mut stage1_err: Option<String> = None;
 
     for attempt in 0..=max_repairs {
-        turns = attempt + 1;
+        turns += 1;
         let reply = match provider(&Value::Array(messages.clone())) {
             Ok(r) => r,
             Err(err) => {
-                if let Some((best_code, best_val)) = best_candidate {
-                    let reference_metrics = compute_ref_metrics(&best_code, ref_img.as_ref());
-                    return Ok((
-                        FromImageReport {
-                            applied: true,
-                            code: best_code,
-                            turns,
-                            mesh_names: best_val.mesh_names,
-                            mesh_count: best_val.mesh_count,
-                            warnings: best_val.warnings,
-                            error: None,
-                            reference_metrics,
-                        },
-                        ref_img,
-                    ));
-                }
-                return Ok((
-                    FromImageReport {
-                        applied: false,
-                        code: last_code,
-                        turns,
-                        mesh_names: Vec::new(),
-                        mesh_count: 0,
-                        warnings: Vec::new(),
-                        error: Some(err),
-                        reference_metrics: None,
-                    },
-                    ref_img,
-                ));
+                stage1_err = Some(err);
+                break;
             }
         };
 
@@ -630,20 +794,8 @@ where
         let val = validate_image_scene(&code);
 
         if val.ok && val.warnings.is_empty() {
-            let reference_metrics = compute_ref_metrics(&code, ref_img.as_ref());
-            return Ok((
-                FromImageReport {
-                    applied: true,
-                    code,
-                    turns,
-                    mesh_names: val.mesh_names,
-                    mesh_count: val.mesh_count,
-                    warnings: val.warnings,
-                    error: None,
-                    reference_metrics,
-                },
-                ref_img,
-            ));
+            stage1_winner = Some((code, val));
+            break;
         }
 
         if val.ok && best_candidate.is_none() {
@@ -661,52 +813,153 @@ where
         }
     }
 
-    if let Some(val) = last_val.as_ref().filter(|v| v.ok) {
-        let reference_metrics = compute_ref_metrics(&last_code, ref_img.as_ref());
+    let (mut best_code, mut best_val) = if let Some(w) = stage1_winner {
+        w
+    } else if let Some(val) = last_val.as_ref().filter(|v| v.ok).cloned() {
+        (last_code, val)
+    } else if let Some(b) = best_candidate {
+        b
+    } else {
+        let err_msg = stage1_err
+            .or_else(|| last_val.and_then(|v| v.error))
+            .unwrap_or_else(|| "Scene failed validation.".to_string());
         return Ok((
             FromImageReport {
-                applied: true,
+                applied: false,
                 code: last_code,
                 turns,
-                mesh_names: val.mesh_names.clone(),
-                mesh_count: val.mesh_count,
-                warnings: val.warnings.clone(),
-                error: None,
-                reference_metrics,
+                visual_turns_used: 0,
+                mesh_names: Vec::new(),
+                mesh_count: 0,
+                warnings: Vec::new(),
+                error: Some(err_msg),
+                reference_metrics: None,
             },
             ref_img,
         ));
+    };
+
+    let mut visual_turns_used = 0usize;
+
+    if visual_turns > 0 {
+        for v_step in 1..=visual_turns {
+            let Ok((cmp_url, quad_url, cur_metrics, cmp_png, quad_png)) =
+                render_visual_turn_sheets(&best_code, ref_img.as_ref(), cfg.include_quad_view)
+            else {
+                break;
+            };
+            if v_step == 1 {
+                save_visual_step_artifacts(
+                    cfg.save_steps_dir.as_deref(),
+                    0,
+                    &best_code,
+                    &cmp_png,
+                    quad_png.as_deref(),
+                );
+            }
+
+            let note = cur_metrics
+                .as_ref()
+                .map(crate::reference::format_reference_metrics_note)
+                .unwrap_or_default();
+            let Ok(mut v_msgs) = build_visual_turn_messages(
+                &initial_messages,
+                &best_code,
+                &cmp_url,
+                quad_url.as_deref(),
+                v_step,
+                visual_turns,
+                Some(&note),
+            ) else {
+                break;
+            };
+
+            turns += 1;
+            let Ok(reply) = provider(&Value::Array(v_msgs.clone())) else {
+                break;
+            };
+            let mut cand_code = crate::ai_edit::extract_script(&reply);
+            if cand_code.trim() == best_code.trim() {
+                break;
+            }
+            let mut cand_val = validate_image_scene(&cand_code);
+
+            // Allow 1 inner compile/lint repair per visual turn so minor syntax or TL502 slips
+            // on a richer visual upgrade get fixed rather than discarded.
+            if !cand_val.ok || !cand_val.warnings.is_empty() {
+                let pre_repair = cand_val.ok.then(|| (cand_code.clone(), cand_val.clone()));
+                v_msgs.push(json!({ "role": "assistant", "content": reply }));
+                v_msgs.push(json!({
+                    "role": "user",
+                    "content": image_repair_message(cand_val.error.as_deref(), &cand_val.warnings),
+                }));
+                turns += 1;
+                if let Ok(rep_reply) = provider(&Value::Array(v_msgs)) {
+                    let rep_code = crate::ai_edit::extract_script(&rep_reply);
+                    let rep_val = validate_image_scene(&rep_code);
+                    if rep_val.ok {
+                        cand_code = rep_code;
+                        cand_val = rep_val;
+                    } else if let Some((pc, pv)) = pre_repair {
+                        cand_code = pc;
+                        cand_val = pv;
+                    }
+                } else if let Some((pc, pv)) = pre_repair {
+                    cand_code = pc;
+                    cand_val = pv;
+                }
+            }
+
+            // Non-regression ratchet: candidate must compile without adding new lint warnings,
+            // and must not suffer a catastrophic silhouette IoU drop (> 0.15) on clean references.
+            if !cand_val.ok || cand_val.warnings.len() > best_val.warnings.len() {
+                break;
+            }
+            let next_metrics = compute_ref_metrics(&cand_code, ref_img.as_ref());
+            if let (Some(prev_m), Some(next_m)) = (cur_metrics.as_ref(), next_metrics.as_ref()) {
+                if prev_m.silhouette_reliable && next_m.silhouette_reliable {
+                    if let (Some(p_iou), Some(n_iou)) =
+                        (prev_m.silhouette_iou, next_m.silhouette_iou)
+                    {
+                        if n_iou + 0.15 < p_iou {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            best_code = cand_code;
+            best_val = cand_val;
+            visual_turns_used += 1;
+
+            if cfg.save_steps_dir.is_some() {
+                if let Ok((_, _, _, step_cmp, step_quad)) =
+                    render_visual_turn_sheets(&best_code, ref_img.as_ref(), cfg.include_quad_view)
+                {
+                    save_visual_step_artifacts(
+                        cfg.save_steps_dir.as_deref(),
+                        visual_turns_used,
+                        &best_code,
+                        &step_cmp,
+                        step_quad.as_deref(),
+                    );
+                }
+            }
+        }
     }
 
-    if let Some((best_code, best_val)) = best_candidate {
-        let reference_metrics = compute_ref_metrics(&best_code, ref_img.as_ref());
-        return Ok((
-            FromImageReport {
-                applied: true,
-                code: best_code,
-                turns,
-                mesh_names: best_val.mesh_names,
-                mesh_count: best_val.mesh_count,
-                warnings: best_val.warnings,
-                error: None,
-                reference_metrics,
-            },
-            ref_img,
-        ));
-    }
-
-    let err_msg =
-        last_val.and_then(|v| v.error).unwrap_or_else(|| "Scene failed validation.".to_string());
+    let reference_metrics = compute_ref_metrics(&best_code, ref_img.as_ref());
     Ok((
         FromImageReport {
-            applied: false,
-            code: last_code,
+            applied: true,
+            code: best_code,
             turns,
-            mesh_names: Vec::new(),
-            mesh_count: 0,
-            warnings: Vec::new(),
-            error: Some(err_msg),
-            reference_metrics: None,
+            visual_turns_used,
+            mesh_names: best_val.mesh_names,
+            mesh_count: best_val.mesh_count,
+            warnings: best_val.warnings,
+            error: None,
+            reference_metrics,
         },
         ref_img,
     ))
@@ -1018,6 +1271,17 @@ mod tests {
             let expected = case["expected"].as_str().unwrap();
             assert_eq!(got, expected, "repairs case failed: {}", name);
         }
+
+        for case in fixture["visualRefinement"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let turn = case["turn"].as_u64().unwrap() as usize;
+            let total = case["totalTurns"].as_u64().unwrap() as usize;
+            let has_quad = case["hasQuad"].as_bool().unwrap();
+            let note = case["metricsNote"].as_str();
+            let got = build_visual_refinement_prompt(turn, total, has_quad, note);
+            let expected = case["expected"].as_str().unwrap();
+            assert_eq!(got, expected, "visualRefinement case failed: {}", name);
+        }
     }
 
     #[test]
@@ -1121,6 +1385,7 @@ mod tests {
             prompt: "Add a desk".to_string(),
             priors: Some(json!({ "floorY": 0.0 })),
             max_repairs: 1,
+            ..Default::default()
         };
         let (rep, ref_img) = compile_from_image_with_provider(&cfg, |msgs| {
             call_idx += 1;
@@ -1235,6 +1500,7 @@ mod tests {
             prompt: "Reconstruct chair".to_string(),
             priors: None,
             max_repairs: 0,
+            ..Default::default()
         };
         let endpoint = format!("http://{}/v1/chat/completions", addr);
         let (rep, _) = compile_from_image_http(&cfg, &endpoint, Some("test-secret"), "test-vlm")
@@ -1243,6 +1509,140 @@ mod tests {
 
         assert!(rep.applied, "{:?}", rep.error);
         assert_eq!(rep.turns, 1);
+        assert_eq!(rep.visual_turns_used, 0);
         assert_eq!(rep.mesh_names, vec!["Chair".to_string()]);
+    }
+
+    #[test]
+    fn closed_loop_visual_turns_rolling_context_inner_repair_and_ratchet() {
+        // 8x8 reference image with uniform slate background + central orange block
+        let mut rgba = vec![0u8; 8 * 8 * 4];
+        for y in 0..8 {
+            for x in 0..8 {
+                let i = (y * 8 + x) * 4;
+                if (2..6).contains(&x) && (2..6).contains(&y) {
+                    rgba[i..i + 4].copy_from_slice(&[220, 120, 60, 255]);
+                } else {
+                    rgba[i..i + 4].copy_from_slice(&[30, 41, 59, 255]);
+                }
+            }
+        }
+        let data_url = crate::reference::encode_rgba_png_data_url(8, 8, &rgba).unwrap();
+
+        let scene_v0 = "```js\n\
+            const amb = new THREE.AmbientLight(0xffffff, 0.8); scene.add(amb);\n\
+            const dir = new THREE.DirectionalLight(0xffffff, 1.0); dir.position.set(2, 4, 3); scene.add(dir);\n\
+            const bed = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.6, 1.0), new THREE.MeshStandardMaterial({ color: 0xdc783c }));\n\
+            bed.name = 'Bed'; bed.position.set(0, 0.3, 0); scene.add(bed);\n\
+            camera.position.set(0, 0.8, 2.5); camera.lookAt(0, 0.3, 0);\n\
+            ```";
+        let scene_v1 = "```js\n\
+            const amb = new THREE.AmbientLight(0xffffff, 0.8); scene.add(amb);\n\
+            const dir = new THREE.DirectionalLight(0xffffff, 1.0); dir.position.set(2, 4, 3); scene.add(dir);\n\
+            const bed = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.6, 1.0), new THREE.MeshStandardMaterial({ color: 0xdc783c }));\n\
+            bed.name = 'Bed'; bed.position.set(0, 0.3, 0); scene.add(bed);\n\
+            const headboard = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 0.1), new THREE.MeshStandardMaterial({ color: 0xc2a88e, side: THREE.FrontSide }));\n\
+            headboard.name = 'Headboard'; headboard.position.set(0, 0.85, -0.45); scene.add(headboard);\n\
+            camera.position.set(0, 0.8, 2.5); camera.lookAt(0, 0.3, 0);\n\
+            ```";
+
+        let tmp_dir = std::env::temp_dir().join(format!("tl_vsteps_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        // 1. Multi-turn progression + inner compile repair + early-stop convergence:
+        //    Call 1 (Stage 1): returns scene_v0.
+        //    Call 2 (Visual 1): asserts 4 rolling messages (cmp + quad + text), returns syntax error.
+        //    Call 3 (Visual 1 inner repair): asserts 6 messages, returns scene_v1 (promotes to v1).
+        //    Call 4 (Visual 2): asserts rolling context reset back to 4 messages! Returns scene_v1 -> early-stops!
+        let cfg = FromImageConfig {
+            image_spec: data_url.clone(),
+            prompt: "Reconstruct bedroom".to_string(),
+            priors: None,
+            max_repairs: 0,
+            visual_turns: 4,
+            include_quad_view: true,
+            save_steps_dir: Some(tmp_dir.clone()),
+        };
+        let mut call_no = 0usize;
+        let (rep, _) = compile_from_image_with_provider(&cfg, |msgs| {
+            call_no += 1;
+            let arr = msgs.as_array().unwrap();
+            match call_no {
+                1 => {
+                    assert_eq!(arr.len(), 2);
+                    Ok(scene_v0.to_string())
+                }
+                2 => {
+                    assert_eq!(arr.len(), 4, "rolling context must have 4 messages");
+                    let content = arr[3]["content"].as_array().unwrap();
+                    assert_eq!(content.len(), 3, "cmp image + quad image + text");
+                    assert!(content[0]["image_url"]["url"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("data:image/png;base64,"));
+                    assert!(content[1]["image_url"]["url"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("data:image/png;base64,"));
+                    assert!(content[2]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Visual refinement pass 1/4"));
+                    Ok("```js\nconst broken = new THREE.Mesh(\n```".to_string())
+                }
+                3 => {
+                    assert_eq!(arr.len(), 6, "inner repair appends assistant + repair prompt");
+                    Ok(scene_v1.to_string())
+                }
+                4 => {
+                    assert_eq!(
+                        arr.len(),
+                        4,
+                        "Visual turn 2 prunes prior images back to 4 messages"
+                    );
+                    assert!(arr[2]["content"].as_str().unwrap().contains("Headboard"));
+                    Ok(scene_v1.to_string()) // converged -> early stop before turn 3 & 4!
+                }
+                _ => panic!("unexpected extra VLM call {}", call_no),
+            }
+        })
+        .expect("visual turns succeeded");
+
+        assert!(rep.applied);
+        assert_eq!(call_no, 4);
+        assert_eq!(rep.turns, 4);
+        assert_eq!(rep.visual_turns_used, 1);
+        assert_eq!(rep.mesh_names, vec!["Bed".to_string(), "Headboard".to_string()]);
+        assert!(tmp_dir.join("step_00.js").exists());
+        assert!(tmp_dir.join("step_00_cmp.png").exists());
+        assert!(tmp_dir.join("step_00_quad.png").exists());
+        assert!(tmp_dir.join("step_01.js").exists());
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        // 2. Non-regression ratchet: Visual Turn 1 returns broken code + failed inner repair ->
+        //    preserves Stage 1 scene_v0 cleanly with applied=true and visual_turns_used=0.
+        let cfg_ratchet = FromImageConfig {
+            image_spec: data_url,
+            visual_turns: 2,
+            include_quad_view: false,
+            ..Default::default()
+        };
+        let mut r_calls = 0usize;
+        let (rep_r, _) = compile_from_image_with_provider(&cfg_ratchet, |msgs| {
+            r_calls += 1;
+            if r_calls == 1 {
+                Ok(scene_v0.to_string())
+            } else {
+                if r_calls == 2 {
+                    let content = msgs.as_array().unwrap()[3]["content"].as_array().unwrap();
+                    assert_eq!(content.len(), 2, "no quad image when include_quad_view=false");
+                }
+                Ok("```js\nscene.add(new THREE.Group());\n```".to_string())
+            }
+        })
+        .expect("ratchet succeeded");
+        assert!(rep_r.applied);
+        assert_eq!(rep_r.visual_turns_used, 0);
+        assert_eq!(rep_r.mesh_names, vec!["Bed".to_string()]);
     }
 }

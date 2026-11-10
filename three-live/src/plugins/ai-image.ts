@@ -91,6 +91,8 @@ export const DEFAULT_IMAGE_MAX_EDGE = 1024;
 export const MIN_IMAGE_MAX_EDGE = 256;
 /** Maximum allowed `maxEdge` in pixels. */
 export const MAX_IMAGE_MAX_EDGE = 2048;
+/** Maximum closed-loop visual refinement turns (`visualTurns`, `0..5`). */
+export const MAX_VISUAL_TURNS = 5;
 
 /** Supported image sources for {@link compileFromImage} and {@link normalizeImageInput}. */
 export type AIImageInput =
@@ -115,6 +117,14 @@ export interface CompileFromImageOptions {
   readonly maxEdge?: number;
   /** Automatic repair turns on compile error or linter warning (0..3, default 1). */
   readonly maxRepairs?: number;
+  /** Closed-loop rendered 50/50 overlay critique passes after initial compile (0..5, default 0). */
+  readonly visualTurns?: number;
+  /** Optional custom comparison-sheet renderer (`data:image/...` URI) for headless/custom hosts. */
+  readonly renderComparison?: (
+    code: string,
+    model: unknown,
+    imageUrl: string,
+  ) => Promise<string | null> | string | null;
   /** Validate only; do not hot-swap the live scene. */
   readonly dryRun?: boolean;
   /** Aborts the request (a newer `compileFromImage` or `editScene` call also aborts older ones). */
@@ -388,6 +398,218 @@ export function imageRepairMessage(
     );
   }
   return 'Return the complete corrected script in a single ```js code block.';
+}
+
+/**
+ * Builds the structured visual-critique prompt for closed-loop visual refinement
+ * (`visualTurns`, mirrored by `build_visual_refinement_prompt` in `compiler/src/ai_image.rs`).
+ */
+export function buildVisualRefinementPrompt(
+  turn: number,
+  totalTurns: number,
+  hasQuad = false,
+  metricsNote?: string | null,
+): string {
+  const total = Math.max(
+    1,
+    Math.min(MAX_VISUAL_TURNS, Math.floor(Number(totalTurns) || 1)),
+  );
+  const t = Math.max(1, Math.min(total, Math.floor(Number(turn) || 1)));
+  const sheet =
+    '`REFERENCE | RENDER (CAMERA) | OVERLAY 50/50` comparison sheet' +
+    (hasQuad ? ' and `CAMERA | FRONT | TOP | ISO` 4-up depth check' : '');
+  const note = Array.from(String(metricsNote ?? '').trim())
+    .slice(0, 400)
+    .join('');
+  return (
+    `Visual refinement pass ${t}/${total}. Inspect the attached ${sheet}:\n` +
+    '- 50/50 Overlay Alignment: Adjust `camera` (`fov`, `position`, `lookAt`) and major architectural/object silhouettes until ghosted double-edges disappear in `OVERLAY 50/50`.\n' +
+    '- 3D Depth & Grounding: Give parts real metric depth along `Z` (never flat 2D billboards), rest grounded objects cleanly on supporting surfaces (`y = 0`), and use `side: THREE.FrontSide` on room ceilings/walls where appropriate.\n' +
+    '- Materials & TSL Patterns: Match sRGB colors, roughness, and metalness; upgrade flat solid colors on patterned wood, rugs, textiles, foliage, or art to loop-free `THREE.TSL` `MeshStandardNodeMaterial` (`<= 128` nodes).\n' +
+    '- Secondary Details: Add visible hardware, trim/moldings, lighting fixtures, and props while keeping every existing named part intact.\n' +
+    (note ? `Metrics: ${note}\n` : '') +
+    'Return only the complete refined script in a single ```js code block.'
+  );
+}
+
+/**
+ * Builds the rolling 4-message Chat Completions context for visual turn `turn`:
+ * `[systemMsg, initialUserMsg, assistant(bestCode), userMultimodal(comparison, quad?, prompt)]`.
+ */
+export function buildVisualTurnMessages(
+  initialMessages: readonly AIChatMessage[],
+  bestCode: string,
+  comparisonUrl: string,
+  quadUrl?: string | null,
+  turn = 1,
+  totalTurns = 1,
+  metricsNote?: string | null,
+): AIChatMessage[] {
+  if (!Array.isArray(initialMessages) || initialMessages.length < 2) {
+    throw new Error(
+      'buildVisualTurnMessages requires initial [system, user] messages.',
+    );
+  }
+  const cmp = String(comparisonUrl ?? '').trim();
+  if (!isAllowedImageUrl(cmp)) {
+    throw new Error('buildVisualTurnMessages: invalid comparison image URL.');
+  }
+  const q = String(quadUrl ?? '').trim();
+  if (q && !isAllowedImageUrl(q)) {
+    throw new Error('buildVisualTurnMessages: invalid quad image URL.');
+  }
+  const content: AIChatContentPart[] = [
+    {type: 'image_url', image_url: {url: cmp}},
+    ...(q ? [{type: 'image_url' as const, image_url: {url: q}}] : []),
+    {
+      type: 'text',
+      text: buildVisualRefinementPrompt(turn, totalTurns, Boolean(q), metricsNote),
+    },
+  ];
+  return [
+    initialMessages[0],
+    initialMessages[1],
+    {role: 'assistant', content: `\`\`\`js\n${bestCode.trim()}\n\`\`\``},
+    {role: 'user', content},
+  ];
+}
+
+function parseScriptCamera(code: string): {
+  eye?: [number, number, number];
+  target?: [number, number, number];
+  fov?: number;
+} {
+  const num3 = (re: RegExp): [number, number, number] | undefined => {
+    const m = re.exec(code);
+    if (!m) return undefined;
+    const v: [number, number, number] = [+m[1], +m[2], +m[3]];
+    return v.every(Number.isFinite) ? v : undefined;
+  };
+  const fm = /camera\.fov\s*=\s*([+-]?\d*\.?\d+)/.exec(code);
+  const fov = fm && Number.isFinite(+fm[1]) ? +fm[1] : undefined;
+  return {
+    eye: num3(
+      /camera\.position\.set\(\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*\)/,
+    ),
+    target: num3(
+      /camera\.lookAt\(\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*\)/,
+    ),
+    fov,
+  };
+}
+
+/**
+ * Renders an offscreen `REFERENCE | RENDER (CAMERA) | OVERLAY 50/50` comparison
+ * sheet for browser `compileFromImage` visual turns without leaking WebGL contexts.
+ */
+export async function renderComparisonSheetDataUrl(
+  el: AIEditableElement,
+  code: string,
+  model: unknown,
+  refImageUrl: string,
+): Promise<string | null> {
+  if (
+    typeof document === 'undefined' ||
+    typeof Image === 'undefined' ||
+    !model
+  ) {
+    return null;
+  }
+  // tslint:disable-next-line:no-any
+  const ViewCtor = (el as any)?.viewer?.constructor;
+  if (typeof ViewCtor !== 'function') return null;
+
+  const refImg = await new Promise<HTMLImageElement | null>((resolve) => {
+    const img = new Image();
+    if (!refImageUrl.startsWith('data:')) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = refImageUrl;
+  });
+  if (!refImg || !(refImg.naturalWidth > 0 && refImg.naturalHeight > 0)) {
+    return null;
+  }
+
+  const ph = Math.min(512, Math.max(128, refImg.naturalHeight));
+  const pw = Math.min(
+    768,
+    Math.max(128, Math.round((ph * refImg.naturalWidth) / refImg.naturalHeight)),
+  );
+  const host = document.createElement('div');
+  const glCanvas = document.createElement('canvas');
+  glCanvas.width = pw;
+  glCanvas.height = ph;
+  host.appendChild(glCanvas);
+  // tslint:disable-next-line:no-any
+  let viewer: any = null;
+  try {
+    viewer = new ViewCtor(host, glCanvas, {autoRotate: false});
+    if (!viewer?.gl) return null;
+    viewer.loadModel(model);
+    const cam = parseScriptCamera(code);
+    if (cam.fov) viewer.setFieldOfView?.(cam.fov);
+    const tgt: [number, number, number] =
+      cam.target ?? viewer.bounds?.center ?? [0, 0, 0];
+    if (cam.target) viewer.setTarget?.(tgt[0], tgt[1], tgt[2]);
+    if (cam.eye) {
+      const dx = cam.eye[0] - tgt[0];
+      const dy = cam.eye[1] - tgt[1];
+      const dz = cam.eye[2] - tgt[2];
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > 1e-4) {
+        const d2r = 180 / Math.PI;
+        viewer.setInitialCamera?.(
+          Math.atan2(dx, dz) * d2r,
+          Math.asin(Math.max(-1, Math.min(1, dy / dist))) * d2r,
+          dist,
+        );
+      }
+    }
+    viewer.update?.(0);
+    viewer.render?.();
+
+    const sep = 2;
+    const sheet = document.createElement('canvas');
+    sheet.width = pw * 3 + sep * 2;
+    sheet.height = ph;
+    const ctx = sheet.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(0, 0, sheet.width, ph);
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(i * (pw + sep), 0, pw, ph);
+    }
+    ctx.drawImage(refImg, 0, 0, pw, ph);
+    ctx.drawImage(glCanvas, pw + sep, 0, pw, ph);
+    ctx.drawImage(refImg, 2 * (pw + sep), 0, pw, ph);
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(glCanvas, 2 * (pw + sep), 0, pw, ph);
+    ctx.globalAlpha = 1;
+    ctx.font = 'bold 11px monospace';
+    for (const [idx, lbl] of [
+      [0, 'REFERENCE'],
+      [1, 'RENDER (CAMERA)'],
+      [2, 'OVERLAY 50/50'],
+    ] as const) {
+      const ox = idx * (pw + sep) + 6;
+      ctx.fillStyle = 'rgba(15,23,42,0.75)';
+      ctx.fillRect(ox, 6, lbl.length * 7 + 8, 16);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(lbl, ox + 4, 18);
+    }
+    const url = sheet.toDataURL('image/jpeg', 0.86);
+    return isAllowedImageUrl(url) ? url : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      viewer?.gl?.getExtension?.('WEBGL_lose_context')?.loseContext?.();
+      viewer?.dispose?.();
+    } catch {
+      // Ignore cleanup errors on synthetic mocks.
+    }
+  }
 }
 
 /** Detects PNG, JPEG, or WebP magic bytes from a binary buffer. */
@@ -729,12 +951,68 @@ export async function compileFromImage(
     0,
     Math.min(3, Math.floor(Number(options.maxRepairs ?? 1)) || 0),
   );
+  const visualTurns = Math.max(
+    0,
+    Math.min(MAX_VISUAL_TURNS, Math.floor(Number(options.visualTurns ?? 0)) || 0),
+  );
 
   let code = '';
   let error = '';
   let warnings: string[] = [];
   let repairs = 0;
-  let bestCandidate: {code: string; warnings: string[]} | null = null;
+  let visualTurnsUsed = 0;
+  let bestCandidate: {code: string; warnings: string[]; model: unknown} | null =
+    null;
+
+  const evalCandidate = async (
+    candidate: string,
+  ): Promise<{err: string; warn: string[]; model: unknown}> => {
+    if (!candidate) {
+      return {
+        err: 'The model reply did not contain a scene script.',
+        warn: [],
+        model: null,
+      };
+    }
+    if (new TextEncoder().encode(candidate).length > MAX_SCRIPT_BYTES) {
+      return {
+        err: 'The generated script exceeds the 1 MB script limit.',
+        warn: [],
+        model: null,
+      };
+    }
+    try {
+      const res = await dryRunCompile(el, candidate, signal, 'compileFromImage');
+      const warn = [...res.warnings];
+      const summary = sceneSummary(res.model);
+      if (
+        summary.unnamedXrNodes > 0 &&
+        !warn.some((w) => w.includes('TL204'))
+      ) {
+        warn.push('[TL204] Node with userData.xr is missing a unique .name.');
+      }
+      if (summary.meshes === 0) {
+        return {
+          err: 'The generated scene contains no meshes.',
+          warn,
+          model: null,
+        };
+      }
+      return {err: '', warn, model: res.model};
+    } catch (caught: unknown) {
+      if (signal.aborted) throw signal.reason;
+      const e = caught as {name?: string; message?: string} | null;
+      const msg = String(e?.message || caught);
+      return {
+        err:
+          e?.name && e.name !== 'Error' && !msg.startsWith(e.name)
+            ? `${e.name}: ${msg}`
+            : msg,
+        warn: [],
+        model: null,
+      };
+    }
+  };
 
   try {
     const imageUrl = await normalizeImageInput(image, {
@@ -743,46 +1021,23 @@ export async function compileFromImage(
       fetch: options.fetch,
     });
     if (signal.aborted) throw signal.reason;
-    const messages = buildImageMessages(imageUrl, prompt, options.priors);
+    const initialMessages = buildImageMessages(imageUrl, prompt, options.priors);
+    const messages = [...initialMessages];
 
-    el.fireEvent?.('three-live-image-start', {prompt, hasPriors});
+    el.fireEvent?.('three-live-image-start', {prompt, hasPriors, visualTurns});
 
+    let activeModel: unknown = null;
     for (let turn = 0; turn <= maxRepairs; turn++) {
       const reply = await provider.complete({messages, signal});
       if (signal.aborted) throw signal.reason;
       code = extractScript(reply);
-      warnings = [];
-      if (!code) {
-        error = 'The model reply did not contain a scene script.';
-      } else if (new TextEncoder().encode(code).length > MAX_SCRIPT_BYTES) {
-        error = 'The generated script exceeds the 1 MB script limit.';
-      } else {
-        try {
-          const res = await dryRunCompile(el, code, signal, 'compileFromImage');
-          warnings = [...res.warnings];
-          const summary = sceneSummary(res.model);
-          if (
-            summary.unnamedXrNodes > 0 &&
-            !warnings.some((w) => w.includes('TL204'))
-          ) {
-            warnings.push(
-              '[TL204] Node with userData.xr is missing a unique .name.',
-            );
-          }
-          if (summary.meshes === 0) {
-            error = 'The generated scene contains no meshes.';
-          } else {
-            error = '';
-            bestCandidate = {code, warnings: [...warnings]};
-          }
-        } catch (caught: unknown) {
-          if (signal.aborted) throw signal.reason;
-          const e = caught as {name?: string; message?: string} | null;
-          const msg = String(e?.message || caught);
-          error =
-            e?.name && e.name !== 'Error' && !msg.startsWith(e.name)
-              ? `${e.name}: ${msg}`
-              : msg;
+      const ev = await evalCandidate(code);
+      error = ev.err;
+      warnings = ev.warn;
+      if (!error) {
+        activeModel = ev.model;
+        if (!bestCandidate) {
+          bestCandidate = {code, warnings: [...warnings], model: ev.model};
         }
       }
       if (!error && warnings.length === 0) break;
@@ -794,16 +1049,93 @@ export async function compileFromImage(
         );
       }
     }
+
+    if (error && bestCandidate) {
+      code = bestCandidate.code;
+      warnings = bestCandidate.warnings;
+      activeModel = bestCandidate.model;
+      error = '';
+    }
+
+    if (!error && visualTurns > 0) {
+      el.fireEvent?.('three-live-image-progress', {
+        phase: 'compile',
+        turn: 0,
+        totalVisualTurns: visualTurns,
+        code,
+      });
+      for (let vStep = 1; vStep <= visualTurns; vStep++) {
+        const cmpUrl = options.renderComparison
+          ? await options.renderComparison(code, activeModel, imageUrl)
+          : await renderComparisonSheetDataUrl(el, code, activeModel, imageUrl);
+        if (signal.aborted) throw signal.reason;
+        if (!cmpUrl || !isAllowedImageUrl(cmpUrl)) break;
+
+        const vMsgs = buildVisualTurnMessages(
+          initialMessages,
+          code,
+          cmpUrl,
+          null,
+          vStep,
+          visualTurns,
+        );
+        let reply: string;
+        try {
+          reply = await provider.complete({messages: vMsgs, signal});
+        } catch (e) {
+          if (signal.aborted) throw signal.reason;
+          break;
+        }
+        if (signal.aborted) throw signal.reason;
+        let candCode = extractScript(reply);
+        if (candCode.trim() === code.trim()) break;
+
+        let ev = await evalCandidate(candCode);
+        if (ev.err || ev.warn.length > 0) {
+          const preOk = !ev.err ? {code: candCode, ev} : null;
+          repairs++;
+          vMsgs.push(
+            {role: 'assistant', content: reply},
+            {role: 'user', content: imageRepairMessage(ev.err, ev.warn)},
+          );
+          try {
+            const repReply = await provider.complete({messages: vMsgs, signal});
+            if (signal.aborted) throw signal.reason;
+            const repCode = extractScript(repReply);
+            const repEv = await evalCandidate(repCode);
+            if (!repEv.err) {
+              candCode = repCode;
+              ev = repEv;
+            } else if (preOk) {
+              candCode = preOk.code;
+              ev = preOk.ev;
+            }
+          } catch {
+            if (signal.aborted) throw signal.reason;
+            if (preOk) {
+              candCode = preOk.code;
+              ev = preOk.ev;
+            }
+          }
+        }
+        if (ev.err || ev.warn.length > warnings.length) break;
+
+        code = candCode;
+        warnings = ev.warn;
+        activeModel = ev.model;
+        visualTurnsUsed++;
+        el.fireEvent?.('three-live-image-progress', {
+          phase: 'visual',
+          turn: vStep,
+          totalVisualTurns: visualTurns,
+          overlayDataUrl: cmpUrl,
+          code,
+        });
+      }
+    }
   } finally {
     options.signal?.removeEventListener('abort', onOuterAbort);
     if (el.__tlAiAbort === ctrl) el.__tlAiAbort = null;
-  }
-
-  // If a warning-repair turn failed to compile, fall back to the earlier compiling candidate.
-  if (error && bestCandidate) {
-    code = bestCandidate.code;
-    warnings = bestCandidate.warnings;
-    error = '';
   }
 
   if (!error && !options.dryRun) {
@@ -830,6 +1162,7 @@ export async function compileFromImage(
     applied,
     code,
     repairs,
+    ...(visualTurns > 0 || visualTurnsUsed > 0 ? {visualTurnsUsed} : {}),
     warnings,
     ...(error ? {error} : {}),
   };

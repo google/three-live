@@ -1002,6 +1002,32 @@ pub fn compare_scene_to_reference(
     }
 }
 
+/// Encodes an RGBA8 image buffer as a `data:image/png;base64,...` URI in memory.
+pub fn encode_rgba_png_data_url(width: u32, height: u32, rgba: &[u8]) -> Result<String, String> {
+    let png = crate::render::encode_png_rgba_compressed(width, height, rgba)?;
+    Ok(format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png)))
+}
+
+/// Formats a concise single-line summary of [`ReferenceMetrics`] for closed-loop VLM critique.
+pub fn format_reference_metrics_note(m: &ReferenceMetrics) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if m.silhouette_reliable {
+        if let Some(iou) = m.silhouette_iou {
+            parts.push(format!("silhouetteIoU={:.2}", iou));
+        }
+        if let Some(ae) = m.aspect_error {
+            parts.push(format!("aspectError={:+.2}", ae));
+        }
+    }
+    for g in m.guidance.iter().take(2) {
+        let trimmed = g.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+    parts.join("; ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

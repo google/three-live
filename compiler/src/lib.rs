@@ -51,8 +51,9 @@ pub use geometry::*;
 pub use glb::{read_glb, write_glb};
 pub use mcp::*;
 pub use reference::{
-    compare_scene_to_reference, decode_reference_image, load_reference_bytes, ReferenceComparison,
-    ReferenceImage, ReferenceMetrics,
+    compare_scene_to_reference, decode_reference_image, encode_rgba_png_data_url,
+    format_reference_metrics_note, load_reference_bytes, ReferenceComparison, ReferenceImage,
+    ReferenceMetrics,
 };
 pub use render::*;
 pub use scene::{CameraConfig, Diagnostic, SceneGraph};

@@ -120,6 +120,8 @@ export interface EditSceneResult {
   readonly code: string;
   /** Number of automatic repair turns used. */
   readonly repairs: number;
+  /** Number of closed-loop visual refinement turns accepted (`compileFromImage`). */
+  readonly visualTurnsUsed?: number;
   /** Non-fatal messages from the sandbox compile (degraded features, …). */
   readonly warnings: readonly string[];
   /** Why the edit was rejected, when `applied` is false. */
