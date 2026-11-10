@@ -664,7 +664,9 @@ function serializeScene(
       name: m.name || '',
       pbrMetallicRoughness: pbr,
       doubleSided: m.side === 2 || Boolean(m.doubleSided),
-      ...(opacity < 1 || m.transparent ? {alphaMode: 'BLEND'} : {}),
+      ...(opacity < 1 || m.transparent || Boolean((m as any).opacityNode)
+        ? {alphaMode: 'BLEND'}
+        : {}),
       ...(normTex ? {normalTexture: normTex} : {}),
       ...(emTex ? {emissiveTexture: emTex} : {}),
       ...(aoTex ? {occlusionTexture: aoTex} : {}),

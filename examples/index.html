@@ -19,144 +19,450 @@ limitations under the License.
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Three-Live &amp; XR-Live Playground Hub</title>
+  <title>Three-Live — AI-Native 3D &amp; XR for Android, iOS, and Web</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/logo.svg">
   <style>
     :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #080b12;
+      background: radial-gradient(circle at 50% 0%, #111c35 0%, #070a12 75%);
       color: #f8fafc;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 24px;
-      box-sizing: border-box;
+      padding: 16px;
     }
     .hub {
-      max-width: 760px;
+      max-width: 720px;
       width: 100%;
-      background: #0f172a;
+      background: rgba(15, 23, 42, 0.92);
       border: 1px solid #334155;
-      border-radius: 16px;
-      padding: 32px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
     }
-    h1 { margin: 0 0 8px; font-size: 24px; }
-    p.sub { margin: 0 0 24px; color: #94a3b8; font-size: 14px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .brand-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .logo {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+    }
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    p.sub {
+      margin: 2px 0 0;
+      color: #94a3b8;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .why-pill {
+      flex-shrink: 0;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      color: #7dd3fc;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 6px 11px;
+      border-radius: 999px;
+      transition: background 0.15s ease, border-color 0.15s ease;
+      white-space: nowrap;
+    }
+    .why-pill:hover {
+      background: rgba(56, 189, 248, 0.22);
+      border-color: #38bdf8;
+    }
+
+    /* Carousel */
+    .carousel-viewport {
+      position: relative;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #090d16;
+      border: 1px solid #334155;
+      margin-bottom: 14px;
+    }
+    .carousel-track {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .carousel-track::-webkit-scrollbar { display: none; }
+    .slide {
+      flex: 0 0 100%;
+      scroll-snap-align: start;
+      position: relative;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      min-width: 0;
+    }
+    .slide img {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 680 / 540;
+      object-fit: cover;
+    }
+    .slide-caption {
+      padding: 10px 14px;
+      background: #131c2e;
+      border-top: 1px solid #1e293b;
+      font-size: 12.5px;
+      color: #cbd5e1;
+      line-height: 1.35;
+      text-align: center;
+    }
+    .nav-btn {
+      position: absolute;
+      top: calc(50% - 22px);
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.38);
+      color: #f8fafc;
+      font-size: 20px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 10;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      padding: 0;
+    }
+    .nav-btn:hover {
+      background: rgba(30, 41, 59, 0.95);
+      border-color: #38bdf8;
+      transform: translateY(-50%) scale(1.05);
+    }
+    .nav-prev { left: 10px; }
+    .nav-next { right: 10px; }
+    .carousel-dots {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 0 2px;
+      background: #131c2e;
+      border-top: 1px solid rgba(51, 65, 85, 0.45);
+    }
+    .dot-btn {
+      appearance: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      border: none;
+      background: #475569;
+      padding: 0;
+      cursor: pointer;
+      transition: width 0.2s ease, background 0.2s ease;
+    }
+    .dot-btn.active {
+      width: 22px;
+      background: #38bdf8;
+    }
+
+    /* Compact Playground Launch Buttons */
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      gap: 10px;
     }
     a.card {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
       text-decoration: none;
       color: inherit;
       background: #1e293b;
       border: 1px solid #334155;
       border-radius: 12px;
-      padding: 20px;
+      padding: 12px 14px;
       transition: transform 0.15s ease, border-color 0.15s ease;
     }
     a.card:hover {
-      transform: translateY(-2px);
+      transform: translateY(-1px);
       border-color: #38bdf8;
     }
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .card h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+    }
     .badge {
-      display: inline-block;
       font-family: ui-monospace, SFMono-Regular, monospace;
-      font-size: 12px;
-      padding: 3px 8px;
+      font-size: 11px;
+      padding: 2px 7px;
       border-radius: 6px;
       background: rgba(56, 189, 248, 0.15);
       color: #38bdf8;
-      margin-bottom: 10px;
+      white-space: nowrap;
     }
-    h2 { margin: 0 0 8px; font-size: 18px; }
-    p { margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+    .card p {
+      margin: 0;
+      font-size: 12px;
+      color: #94a3b8;
+      line-height: 1.35;
+    }
+
+    /* Footer */
     .llm-bar {
-      margin-top: 20px;
-      padding-top: 16px;
+      margin-top: 14px;
+      padding-top: 12px;
       border-top: 1px solid #1e293b;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      font-size: 12px;
-      color: #94a3b8;
+      gap: 8px;
+      font-size: 11px;
+      color: #64748b;
     }
     .llm-links {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 6px;
     }
     .llm-links a {
-      color: #38bdf8;
+      color: #94a3b8;
       text-decoration: none;
-      background: rgba(56, 189, 248, 0.1);
-      border: 1px solid rgba(56, 189, 248, 0.25);
-      padding: 4px 10px;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid #334155;
+      padding: 3px 8px;
       border-radius: 6px;
       font-family: ui-monospace, SFMono-Regular, monospace;
-      transition: background 0.15s ease, border-color 0.15s ease;
+      transition: color 0.15s ease, border-color 0.15s ease;
     }
     .llm-links a:hover {
-      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
       border-color: #38bdf8;
     }
-    @media (max-width: 640px) {
-      body {
-        padding: 16px;
-        align-items: flex-start;
-      }
-      .hub {
-        padding: 20px;
-      }
-      h1 {
-        font-size: 20px;
-      }
-      p.sub {
-        margin-bottom: 16px;
-        font-size: 13px;
-      }
-      .grid {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-      a.card {
-        padding: 16px;
-      }
+
+    @media (max-width: 560px) {
+      body { padding: 10px; align-items: flex-start; }
+      .hub { padding: 14px; border-radius: 14px; }
+      h1 { font-size: 17px; }
+      p.sub { font-size: 12px; }
+      .tab-btn { font-size: 11px; padding: 7px 6px; }
+      .grid { grid-template-columns: 1fr; gap: 8px; }
+      .slide-caption { font-size: 11px; padding: 8px 11px; }
     }
   </style>
 </head>
 <body>
   <div class="hub">
-    <h1>Three-Live &amp; XR-Live Playground Hub</h1>
-    <p class="sub">Interactive WebGL2 3D &amp; Spatial Computing WebXR playgrounds (<code>&lt;three-live&gt;</code> and <code>&lt;xr-live&gt;</code>).</p>
+    <div class="brand">
+      <div class="brand-left">
+        <svg class="logo" viewBox="0 0 128 128" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="tl-bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#0f172a"/>
+              <stop offset="100%" stop-color="#080c17"/>
+            </linearGradient>
+            <linearGradient id="tl-top" x1="64" y1="18" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#7dd3fc"/>
+              <stop offset="100%" stop-color="#38bdf8"/>
+            </linearGradient>
+            <linearGradient id="tl-left" x1="22" y1="42" x2="64" y2="110" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#818cf8"/>
+              <stop offset="100%" stop-color="#4f46e5"/>
+            </linearGradient>
+            <linearGradient id="tl-right" x1="106" y1="42" x2="64" y2="110" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#34d399"/>
+              <stop offset="100%" stop-color="#059669"/>
+            </linearGradient>
+          </defs>
+          <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#tl-bg)" stroke="#334155" stroke-width="3"/>
+          <polygon points="64,18 106,42 64,66 22,42" fill="url(#tl-top)"/>
+          <polygon points="22,42 64,66 64,110 22,86" fill="url(#tl-left)"/>
+          <polygon points="106,42 106,86 64,110 64,66" fill="url(#tl-right)"/>
+          <polygon points="64,34 88,48 64,62 40,48" fill="#0b1120" fill-opacity="0.45"/>
+          <polyline points="64,18 64,66 22,86" stroke="#e0f2fe" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.65"/>
+          <line x1="64" y1="66" x2="106" y2="86" stroke="#e0f2fe" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.65"/>
+          <circle cx="64" cy="66" r="5.5" fill="#f8fafc"/>
+        </svg>
+        <div>
+          <h1>Three-Live</h1>
+          <p class="sub">AI-native 3D &amp; XR for Android, iOS, and Web.</p>
+        </div>
+      </div>
+      <a class="why-pill" href="https://github.com/google/three-live/blob/main/docs/why-three-live.md" target="_blank" rel="noopener">Why Three-Live?</a>
+    </div>
+
+    <div class="carousel-viewport" aria-label="Use case showcase">
+      <button class="nav-btn nav-prev" type="button" id="prevBtn" aria-label="Previous slide">&#8249;</button>
+      <button class="nav-btn nav-next" type="button" id="nextBtn" aria-label="Next slide">&#8250;</button>
+      <div class="carousel-track" id="track">
+        <div class="slide">
+          <img data-src="./assets/slide-product-ios.gif" src="./assets/slide-product-ios.gif" alt="Product customizer on iOS iPhone 16 Pro: Initial Scene, System-Blue AI Edit Prompt, and Updated Matte Obsidian & Lacquered Walnut Scene">
+          <div class="slide-caption">
+            <strong>iOS · Product AR:</strong> Speak or type an edit &amp; hot-swap Studio PBR + clearcoat materials into Apple AR Quick Look (<code>.usdz</code>).
+          </div>
+        </div>
+        <div class="slide">
+          <img data-src="./assets/slide-xr-android.gif" src="./assets/slide-xr-android.gif" alt="Spatial XR room staging on Android Pixel 9 Pro: Initial Room, System-Blue AI Edit Prompt, and Lit Brass & Fluted Ceramic Lamp" loading="lazy">
+          <div class="slide-caption">
+            <strong>Android · Spatial XR:</strong> Place translucent glass &amp; dynamic lighting onto metric ARCore / Filament room surfaces.
+          </div>
+        </div>
+        <div class="slide">
+          <img data-src="./assets/slide-cad-web.gif" src="./assets/slide-cad-web.gif" alt="Parametric CAD planetary gear assembly on Desktop Web: Initial Assembly, System-Blue AI Edit Prompt, and Rotating Gold TiN Sun Gear" loading="lazy">
+          <div class="slide-caption">
+            <strong>Web · Parametric CAD:</strong> Author CSG booleans, instanced fasteners &amp; live rotating gear trains in WebGL2 / WebGPU.
+          </div>
+        </div>
+      </div>
+      <div class="carousel-dots" role="tablist" aria-label="Slide indicators">
+        <button class="dot-btn active" type="button" data-slide="0" aria-label="Slide 1: iOS Product AR"></button>
+        <button class="dot-btn" type="button" data-slide="1" aria-label="Slide 2: Android Spatial XR"></button>
+        <button class="dot-btn" type="button" data-slide="2" aria-label="Slide 3: Web Parametric CAD"></button>
+      </div>
+    </div>
+
     <div class="grid">
       <a class="card" href="./three/index.html">
-        <span class="badge">/three/ &bull; <span data-bundle-size="three-live.min.js">76.7 KB gz</span></span>
-        <h2>&lt;three-live&gt; 3D Playground</h2>
-        <p>AI-first WebGL2 PBR 3D viewer, procedural Three.js compiler, CAD CSG &amp; 3D Text, GPU Instancing, ACES/AgX Tone Mapping, HDR Bloom &amp; Outlines, and USDZ / GLB export.</p>
+        <div class="card-top">
+          <h2>&lt;three-live&gt; 3D Studio</h2>
+          <span class="badge"><span data-bundle-size="three-live.min.js">76.8 KB gz</span></span>
+        </div>
+        <p>PBR, CAD CSG, TSL Shaders, AI Edit &amp; USDZ/GLB</p>
       </a>
       <a class="card" href="./xr/index.html">
-        <span class="badge">/xr/ &bull; <span data-bundle-size="xr-live.min.js">88.4 KB gz</span></span>
-        <h2>&lt;xr-live&gt; Spatial Playground</h2>
-        <p>6DoF Spatial Computing, 2-Bone &amp; FABRIK Inverse Kinematics, Anisotropic SH Gaussian Splats, CAD Studio, WebRTC Spatial Voice Co-Presence, and Gemini Live.</p>
+        <div class="card-top">
+          <h2>&lt;xr-live&gt; Spatial XR</h2>
+          <span class="badge"><span data-bundle-size="xr-live.min.js">88.6 KB gz</span></span>
+        </div>
+        <p>6DoF WebXR, Splats, IK, Physics &amp; Gemini Live</p>
       </a>
     </div>
+
     <div class="llm-bar">
-      <span>LLM &amp; Coding Agent Context Feeds:</span>
+      <span>Docs &amp; Agent Feeds:</span>
       <div class="llm-links">
         <a href="./llms.txt">/llms.txt</a>
         <a href="./llms-full.txt">/llms-full.txt</a>
+        <a href="https://github.com/google/three-live/blob/main/docs/why-three-live.md" target="_blank" rel="noopener">Why Three-Live</a>
         <a href="https://github.com/google/three-live/blob/main/docs/cookbook.md" target="_blank" rel="noopener">Cookbook</a>
         <a href="https://github.com/google/three-live/blob/main/skills/three-live-authoring/SKILL.md" target="_blank" rel="noopener">SKILL.md</a>
       </div>
     </div>
   </div>
+
+  <script>
+    (() => {
+      const track = document.getElementById('track');
+      const dots = Array.from(document.querySelectorAll('.dot-btn'));
+      const imgs = Array.from(document.querySelectorAll('.slide img'));
+      const prevBtn = document.getElementById('prevBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      const count = dots.length;
+      let timer = null;
+      let active = 0;
+
+      function restartGif(idx) {
+        const img = imgs[idx];
+        if (!img) return;
+        const base = img.getAttribute('data-src') || img.getAttribute('src');
+        if (base) {
+          img.src = '';
+          img.src = base;
+        }
+      }
+
+      function setActive(idx, scroll = true) {
+        active = ((idx % count) + count) % count;
+        dots.forEach((d, i) => d.classList.toggle('active', i === active));
+        restartGif(active);
+        if (scroll && track) {
+          track.scrollTo({ left: track.clientWidth * active, behavior: 'smooth' });
+        }
+      }
+
+      function resetAuto() {
+        stopAuto();
+        timer = setInterval(() => {
+          setActive(active + 1, true);
+        }, 9200);
+      }
+
+      function stopAuto() {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      }
+
+      dots.forEach((dot, i) => {
+        dot.addEventListener('click', () => {
+          setActive(i, true);
+          resetAuto();
+        });
+      });
+
+      if (prevBtn) {
+        prevBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          setActive(active - 1, true);
+          resetAuto();
+        });
+      }
+      if (nextBtn) {
+        nextBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          setActive(active + 1, true);
+          resetAuto();
+        });
+      }
+
+      if (track) {
+        track.addEventListener('pointerdown', stopAuto, { passive: true });
+        track.addEventListener('touchstart', stopAuto, { passive: true });
+        track.addEventListener('scroll', () => {
+          const w = track.clientWidth || 1;
+          const idx = Math.round(track.scrollLeft / w);
+          if (idx >= 0 && idx < count && idx !== active) {
+            setActive(idx, false);
+          }
+        }, { passive: true });
+      }
+
+      // Advance after each single 3-step sequence finishes (2.8s Initial + 3.2s AI Edit + 3.2s Updated = 9.2s)
+      resetAuto();
+    })();
+  </script>
 </body>
 </html>
