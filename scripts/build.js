@@ -621,6 +621,22 @@ function buildThreeLive() {
     });
   }
 
+  // 11c. three-live-tsl (ESM, CJS, IIFE min): opt-in Loop-Free THREE.TSL &
+  // MeshStandardNodeMaterial compiler across WebGL2, WebGPU, and USDZ
+  for (const [format, ext] of [
+           ['esm', 'js'], ['cjs', 'cjs'], ['iife', 'min.js']]) {
+    buildTarget({
+      entryPoints: [path.join(THREE_LIVE_DIR, 'src/tsl.ts')],
+      bundle: true,
+      format,
+      ...(format === 'iife' ? {globalName: 'ThreeLiveTSL'} : {}),
+      minify: true,
+      target: 'es2020',
+      define: {'IS_DEV': 'false'},
+      outfile: path.join(tlDist, `three-live-tsl.${ext}`),
+    });
+  }
+
   // Generate type definition stubs in dist
   const rootDts = fs.readFileSync(path.join(ROOT_DIR, 'three-live.d.ts'), 'utf8');
   fs.writeFileSync(path.join(tlDist, 'index.d.ts'), rootDts);
@@ -636,6 +652,7 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-live-animation.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-ai.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-webgpu.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-tsl.d.ts'), rootDts);
 
   // Sync to root dist/ and examples
   if (!fs.existsSync(DIST_DIR)) {
@@ -679,6 +696,9 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-webgpu.min.js'),
       path.join(DIST_DIR, 'three-live-webgpu.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-tsl.min.js'),
+      path.join(DIST_DIR, 'three-live-tsl.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-full.min.js'),
       path.join(DIST_DIR, 'three-live-full.min.js'));
@@ -1012,15 +1032,16 @@ function reportSizes() {
     {name: 'three-live-procedural.min.js', budgetKb: '30'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-ai.min.js', budgetKb: '29'},
-    {name: 'three-live-webgpu.min.js', budgetKb: '22'},
-    {name: 'three-live-full.min.js', budgetKb: '198'},
+    {name: 'three-live-webgpu.min.js', budgetKb: '23'},
+    {name: 'three-live-tsl.min.js', budgetKb: '18'},
+    {name: 'three-live-full.min.js', budgetKb: '216'},
     {name: 'xr-live-viewer.min.js', budgetKb: '56'},
     {name: 'xr-live.min.js', budgetKb: '89'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '63'},
     {name: 'xr-live-sim.min.js', budgetKb: '30'},
     {name: 'xr-live-webgpu.min.js', budgetKb: '12'},
-    {name: 'xr-live-full.min.js', budgetKb: '307'},
+    {name: 'xr-live-full.min.js', budgetKb: '325'},
   ];
   const failures = [];
   for (const f of files) {

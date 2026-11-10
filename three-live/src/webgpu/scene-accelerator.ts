@@ -264,6 +264,7 @@ interface PrimitiveLike {
   occlusionTexture?: object | null;
   emissiveTexture?: object | null;
   isTransmissive?: boolean;
+  materialIndex?: number;
   customProgram?: unknown;
   pluginData?: Record<string, unknown>;
 }
@@ -334,13 +335,22 @@ interface FormatPipelines {
   shadow: unknown;
 }
 
+interface CachedTslShaderEntry {
+  pbrMod: unknown;
+  shadowDepthMod: unknown | null;
+  shadowDepthPipe: unknown | null;
+}
+
 interface DevicePipelines {
   sceneBgl: unknown;
   matBgl: unknown;
+  tslBgl: unknown;
   shadowSliceBgl: unknown;
   scenePipeLayout: unknown;
+  tslScenePipeLayout: unknown;
   auxPipeLayout: unknown;
   shadowDepthPipeLayout: unknown;
+  tslShadowDepthPipeLayout: unknown;
   shaderMod: unknown;
   shadowMod: unknown;
   shadowDepthMod: unknown;
@@ -355,8 +365,18 @@ interface DevicePipelines {
   dummyShadowView: unknown;
   defaultMatBg: unknown;
   byFormat: Map<string, FormatPipelines>;
+  tslShaders: Map<string, CachedTslShaderEntry>;
+  tslPipelinesByFormat: Map<string, {opaque: unknown; blend: unknown}>;
   texCache: WeakMap<object, UploadedTexEntry>;
   ownedTextures: Set<GPUSceneTextureLike>;
+}
+
+interface CompiledTslUniformSlot {
+  buf: GPUSceneBufferLike;
+  bg: unknown;
+  hash: string;
+  usesVertexPosition: boolean;
+  uploadedVersion: number;
 }
 
 interface CompiledPartGroup {
@@ -374,6 +394,10 @@ interface CompiledPartGroup {
   firstInstance: number;
   instanceCount: number;
   isBlend: boolean;
+  matIndex: number | undefined;
+  tslHash: string | null;
+  tslBg: unknown;
+  tslShadowPipe: unknown | null;
   tex0: object | null;
   tex1: object | null;
   tex2: object | null;
@@ -409,6 +433,8 @@ interface CompiledScene {
   envView: unknown;
   shadowViewRef: unknown;
   sceneBg: unknown;
+  tslSlots: Map<number, CompiledTslUniformSlot>;
+  tslVertexDirty: boolean;
   shadowSliceBufs: Array<GPUSceneBufferLike | null>;
   shadowSliceBgs: unknown[];
   shadowBundles: Array<GPUSceneRenderBundleLike | null>;
@@ -690,7 +716,14 @@ function hasActiveAutoFallbackFeature(viewer: ViewerLike): boolean {
         if (
           prim.customProgram &&
           viewer.renderProg &&
-          prim.customProgram !== viewer.renderProg
+          prim.customProgram !== viewer.renderProg &&
+          !(
+            getSharedRegistry().tslWgslCompiler &&
+            getSharedRegistry().tslMaterialResolver?.(
+              viewer,
+              prim.materialIndex,
+            )
+          )
         ) {
           return true;
         }
@@ -788,6 +821,16 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     })),
   });
 
+  const tslBgl = dev.createBindGroupLayout({
+    entries: [
+      {
+        binding: 0,
+        visibility: STAGE_VERTEX | STAGE_FRAGMENT,
+        buffer: {type: 'uniform'},
+      },
+    ],
+  });
+
   const shadowSliceBgl = dev.createBindGroupLayout({
     entries: [
       {
@@ -806,11 +849,17 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
   const scenePipeLayout = dev.createPipelineLayout({
     bindGroupLayouts: [sceneBgl, matBgl],
   });
+  const tslScenePipeLayout = dev.createPipelineLayout({
+    bindGroupLayouts: [sceneBgl, matBgl, tslBgl],
+  });
   const auxPipeLayout = dev.createPipelineLayout({
     bindGroupLayouts: [sceneBgl],
   });
   const shadowDepthPipeLayout = dev.createPipelineLayout({
     bindGroupLayouts: [shadowSliceBgl],
+  });
+  const tslShadowDepthPipeLayout = dev.createPipelineLayout({
+    bindGroupLayouts: [shadowSliceBgl, tslBgl],
   });
 
   const shaderMod = dev.createShaderModule({code: SCENE_PBR_WGSL});
@@ -929,10 +978,13 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
   cached = {
     sceneBgl,
     matBgl,
+    tslBgl,
     shadowSliceBgl,
     scenePipeLayout,
+    tslScenePipeLayout,
     auxPipeLayout,
     shadowDepthPipeLayout,
+    tslShadowDepthPipeLayout,
     shaderMod,
     shadowMod,
     shadowDepthMod,
@@ -947,11 +999,152 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     dummyShadowView,
     defaultMatBg,
     byFormat: new Map(),
+    tslShaders: new Map(),
+    tslPipelinesByFormat: new Map(),
     texCache: new WeakMap(),
     ownedTextures: new Set([whiteTex, dummyShadowTex]),
   };
   pipelineCache.set(dev, cached);
   return cached;
+}
+
+function getTslShaderEntry(
+  dev: GPUSceneDeviceLike,
+  pipes: DevicePipelines,
+  hash: string,
+  graph: unknown,
+): CachedTslShaderEntry | null {
+  let entry = pipes.tslShaders.get(hash);
+  if (entry) return entry;
+  const compiler = getSharedRegistry().tslWgslCompiler;
+  if (!compiler) return null;
+  const compiled = compiler(graph, SCENE_PBR_WGSL, SCENE_SHADOW_DEPTH_WGSL);
+  if (!compiled) return null;
+  const pbrMod = dev.createShaderModule({code: compiled.pbrWgsl});
+  let shadowDepthMod: unknown | null = null;
+  let shadowDepthPipe: unknown | null = null;
+  if (compiled.shadowDepthWgsl) {
+    shadowDepthMod = dev.createShaderModule({code: compiled.shadowDepthWgsl});
+    shadowDepthPipe = dev.createRenderPipeline({
+      layout: pipes.tslShadowDepthPipeLayout,
+      vertex: {
+        module: shadowDepthMod,
+        entryPoint: 'vsShadowDepth',
+        buffers: [
+          {
+            arrayStride: VERTEX_STRIDE_BYTES,
+            attributes: [
+              {shaderLocation: 0, offset: 0, format: 'float32x3'},
+              {shaderLocation: 1, offset: 12, format: 'float32x3'},
+              {shaderLocation: 2, offset: 24, format: 'float32x2'},
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: shadowDepthMod,
+        entryPoint: 'fsShadowDepth',
+        targets: [],
+      },
+      primitive: {topology: 'triangle-list', cullMode: 'none'},
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: true,
+        depthCompare: 'less-equal',
+        depthBias: 2,
+        depthBiasSlopeScale: 1.5,
+      },
+      multisample: {count: 1},
+    });
+  }
+  entry = {pbrMod, shadowDepthMod, shadowDepthPipe};
+  pipes.tslShaders.set(hash, entry);
+  return entry;
+}
+
+const PBR_VERTEX_BUFFERS = [
+  {
+    arrayStride: VERTEX_STRIDE_BYTES,
+    attributes: [
+      {shaderLocation: 0, offset: 0, format: 'float32x3'},
+      {shaderLocation: 1, offset: 12, format: 'float32x3'},
+      {shaderLocation: 2, offset: 24, format: 'float32x2'},
+    ],
+  },
+];
+
+function createPbrPipelinePair(
+  dev: GPUSceneDeviceLike,
+  layout: unknown,
+  mod: unknown,
+  format: string,
+  sampleCount: number,
+): {opaque: unknown; blend: unknown} {
+  const mk = (isBlend: boolean) =>
+    dev.createRenderPipeline({
+      layout,
+      vertex: {
+        module: mod,
+        entryPoint: 'vsMain',
+        buffers: PBR_VERTEX_BUFFERS,
+      },
+      fragment: {
+        module: mod,
+        entryPoint: 'fsMain',
+        targets: [
+          isBlend
+            ? {
+                format,
+                blend: {
+                  color: {
+                    srcFactor: 'one',
+                    dstFactor: 'one-minus-src-alpha',
+                    operation: 'add',
+                  },
+                  alpha: {
+                    srcFactor: 'one',
+                    dstFactor: 'one-minus-src-alpha',
+                    operation: 'add',
+                  },
+                },
+              }
+            : {format},
+        ],
+      },
+      primitive: {topology: 'triangle-list', cullMode: 'none'},
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: !isBlend,
+        depthCompare: 'less-equal',
+      },
+      multisample: {count: sampleCount},
+    });
+  return {opaque: mk(false), blend: mk(true)};
+}
+
+function getTslFormatPipeline(
+  dev: GPUSceneDeviceLike,
+  pipes: DevicePipelines,
+  hash: string,
+  format: string,
+  sampleCount: number,
+  blendPass: boolean,
+): unknown | null {
+  const shEntry = pipes.tslShaders.get(hash);
+  if (!shEntry) return null;
+  const key = `${hash}:${format}:${sampleCount}`;
+  let pair = pipes.tslPipelinesByFormat.get(key);
+  if (!pair) {
+    pair = createPbrPipelinePair(
+      dev,
+      pipes.tslScenePipeLayout,
+      shEntry.pbrMod,
+      format,
+      sampleCount,
+    );
+    pipes.tslPipelinesByFormat.set(key, pair);
+  }
+  return blendPass ? pair.blend : pair.opaque;
 }
 
 function getFormatPipelines(
@@ -964,74 +1157,13 @@ function getFormatPipelines(
   let fp = pipes.byFormat.get(key);
   if (fp) return fp;
 
-  const vertexBuffers = [
-    {
-      arrayStride: VERTEX_STRIDE_BYTES,
-      attributes: [
-        {shaderLocation: 0, offset: 0, format: 'float32x3'},
-        {shaderLocation: 1, offset: 12, format: 'float32x3'},
-        {shaderLocation: 2, offset: 24, format: 'float32x2'},
-      ],
-    },
-  ];
-
-  const opaque = dev.createRenderPipeline({
-    layout: pipes.scenePipeLayout,
-    vertex: {
-      module: pipes.shaderMod,
-      entryPoint: 'vsMain',
-      buffers: vertexBuffers,
-    },
-    fragment: {
-      module: pipes.shaderMod,
-      entryPoint: 'fsMain',
-      targets: [{format}],
-    },
-    primitive: {topology: 'triangle-list', cullMode: 'none'},
-    depthStencil: {
-      format: 'depth24plus',
-      depthWriteEnabled: true,
-      depthCompare: 'less-equal',
-    },
-    multisample: {count: sampleCount},
-  });
-
-  const blend = dev.createRenderPipeline({
-    layout: pipes.scenePipeLayout,
-    vertex: {
-      module: pipes.shaderMod,
-      entryPoint: 'vsMain',
-      buffers: vertexBuffers,
-    },
-    fragment: {
-      module: pipes.shaderMod,
-      entryPoint: 'fsMain',
-      targets: [
-        {
-          format,
-          blend: {
-            color: {
-              srcFactor: 'one',
-              dstFactor: 'one-minus-src-alpha',
-              operation: 'add',
-            },
-            alpha: {
-              srcFactor: 'one',
-              dstFactor: 'one-minus-src-alpha',
-              operation: 'add',
-            },
-          },
-        },
-      ],
-    },
-    primitive: {topology: 'triangle-list', cullMode: 'none'},
-    depthStencil: {
-      format: 'depth24plus',
-      depthWriteEnabled: false,
-      depthCompare: 'less-equal',
-    },
-    multisample: {count: sampleCount},
-  });
+  const {opaque, blend} = createPbrPipelinePair(
+    dev,
+    pipes.scenePipeLayout,
+    pipes.shaderMod,
+    format,
+    sampleCount,
+  );
 
   const shadow = dev.createRenderPipeline({
     layout: pipes.auxPipeLayout,
@@ -1360,6 +1492,57 @@ function destroyCompiledScene(scene: CompiledScene | null): void {
   for (const b of scene.shadowSliceBufs) {
     safe(() => b?.destroy());
   }
+  for (const tsl of scene.tslSlots.values()) {
+    safe(() => tsl.buf.destroy());
+  }
+}
+
+function resolveGroupTslBinding(
+  dev: GPUSceneDeviceLike,
+  pipes: DevicePipelines,
+  viewer: ViewerLike,
+  tslSlots: Map<number, CompiledTslUniformSlot>,
+  matIndex: number | undefined,
+): {
+  tslHash: string | null;
+  tslBg: unknown;
+  tslShadowPipe: unknown | null;
+} {
+  const resolver = getSharedRegistry().tslMaterialResolver;
+  if (!resolver || matIndex === undefined || matIndex < 0) {
+    return {tslHash: null, tslBg: null, tslShadowPipe: null};
+  }
+  const rt = resolver(viewer, matIndex);
+  if (!rt) return {tslHash: null, tslBg: null, tslShadowPipe: null};
+  const shEntry = getTslShaderEntry(dev, pipes, rt.hash, rt.graph);
+  if (!shEntry) return {tslHash: null, tslBg: null, tslShadowPipe: null};
+
+  let slot = tslSlots.get(matIndex);
+  if (!slot || slot.hash !== rt.hash) {
+    safe(() => slot?.buf.destroy());
+    const buf = dev.createBuffer({
+      size: rt.buf68.byteLength,
+      usage: BUF_UNIFORM | BUF_COPY_DST,
+    });
+    dev.queue.writeBuffer(buf, 0, rt.buf68);
+    const bg = dev.createBindGroup({
+      layout: pipes.tslBgl,
+      entries: [{binding: 0, resource: {buffer: buf}}],
+    });
+    slot = {
+      buf,
+      bg,
+      hash: rt.hash,
+      usesVertexPosition: rt.usesVertexPosition,
+      uploadedVersion: rt.version,
+    };
+    tslSlots.set(matIndex, slot);
+  }
+  return {
+    tslHash: rt.hash,
+    tslBg: slot.bg,
+    tslShadowPipe: shEntry.shadowDepthPipe,
+  };
 }
 
 function destroyShadowTargets(st: ViewerGPUState): void {
@@ -1437,6 +1620,7 @@ function compileScene(
   let totalIndices = 0;
   let totalInstances = 0;
   const groups: CompiledPartGroup[] = [];
+  const tslSlots = new Map<number, CompiledTslUniformSlot>();
 
   for (let mi = 0; mi < meshRefs.length; mi++) {
     const mesh = meshRefs[mi];
@@ -1470,6 +1654,13 @@ function compileScene(
             : 1;
 
       const matInfo = buildMaterialBindGroup(dev, pipes, prim);
+      const tslInfo = resolveGroupTslBinding(
+        dev,
+        pipes,
+        viewer,
+        tslSlots,
+        prim.materialIndex,
+      );
       groups.push({
         mesh,
         prim,
@@ -1487,6 +1678,10 @@ function compileScene(
         isBlend: Boolean(
           prim.alphaMode === 'BLEND' || (prim.baseColor?.[3] ?? 1) < 0.999,
         ),
+        matIndex: prim.materialIndex,
+        tslHash: tslInfo.tslHash,
+        tslBg: tslInfo.tslBg,
+        tslShadowPipe: tslInfo.tslShadowPipe,
         tex0: prim.texture ?? null,
         tex1: prim.metallicRoughnessTexture ?? null,
         tex2: prim.normalTexture ?? null,
@@ -1610,6 +1805,8 @@ function compileScene(
     envView: envInfo.view,
     shadowViewRef: pipes.dummyShadowView,
     sceneBg,
+    tslSlots,
+    tslVertexDirty: false,
     shadowSliceBufs: [null, null, null, null],
     shadowSliceBgs: [null, null, null, null],
     shadowBundles: [null, null, null, null],
@@ -1664,11 +1861,31 @@ function recordSceneBundles(
       enc.setIndexBuffer(scene.indexBuf, 'uint32');
     }
 
+    let activePipe: unknown = pipeline;
     let lastMatBg: unknown = null;
+    let lastTslBg: unknown = null;
     for (const g of ordered) {
+      const wantPipe = g.tslHash
+        ? (getTslFormatPipeline(
+            dev,
+            pipes,
+            g.tslHash,
+            format,
+            sampleCount,
+            blendPass,
+          ) ?? pipeline)
+        : pipeline;
+      if (wantPipe !== activePipe) {
+        enc.setPipeline(wantPipe);
+        activePipe = wantPipe;
+      }
       if (g.matBg !== lastMatBg) {
         enc.setBindGroup(1, g.matBg);
         lastMatBg = g.matBg;
+      }
+      if (g.tslBg && g.tslBg !== lastTslBg) {
+        enc.setBindGroup(2, g.tslBg);
+        lastTslBg = g.tslBg;
       }
       if (g.indexed) {
         enc.drawIndexed(
@@ -1781,8 +1998,19 @@ function ensureShadowSliceBundle(
   if (scene.indexBuf) {
     enc.setIndexBuffer(scene.indexBuf, 'uint32');
   }
+  let activeShdPipe: unknown = pipes.shadowDepthPipeline;
+  let lastTslBg: unknown = null;
   for (const g of scene.groups) {
     if (g.isBackdrop || g.isBlend || g.prim.isTransmissive) continue;
+    const wantShdPipe = g.tslShadowPipe ?? pipes.shadowDepthPipeline;
+    if (wantShdPipe !== activeShdPipe) {
+      enc.setPipeline(wantShdPipe);
+      activeShdPipe = wantShdPipe;
+    }
+    if (g.tslShadowPipe && g.tslBg && g.tslBg !== lastTslBg) {
+      enc.setBindGroup(1, g.tslBg);
+      lastTslBg = g.tslBg;
+    }
     if (g.indexed) {
       enc.drawIndexed(
         g.indexCount,
@@ -1846,10 +2074,49 @@ function syncSceneResources(
   const selName = viewer.selectedMeshName || '';
   const root = viewer.modelRootMatrix ?? IDENTITY_MAT4;
   const allowBillboard = params.eye === 'none' && !viewer.stereoSBS;
+  scene.tslVertexDirty = false;
+  const tslResolver = getSharedRegistry().tslMaterialResolver;
+  if (tslResolver) {
+    for (const [mIdx, slot] of scene.tslSlots.entries()) {
+      const rt = tslResolver(viewer, mIdx);
+      if (rt && rt.hash === slot.hash && rt.version !== slot.uploadedVersion) {
+        dev.queue.writeBuffer(slot.buf, 0, rt.buf68);
+        slot.uploadedVersion = rt.version;
+        if (slot.usesVertexPosition) {
+          scene.tslVertexDirty = true;
+        }
+      }
+    }
+  }
 
   for (const g of scene.groups) {
     const mesh = g.mesh;
     const prim = g.prim;
+
+    if (prim.materialIndex !== g.matIndex) {
+      g.matIndex = prim.materialIndex;
+      const tslInfo = resolveGroupTslBinding(
+        dev,
+        pipes,
+        viewer,
+        scene.tslSlots,
+        prim.materialIndex,
+      );
+      if (
+        tslInfo.tslHash !== g.tslHash ||
+        tslInfo.tslBg !== g.tslBg ||
+        tslInfo.tslShadowPipe !== g.tslShadowPipe
+      ) {
+        if (tslInfo.tslShadowPipe !== g.tslShadowPipe) {
+          scene.tslVertexDirty = true;
+        }
+        g.tslHash = tslInfo.tslHash;
+        g.tslBg = tslInfo.tslBg;
+        g.tslShadowPipe = tslInfo.tslShadowPipe;
+        scene.bundlesDirty = true;
+        scene.shadowBundles = [null, null, null, null];
+      }
+    }
 
     // Detect material texture swaps (`selectVariant`) or async image decodes.
     const t0 = prim.texture ?? null;
@@ -2448,7 +2715,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
 
     const encoder = dev.createCommandEncoder();
     if (neededSlices > 0 && st.shadowTex) {
-      if (st.lastShadowDigest === shadowPlan.digest) {
+      if (!scene.tslVertexDirty && st.lastShadowDigest === shadowPlan.digest) {
         this.shadowCacheHits++;
       } else {
         st.lastShadowDigest = shadowPlan.digest;

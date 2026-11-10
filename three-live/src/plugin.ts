@@ -209,6 +209,11 @@ export interface SharedThreeLiveRegistry {
    */
   workerExtensionInstallers?: Array<(threeNs: unknown, reg: unknown) => void>;
   /**
+   * Optional WebGPU Gaussian Splatting compute & render accelerator installed
+   * by `xr-live-webgpu.min.js`. Pure TypeScript hook so core bundles add 0 B.
+   */
+  splatAccelerator?: SplatGPUAccelerator;
+  /**
    * Optional WebGPU `GPURenderBundle` scene accelerator installed by
    * `three-live-webgpu.min.js` for multi-thousand-part CAD & glTF scenes.
    */
@@ -219,11 +224,61 @@ export interface SharedThreeLiveRegistry {
    */
   webgpuDeviceProvider?: SharedWebGPUDeviceProvider;
   /**
-   * Optional WebGPU Gaussian Splatting compute & render accelerator installed
-   * by `xr-live-webgpu.min.js`. Pure TypeScript hook so core bundles add 0 B.
+   * Optional Loop-Free TSL -> WGSL compiler installed by `three-live-tsl`.
    */
-  splatAccelerator?: SplatGPUAccelerator;
+  tslWgslCompiler?: TslWgslCompiler;
+  /**
+   * Optional per-viewer TSL material uniform/time state resolver installed by
+   * `three-live-tsl` for `three-live-webgpu` `GPURenderBundle` synchronization.
+   */
+  tslMaterialResolver?: TslMaterialResolver;
+  /**
+   * Optional Loop-Free TSL -> USDZ `UsdShade` / MaterialX serializer installed
+   * by `three-live-tsl` (`B3`).
+   */
+  tslUsdzSerializer?: TslUsdzSerializer;
 }
+
+/** Compiled WebGPU WGSL shaders for a validated `GOOGLE_material_tsl` graph. */
+export interface CompiledTslWgsl {
+  readonly hash: string;
+  readonly pbrWgsl: string;
+  readonly shadowDepthWgsl: string | null;
+}
+
+/** Runtime TSL material uniform/time state shared with WebGPU accelerator. */
+export interface TslMaterialRuntimeState {
+  readonly hash: string;
+  readonly graph: unknown;
+  /** 68-float (`272 B`) staging buffer: `[0..63] = params`, `[64] = uTslTime`. */
+  readonly buf68: Float32Array;
+  readonly usesTime: boolean;
+  readonly usesVertexPosition: boolean;
+  readonly version: number;
+}
+
+/** Optional TSL-to-WGSL compiler registered by `three-live-tsl`. */
+export type TslWgslCompiler = (
+  graph: unknown,
+  basePbrWgsl: string,
+  baseShadowDepthWgsl: string,
+) => CompiledTslWgsl | null;
+
+/** Resolves live TSL runtime state for `(viewer, materialIndex)`. */
+export type TslMaterialResolver = (
+  viewer: object,
+  materialIndex: number | undefined,
+) => TslMaterialRuntimeState | null;
+
+/** Optional TSL-to-USDA `UsdShade` / MaterialX NodeGraph serializer (`B3`). */
+export type TslUsdzSerializer = (
+  rawTsl: unknown,
+  matSafeId: string,
+  indent: string,
+) => {
+  readonly nodeGraphUsda: string;
+  readonly surfaceConnections: Readonly<Record<string, string>>;
+} | null;
 
 /** Host `<three-live>` / `<xr-live>` `renderer` attribute preference. */
 export type RendererPreference = 'auto' | 'webgpu' | 'webgl2';
@@ -245,10 +300,10 @@ export interface GPUSceneRenderParams {
 /** Optional WebGPU scene renderer registered on `SharedThreeLiveRegistry`. */
 export interface GPUSceneAccelerator {
   /**
-   * Renders `viewer`'s scene via WebGPU (`GPURenderBundle` + storage matrix
-   * buffer). Returns `true` when the WebGPU layer drew the pass so `ThreeView`
-   * skips its per-mesh WebGL2 uniform/draw loop, or `false` to fall back
-   * seamlessly to WebGL2 for this frame.
+   * Renders `params.viewer`'s scene via WebGPU (`GPURenderBundle` + storage
+   * matrix buffer). Returns `true` when the WebGPU layer drew the pass so
+   * `ThreeView` skips its per-mesh WebGL2 uniform/draw loop, or `false` to fall
+   * back seamlessly to WebGL2 for this frame.
    */
   renderScene(
     viewer: object,

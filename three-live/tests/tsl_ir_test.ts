@@ -26,12 +26,14 @@ import {parseGLB} from '../src/three-view';
 import {installTslExtension} from '../src/tsl/author';
 import {
   evaluateTslGraphCpu,
-  MAX_TSL_NODES,
-  MAX_TSL_UNIFORMS,
-  TSL_EXTENSION_NAME,
   tslSimplexNoise2D,
   tslSimplexNoise3D,
   tslVoronoi2D,
+} from '../src/tsl/cpu';
+import {
+  MAX_TSL_NODES,
+  MAX_TSL_UNIFORMS,
+  TSL_EXTENSION_NAME,
   validateTslGraph,
 } from '../src/tsl/ir';
 

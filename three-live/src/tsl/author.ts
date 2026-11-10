@@ -130,33 +130,21 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     return Number.isFinite(n) ? Math.fround(n) : fb;
   };
 
-  interface RawAst {
-    readonly _op: string;
-    readonly _type: TslType;
-    readonly _args: RawAst[];
-    readonly _val?: number[];
-    readonly _name?: string;
-    readonly _mask?: string;
-    _uVal?: unknown;
-  }
-
   const isNode = (v: unknown): v is TSLNode =>
     Boolean(v && (v as {isTSLNode?: unknown}).isTSLNode === true);
 
-  // Coerces numbers, arrays, THREE.Color, and THREE.Vector2/3/4 into a TSLNode.
   const toNode = (v: unknown, preferredArity = 1): TSLNode => {
     if (isNode(v)) return v;
     if (typeof v === 'number' || typeof v === 'boolean') {
       const f = fin(Number(v), 0);
-      if (preferredArity > 1) {
-        return new TSLNode(
-          'const',
-          typeOfArity(preferredArity),
-          [],
-          new Array(preferredArity).fill(f),
-        );
-      }
-      return new TSLNode('const', 'float', [], [f]);
+      return preferredArity > 1
+        ? new TSLNode(
+            'const',
+            typeOfArity(preferredArity),
+            [],
+            new Array(preferredArity).fill(f),
+          )
+        : new TSLNode('const', 'float', [], [f]);
     }
     if (typeof v === 'string') {
       const c = new threeNs.Color(v);
@@ -183,34 +171,24 @@ export function installTslExtension(threeNs: any, reg?: any): any {
           [fin(obj['r'], 1), fin(obj['g'], 1), fin(obj['b'], 1)],
         );
       }
-      if ('x' in obj && 'y' in obj && 'z' in obj && 'w' in obj) {
-        return new TSLNode(
-          'const',
-          'vec4',
-          [],
-          [
-            fin(obj['x'], 0),
-            fin(obj['y'], 0),
-            fin(obj['z'], 0),
-            fin(obj['w'], 1),
-          ],
-        );
-      }
-      if ('x' in obj && 'y' in obj && 'z' in obj) {
-        return new TSLNode(
-          'const',
-          'vec3',
-          [],
-          [fin(obj['x'], 0), fin(obj['y'], 0), fin(obj['z'], 0)],
-        );
-      }
       if ('x' in obj && 'y' in obj) {
-        return new TSLNode(
-          'const',
-          'vec2',
-          [],
-          [fin(obj['x'], 0), fin(obj['y'], 0)],
-        );
+        if ('z' in obj && 'w' in obj) {
+          return new TSLNode(
+            'const',
+            'vec4',
+            [],
+            [fin(obj['x']), fin(obj['y']), fin(obj['z']), fin(obj['w'], 1)],
+          );
+        }
+        if ('z' in obj) {
+          return new TSLNode(
+            'const',
+            'vec3',
+            [],
+            [fin(obj['x']), fin(obj['y']), fin(obj['z'])],
+          );
+        }
+        return new TSLNode('const', 'vec2', [], [fin(obj['x']), fin(obj['y'])]);
       }
     }
     return new TSLNode('const', 'float', [], [0]);
@@ -225,7 +203,6 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     if (a._type === b._type) return [a, b, a._type];
     if (a._type === 'float') return [a, b, b._type];
     if (b._type === 'float') return [a, b, a._type];
-    // Mismatched vector widths: coerce `b` to `a._type` via swizzle or construct
     const targetArity = arityOf(a._type);
     const bArity = arityOf(b._type);
     if (bArity > targetArity) {
@@ -247,19 +224,16 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     const nArity = arityOf(n._type);
     if (tArity === 1) return n.swizzle('x');
     if (nArity === 1) {
-      if (n._op === 'const' && n._val) {
-        return new TSLNode(
-          'const',
-          targetType,
-          [],
-          new Array(tArity).fill(n._val[0]),
-        );
-      }
-      return new TSLNode('construct', targetType, [n]);
+      return n._op === 'const' && n._val
+        ? new TSLNode(
+            'const',
+            targetType,
+            [],
+            new Array(tArity).fill(n._val[0]),
+          )
+        : new TSLNode('construct', targetType, [n]);
     }
-    if (nArity > tArity) {
-      return n.swizzle('xyzw'.slice(0, tArity));
-    }
+    if (nArity > tArity) return n.swizzle('xyzw'.slice(0, tArity));
     const pad: TSLNode[] = [n];
     for (let k = nArity; k < tArity; k++) {
       pad.push(new TSLNode('const', 'float', [], [k === 3 ? 1 : 0]));
@@ -267,7 +241,7 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     return new TSLNode('construct', targetType, pad);
   };
 
-  class TSLNode implements RawAst {
+  class TSLNode {
     readonly isTSLNode: true;
     readonly _op: string;
     readonly _type: TslType;
@@ -303,34 +277,22 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     }
 
     set value(v: unknown) {
-      if (this._op === 'uniform') {
-        this._uVal = v;
-      }
+      if (this._op === 'uniform') this._uVal = v;
     }
 
     swizzle(rawMask: string): TSLNode {
       const mapped = String(rawMask || 'x')
         .trim()
-        .replace(/r/g, 'x')
-        .replace(/g/g, 'y')
-        .replace(/b/g, 'z')
-        .replace(/a/g, 'w');
+        .replace(/[rgba]/g, (c) => 'xyzw'['rgba'.indexOf(c)]);
       if (!/^[xyzw]{1,4}$/.test(mapped)) {
         warnTsl('TL501', `Invalid TSL swizzle '${rawMask}'`, '.x');
         return new TSLNode('const', 'float', [], [0]);
       }
       const srcArity = arityOf(this._type);
-      if (srcArity === 1 && mapped === 'x') {
-        return this;
-      }
+      if (srcArity === 1 && mapped === 'x') return this;
       for (let i = 0; i < mapped.length; i++) {
-        const ci = 'xyzw'.indexOf(mapped[i]);
-        if (ci >= srcArity) {
-          warnTsl(
-            'TL501',
-            `TSL swizzle '.${rawMask}' out of range for ${this._type}`,
-            'zero constant',
-          );
+        if ('xyzw'.indexOf(mapped[i]) >= srcArity) {
+          warnTsl('TL501', `TSL swizzle '.${rawMask}' out of range`, '0');
           return new TSLNode(
             'const',
             typeOfArity(mapped.length),
@@ -349,124 +311,6 @@ export function installTslExtension(threeNs: any, reg?: any): any {
       );
     }
 
-    get x(): TSLNode {
-      return this.swizzle('x');
-    }
-    get y(): TSLNode {
-      return this.swizzle('y');
-    }
-    get z(): TSLNode {
-      return this.swizzle('z');
-    }
-    get w(): TSLNode {
-      return this.swizzle('w');
-    }
-    get r(): TSLNode {
-      return this.swizzle('x');
-    }
-    get g(): TSLNode {
-      return this.swizzle('y');
-    }
-    get b(): TSLNode {
-      return this.swizzle('z');
-    }
-    get a(): TSLNode {
-      return this.swizzle('w');
-    }
-    get xy(): TSLNode {
-      return this.swizzle('xy');
-    }
-    get xz(): TSLNode {
-      return this.swizzle('xz');
-    }
-    get yz(): TSLNode {
-      return this.swizzle('yz');
-    }
-    get xyz(): TSLNode {
-      return this.swizzle('xyz');
-    }
-    get rgb(): TSLNode {
-      return this.swizzle('xyz');
-    }
-    get xyzw(): TSLNode {
-      return this.swizzle('xyzw');
-    }
-    get rgba(): TSLNode {
-      return this.swizzle('xyzw');
-    }
-
-    add(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('add', t, [na, nb]);
-    }
-    sub(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('sub', t, [na, nb]);
-    }
-    mul(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('mul', t, [na, nb]);
-    }
-    div(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('div', t, [na, nb]);
-    }
-    mod(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('mod', t, [na, nb]);
-    }
-    pow(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('pow', t, [na, nb]);
-    }
-    atan2(x: unknown): TSLNode {
-      const [ny, nx, t] = broadcastPair(this, x);
-      return new TSLNode('atan2', t, [ny, nx]);
-    }
-    min(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('min', t, [na, nb]);
-    }
-    max(b: unknown): TSLNode {
-      const [na, nb, t] = broadcastPair(this, b);
-      return new TSLNode('max', t, [na, nb]);
-    }
-    neg(): TSLNode {
-      return new TSLNode('neg', this._type, [this]);
-    }
-    abs(): TSLNode {
-      return new TSLNode('abs', this._type, [this]);
-    }
-    sign(): TSLNode {
-      return new TSLNode('sign', this._type, [this]);
-    }
-    floor(): TSLNode {
-      return new TSLNode('floor', this._type, [this]);
-    }
-    ceil(): TSLNode {
-      return new TSLNode('ceil', this._type, [this]);
-    }
-    fract(): TSLNode {
-      return new TSLNode('fract', this._type, [this]);
-    }
-    sqrt(): TSLNode {
-      return new TSLNode('sqrt', this._type, [this]);
-    }
-    exp(): TSLNode {
-      return new TSLNode('exp', this._type, [this]);
-    }
-    log(): TSLNode {
-      return new TSLNode('log', this._type, [this]);
-    }
-    sin(): TSLNode {
-      return new TSLNode('sin', this._type, [this]);
-    }
-    cos(): TSLNode {
-      return new TSLNode('cos', this._type, [this]);
-    }
-    normalize(): TSLNode {
-      return new TSLNode('normalize', this._type, [this]);
-    }
     clamp(lo: unknown = 0, hi: unknown = 1): TSLNode {
       let nLo = toNode(lo);
       let nHi = toNode(hi);
@@ -485,18 +329,14 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     mix(b: unknown, t: unknown): TSLNode {
       const [na, nb, ty] = broadcastPair(this, b);
       let nt = toNode(t);
-      if (nt._type !== 'float' && nt._type !== ty) {
-        nt = coerceToType(nt, ty);
-      }
+      if (nt._type !== 'float' && nt._type !== ty) nt = coerceToType(nt, ty);
       return new TSLNode('mix', ty, [na, nb, nt]);
     }
     step(x: unknown): TSLNode {
       const nx = toNode(x);
-      if (this._type === 'float') {
-        return new TSLNode('step', nx._type, [this, nx]);
-      }
-      const nb = coerceToType(nx, this._type);
-      return new TSLNode('step', this._type, [this, nb]);
+      return this._type === 'float'
+        ? new TSLNode('step', nx._type, [this, nx])
+        : new TSLNode('step', this._type, [this, coerceToType(nx, this._type)]);
     }
     smoothstep(e1: unknown, x: unknown): TSLNode {
       const nx = toNode(x);
@@ -542,14 +382,85 @@ export function installTslExtension(threeNs: any, reg?: any): any {
       const t = this.sub(inLo).div(toNode(inHi).sub(inLo)).clamp(0, 1);
       return toNode(outLo).mix(outHi, t);
     }
+
+    // Populated dynamically on TSLNode.prototype below
+    // tslint:disable-next-line:no-any
+    [key: string]: any;
   }
 
-  // Creates a builtin node that works both as a property (`TSL.uv.mul(4)`) and
-  // as a zero-arg function (`TSL.uv().mul(4)`), matching Three.js `three/tsl`!
+  // Install swizzle getters & fluent unary/binary operators compactly
+  const proto = TSLNode.prototype;
+  for (const [prop, mask] of [
+    ['x', 'x'],
+    ['y', 'y'],
+    ['z', 'z'],
+    ['w', 'w'],
+    ['r', 'x'],
+    ['g', 'y'],
+    ['b', 'z'],
+    ['a', 'w'],
+    ['xy', 'xy'],
+    ['xz', 'xz'],
+    ['yz', 'yz'],
+    ['xyz', 'xyz'],
+    ['rgb', 'xyz'],
+    ['xyzw', 'xyzw'],
+    ['rgba', 'xyzw'],
+  ] as const) {
+    Object.defineProperty(proto, prop, {
+      get(this: TSLNode) {
+        return this.swizzle(mask);
+      },
+    });
+  }
+  const BIN_OPS = [
+    'add',
+    'sub',
+    'mul',
+    'div',
+    'mod',
+    'pow',
+    'atan2',
+    'min',
+    'max',
+  ] as const;
+  for (const op of BIN_OPS) {
+    proto[op] = function (this: TSLNode, b: unknown): TSLNode {
+      const [na, nb, t] = broadcastPair(this, b);
+      return new TSLNode(op, t, [na, nb]);
+    };
+  }
+  const UN_OPS = [
+    'neg',
+    'abs',
+    'sign',
+    'floor',
+    'ceil',
+    'fract',
+    'sqrt',
+    'exp',
+    'log',
+    'sin',
+    'cos',
+    'normalize',
+  ] as const;
+  for (const op of UN_OPS) {
+    proto[op] = function (this: TSLNode): TSLNode {
+      return new TSLNode(op, this._type, [this]);
+    };
+  }
+
+  // Dual property + zero-arg callable builtin (`TSL.uv` AND `TSL.uv()`).
+  // Explicitly redefine `.length` so `Function.length` (0) does not shadow
+  // `TSLNode.prototype.length()`!
   const makeBuiltin = (name: string, type: TslType): TSLNode => {
     const base = new TSLNode('builtin', type, [], undefined, name);
     const callable = () => base;
-    Object.setPrototypeOf(callable, TSLNode.prototype);
+    Object.setPrototypeOf(callable, proto);
+    Object.defineProperty(callable, 'length', {
+      value: proto.length,
+      configurable: true,
+    });
     Object.assign(callable, base);
     return callable as unknown as TSLNode;
   };
@@ -559,22 +470,7 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     if (items.length === 0) {
       return new TSLNode('const', targetType, [], new Array(arity).fill(0));
     }
-    if (items.length === 1) {
-      const single = toNode(items[0]);
-      if (single._type === targetType) return single;
-      if (single._type === 'float') {
-        if (single._op === 'const' && single._val) {
-          return new TSLNode(
-            'const',
-            targetType,
-            [],
-            new Array(arity).fill(single._val[0]),
-          );
-        }
-        return new TSLNode('construct', targetType, [single]);
-      }
-      return coerceToType(single, targetType);
-    }
+    if (items.length === 1) return coerceToType(items[0], targetType);
     const nodes = items.map((it) => toNode(it));
     let allConst = true;
     const flatVals: number[] = [];
@@ -593,7 +489,6 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     if (totalComps === arity) {
       return new TSLNode('construct', targetType, nodes);
     }
-    // Normalize component count via scalar swizzles
     const exactArgs: TSLNode[] = [];
     for (const nd of nodes) {
       const a = arityOf(nd._type);
@@ -611,7 +506,8 @@ export function installTslExtension(threeNs: any, reg?: any): any {
 
   const posWorldBuiltin = makeBuiltin('positionWorld', 'vec3');
 
-  const TSL = {
+  // tslint:disable-next-line:no-any
+  const TSL: Record<string, any> = {
     float: (v: unknown = 0): TSLNode => coerceToType(v, 'float'),
     vec2: (...args: unknown[]): TSLNode => buildVec('vec2', args),
     vec3: (...args: unknown[]): TSLNode => buildVec('vec3', args),
@@ -677,26 +573,6 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     instanceIndex: makeBuiltin('instanceIndex', 'float'),
     time: makeBuiltin('time', 'float'),
 
-    add: (a: unknown, b: unknown): TSLNode => toNode(a).add(b),
-    sub: (a: unknown, b: unknown): TSLNode => toNode(a).sub(b),
-    mul: (a: unknown, b: unknown): TSLNode => toNode(a).mul(b),
-    div: (a: unknown, b: unknown): TSLNode => toNode(a).div(b),
-    mod: (a: unknown, b: unknown): TSLNode => toNode(a).mod(b),
-    neg: (a: unknown): TSLNode => toNode(a).neg(),
-    abs: (a: unknown): TSLNode => toNode(a).abs(),
-    sign: (a: unknown): TSLNode => toNode(a).sign(),
-    floor: (a: unknown): TSLNode => toNode(a).floor(),
-    ceil: (a: unknown): TSLNode => toNode(a).ceil(),
-    fract: (a: unknown): TSLNode => toNode(a).fract(),
-    sqrt: (a: unknown): TSLNode => toNode(a).sqrt(),
-    pow: (a: unknown, b: unknown): TSLNode => toNode(a).pow(b),
-    exp: (a: unknown): TSLNode => toNode(a).exp(),
-    log: (a: unknown): TSLNode => toNode(a).log(),
-    sin: (a: unknown): TSLNode => toNode(a).sin(),
-    cos: (a: unknown): TSLNode => toNode(a).cos(),
-    atan2: (y: unknown, x: unknown): TSLNode => toNode(y).atan2(x),
-    min: (a: unknown, b: unknown): TSLNode => toNode(a).min(b),
-    max: (a: unknown, b: unknown): TSLNode => toNode(a).max(b),
     clamp: (x: unknown, lo: unknown = 0, hi: unknown = 1): TSLNode =>
       toNode(x).clamp(lo, hi),
     saturate: (x: unknown): TSLNode => toNode(x).saturate(),
@@ -709,7 +585,6 @@ export function installTslExtension(threeNs: any, reg?: any): any {
     cross: (a: unknown, b: unknown): TSLNode => toNode(a).cross(b),
     length: (a: unknown): TSLNode => toNode(a).length(),
     distance: (a: unknown, b: unknown): TSLNode => toNode(a).distance(b),
-    normalize: (a: unknown): TSLNode => toNode(a).normalize(),
     reflect: (inc: unknown, nrm: unknown): TSLNode => toNode(inc).reflect(nrm),
     remap: (
       x: unknown,
@@ -757,7 +632,6 @@ export function installTslExtension(threeNs: any, reg?: any): any {
         coerceToType(strength, 'float'),
       ]),
 
-    // Imperative loop constructs explicitly emit TL504 and degrade cleanly.
     Loop: (): TSLNode => {
       warnTsl('TL504', 'THREE.TSL.Loop', 'loop-free TSL constant');
       return new TSLNode('const', 'float', [], [0]);
@@ -767,17 +641,38 @@ export function installTslExtension(threeNs: any, reg?: any): any {
       return new TSLNode('const', 'float', [], [0]);
     },
   };
+  for (const op of BIN_OPS) {
+    TSL[op] = (a: unknown, b: unknown): TSLNode => toNode(a)[op](b);
+  }
+  for (const op of UN_OPS) {
+    TSL[op] = (a: unknown): TSLNode => toNode(a)[op]();
+  }
 
   class MeshStandardNodeMaterial extends threeNs.MeshPhysicalMaterial {
     isMeshStandardNodeMaterial: boolean;
     colorNode: unknown;
-    opacityNode: unknown;
+    private _opacityNode: unknown = null;
     emissiveNode: unknown;
     roughnessNode: unknown;
     metalnessNode: unknown;
     normalScaleNode: unknown;
     bumpNode: unknown;
     positionNode: unknown;
+
+    get opacityNode(): unknown {
+      return this._opacityNode;
+    }
+
+    set opacityNode(v: unknown) {
+      this._opacityNode = v;
+      if (
+        v !== null &&
+        v !== undefined &&
+        !(Number((this as unknown as Record<string, unknown>)['alphaTest']) > 0)
+      ) {
+        (this as unknown as Record<string, unknown>)['transparent'] = true;
+      }
+    }
 
     constructor(opts: Record<string, unknown> = {}) {
       super(opts);
@@ -932,62 +827,61 @@ export function installTslExtension(threeNs: any, reg?: any): any {
         uniforms?: Record<string, {type: TslType; value: number | number[]}>;
         nodes: typeof ssaNodes;
         outputs: Record<string, number>;
-      } = {
-        version: 1,
-        nodes: ssaNodes,
-        outputs,
-      };
-      if (Object.keys(uniforms).length > 0) {
-        result.uniforms = uniforms;
-      }
+      } = {version: 1, nodes: ssaNodes, outputs};
+      if (Object.keys(uniforms).length > 0) result.uniforms = uniforms;
       return result as unknown as TslMaterialGraph;
     }
 
     clone(): MeshStandardNodeMaterial {
       const c = new MeshStandardNodeMaterial();
-      c.name = this.name;
+      for (const k of [
+        'name',
+        '_em',
+        'roughness',
+        'metalness',
+        'emissiveIntensity',
+        'opacity',
+        'transparent',
+        'wireframe',
+        'side',
+        'doubleSided',
+        'map',
+        'normalMap',
+        'roughnessMap',
+        'metalnessMap',
+        'emissiveMap',
+        'aoMap',
+        'aoMapIntensity',
+        'bumpMap',
+        'bumpScale',
+        'clearcoat',
+        'clearcoatRoughness',
+        'sheen',
+        'sheenRoughness',
+        'ior',
+        'transmission',
+        'thickness',
+        'attenuationDistance',
+        'dispersion',
+        'iridescence',
+        'iridescenceIOR',
+        'colorNode',
+        'opacityNode',
+        'emissiveNode',
+        'roughnessNode',
+        'metalnessNode',
+        'normalScaleNode',
+        'bumpNode',
+        'positionNode',
+      ]) {
+        // tslint:disable-next-line:no-any
+        (c as any)[k] = (this as any)[k];
+      }
       c.color.copy(this.color);
-      c._em = this._em;
-      c.roughness = this.roughness;
-      c.metalness = this.metalness;
       c.emissive.copy(this.emissive);
-      c.emissiveIntensity = this.emissiveIntensity;
-      c.opacity = this.opacity;
-      c.transparent = this.transparent;
-      c.wireframe = this.wireframe;
-      c.side = this.side;
-      c.doubleSided = this.doubleSided;
-      c.map = this.map;
-      c.normalMap = this.normalMap;
       c.normalScale.copy(this.normalScale);
-      c.roughnessMap = this.roughnessMap;
-      c.metalnessMap = this.metalnessMap;
-      c.emissiveMap = this.emissiveMap;
-      c.aoMap = this.aoMap;
-      c.aoMapIntensity = this.aoMapIntensity;
-      c.bumpMap = this.bumpMap;
-      c.bumpScale = this.bumpScale;
-      c.clearcoat = this.clearcoat;
-      c.clearcoatRoughness = this.clearcoatRoughness;
-      c.sheen = this.sheen;
       c.sheenColor.copy(this.sheenColor);
-      c.sheenRoughness = this.sheenRoughness;
-      c.ior = this.ior;
-      c.transmission = this.transmission;
-      c.thickness = this.thickness;
       c.attenuationColor.copy(this.attenuationColor);
-      c.attenuationDistance = this.attenuationDistance;
-      c.dispersion = this.dispersion;
-      c.iridescence = this.iridescence;
-      c.iridescenceIOR = this.iridescenceIOR;
-      c.colorNode = this.colorNode;
-      c.opacityNode = this.opacityNode;
-      c.emissiveNode = this.emissiveNode;
-      c.roughnessNode = this.roughnessNode;
-      c.metalnessNode = this.metalnessNode;
-      c.normalScaleNode = this.normalScaleNode;
-      c.bumpNode = this.bumpNode;
-      c.positionNode = this.positionNode;
       return c;
     }
   }
@@ -1000,9 +894,7 @@ export function installTslExtension(threeNs: any, reg?: any): any {
   };
 
   if (reg && typeof reg === 'object') {
-    if (!reg.authorNamespace) {
-      reg.authorNamespace = {};
-    }
+    if (!reg.authorNamespace) reg.authorNamespace = {};
     Object.assign(reg.authorNamespace, exportsMap);
   }
 
