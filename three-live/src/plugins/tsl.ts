@@ -43,6 +43,7 @@ import {
   validateTslGraph,
   type ValidatedTslGraph,
 } from '../tsl/ir';
+import {serializeTslToUsda} from '../tsl/usdz';
 import {compileTslToWgsl} from '../tsl/wgsl';
 
 interface TslMaterialInstance extends TslMaterialRuntimeState {
@@ -292,6 +293,7 @@ function registerTslHooks(): void {
     const st = ensureViewerState(viewer);
     return st?.materialsByIndex.get(matIndex) ?? null;
   };
+  reg.tslUsdzSerializer = serializeTslToUsda;
 }
 
 /** Loop-Free TSL plugin for `<three-live>` and `<xr-live>`. */

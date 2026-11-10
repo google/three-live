@@ -28,12 +28,13 @@ import {morphPlugin} from '../src/plugins/morph';
 import {shadowMapsPlugin} from '../src/plugins/shadow-maps';
 import {skinningPlugin} from '../src/plugins/skinning';
 import THREE from '../src/three-author';
-import {sceneToGLB} from '../src/three-convert';
+import {glbToUSDZ, sceneToGLB, sceneToUSDZ} from '../src/three-convert';
 import {parseGLB, ThreeView} from '../src/three-view';
 import {
   compileTslToGlsl,
   compileTslToWgsl,
   fmtShaderFloat,
+  serializeTslToUsda,
   setMaterialUniform,
   tslPlugin,
   validateTslGraph,
@@ -947,4 +948,102 @@ fragColor=vec4(N,1.0);
   );
 }
 
-console.log('=== All Loop-Free TSL B2 Codegen Tests Passed! ===');
+// 5. USDZ `MaterialX` / `UsdShade` NodeGraph Export (`sceneToUSDZ` + `glbToUSDZ` + 64-byte alignment)
+{
+  const usdScene = new THREE.Scene();
+  const uSecretUsd = TSL.uniform(4.0, 'uSecretUsdUniformProbe');
+  const uTintUsd = TSL.uniform(
+    new THREE.Color(0x38bdf8),
+    'uSecretUsdColorProbe',
+  );
+  const usdMat = new MeshStandardNodeMaterial({name: 'HoloUsdMat'});
+  const n3 = TSL.simplexNoise3D(TSL.positionWorld.mul(3.0));
+  const rim = TSL.fresnel(2.0);
+  const pulse = TSL.sin(TSL.time.mul(uSecretUsd)).mul(0.5).add(0.5);
+  usdMat.colorNode = TSL.mix(TSL.color(0x0284c7), uTintUsd, n3);
+  usdMat.emissiveNode = uTintUsd.mul(rim.add(pulse.mul(0.3)));
+  usdMat.opacityNode = rim.clamp(0.15, 0.92);
+  usdMat.roughnessNode = TSL.remap(n3, 0, 1, 0.1, 0.6);
+  usdMat.metalnessNode = TSL.checker(TSL.uv.mul(4.0)).mul(0.8);
+  usdMat.bumpNode = TSL.bumpFromHeight(
+    TSL.voronoi2D(TSL.uv.mul(6.0), 0.7),
+    0.25,
+  );
+
+  const usdMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), usdMat);
+  usdScene.add(usdMesh);
+
+  const directUsdz = sceneToUSDZ(usdScene);
+  const glbRoundtripUsdz = glbToUSDZ(sceneToGLB(usdScene));
+
+  for (const [label, usdz] of [
+    ['sceneToUSDZ', directUsdz],
+    ['glbToUSDZ', glbRoundtripUsdz],
+  ] as const) {
+    assert.strictEqual(usdz[0], 0x50, `${label}: valid PK zip header`);
+    assert.strictEqual(usdz[1], 0x4b);
+    const fnLen = usdz[26] | (usdz[27] << 8);
+    const extraLen = usdz[28] | (usdz[29] << 8);
+    const payloadOffset = 30 + fnLen + extraLen;
+    assert.strictEqual(
+      payloadOffset % 64,
+      0,
+      `${label}: Apple Quick Look 64-byte payload alignment`,
+    );
+    const usda = new TextDecoder().decode(usdz);
+    assert.ok(
+      usda.includes('def NodeGraph "TSLGraph"'),
+      `${label}: TSLGraph present`,
+    );
+    assert.ok(
+      usda.includes('ND_time_float'),
+      `${label}: ND_time_float emitted`,
+    );
+    assert.ok(
+      usda.includes('ND_noise3d_float'),
+      `${label}: ND_noise3d_float emitted`,
+    );
+    assert.ok(
+      usda.includes('ND_cellnoise2d_float'),
+      `${label}: ND_cellnoise2d_float emitted`,
+    );
+    assert.ok(
+      usda.includes('ND_heighttonormal_vector3'),
+      `${label}: bump heighttonormal emitted`,
+    );
+    assert.ok(
+      usda.includes(
+        'color3f inputs:diffuseColor.connect = </Root/Materials/HoloUsdMat/TSLGraph.outputs:diffuseColor>',
+      ),
+    );
+    assert.ok(
+      usda.includes(
+        'color3f inputs:emissiveColor.connect = </Root/Materials/HoloUsdMat/TSLGraph.outputs:emissiveColor>',
+      ),
+    );
+    assert.ok(
+      usda.includes(
+        'float inputs:opacity.connect = </Root/Materials/HoloUsdMat/TSLGraph.outputs:opacity>',
+      ),
+    );
+    assert.ok(
+      usda.includes('endTimeCode = 60'),
+      `${label}: animated stage timing emitted`,
+    );
+    assert.ok(
+      !usda.includes('uSecretUsdUniformProbe') &&
+        !usda.includes('uSecretUsdColorProbe'),
+      `${label}: zero user uniform identifiers in USDA`,
+    );
+    assertBalancedBraces(
+      serializeTslToUsda(usdMat._serializeTslGraph(), 'HoloUsdMat')!
+        .nodeGraphUsda,
+      `${label} NodeGraph`,
+    );
+  }
+  console.log(
+    '   [PASS] USDZ MaterialX / UsdShade NodeGraph export, 64-byte alignment & identifier hygiene',
+  );
+}
+
+console.log('=== All Loop-Free TSL B2/B3 Codegen Tests Passed! ===');

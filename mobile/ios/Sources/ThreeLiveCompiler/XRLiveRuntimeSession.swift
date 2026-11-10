@@ -263,11 +263,14 @@ public final class XRLiveRuntimeSession {
   }
 
   struct MaterialData {
+    var name = ""
     var baseColor = SIMD4<Double>(1, 1, 1, 1)
     var metallic = 1.0
     var roughness = 1.0
     var emissive = SIMD3<Double>(0, 0, 0)
     var alphaCutoff = 0.5
+    var tslGraph: XRTslValidatedGraph?
+    var tslBuffer: [Float]?
   }
 
   struct FollowState {
@@ -351,6 +354,8 @@ public final class XRLiveRuntimeSession {
   private var dirtyTransforms = Set<Int>()
   private var dirtyVisibility = Set<Int>()
   private var dirtyMaterials = Set<Int>()
+  private var hasAnimatedTsl = false
+  private var tslElapsedSec: Float = 0
 
   private var followStates: [Int: FollowState] = [:]
   private var orbitTimes: [Int: Double] = [:]
@@ -604,9 +609,13 @@ public final class XRLiveRuntimeSession {
       }
     }
 
-    for raw in (XRJSON.array(root["materials"]) ?? []).prefix(Self.maxSceneElements) {
+    for (mIdx, raw) in (XRJSON.array(root["materials"]) ?? []).prefix(Self.maxSceneElements)
+      .enumerated()
+    {
       var mat = MaterialData()
       if let m = XRJSON.object(raw) {
+        let mName = XRJSON.string(m["name"]) ?? ""
+        mat.name = mName
         let pbr = XRJSON.object(m["pbrMetallicRoughness"]) ?? [:]
         let c = Self.doubles(pbr["baseColorFactor"], defaults: [1, 1, 1, 1])
         mat.baseColor = SIMD4<Double>(c[0], c[1], c[2], c[3])
@@ -616,6 +625,15 @@ public final class XRLiveRuntimeSession {
         let e = Self.doubles(m["emissiveFactor"], defaults: [0, 0, 0])
         mat.emissive = SIMD3<Double>(e[0], e[1], e[2])
         mat.alphaCutoff = XRJSON.number(m["alphaCutoff"]).flatMap { $0.isFinite ? $0 : nil } ?? 0.5
+        if let exts = XRJSON.object(m["extensions"]),
+          let rawTsl = exts[XRTslMaterialValidator.extensionName],
+          let g = XRTslMaterialValidator.validate(
+            rawTsl, materialLabel: mName.isEmpty ? "Material_\(mIdx)" : mName)
+        {
+          mat.tslGraph = g
+          mat.tslBuffer = g.makeDefaultBuffer()
+          if g.usesTime { hasAnimatedTsl = true }
+        }
       }
       materials.append(mat)
     }
@@ -1088,6 +1106,81 @@ public final class XRLiveRuntimeSession {
     return Self.publicMaterial(materials[index])
   }
 
+  /// Validated `GOOGLE_material_tsl` graph on material `index`, if present.
+  public func tslMaterialGraph(at index: Int) -> XRTslValidatedGraph? {
+    guard index >= 0, index < materials.count else { return nil }
+    return materials[index].tslGraph
+  }
+
+  /// Snapshot of the 68-float (`272 B`) TSL uniform/time buffer on material `index`, if present.
+  public func tslUniformBuffer(at index: Int) -> [Float]? {
+    guard index >= 0, index < materials.count else { return nil }
+    return materials[index].tslBuffer
+  }
+
+  /// Scalar convenience overload for `setMaterialUniform(_:_:_:)`.
+  @discardableResult
+  public func setMaterialUniform(
+    _ materialName: String,
+    _ uniformName: String,
+    _ value: Float
+  ) -> Bool {
+    setMaterialUniform(materialName, uniformName, [value])
+  }
+
+  /// Updates a named `TSL.uniform(initial, name)` on materials matching `materialName`
+  /// (or `"*"` / `""` for all materials) at 60–120 Hz without recompiling shaders.
+  @discardableResult
+  public func setMaterialUniform(
+    _ materialName: String,
+    _ uniformName: String,
+    _ value: [Float]
+  ) -> Bool {
+    let wildcard = materialName == "*" || materialName.isEmpty
+    var updated = false
+    for mi in 0..<materials.count {
+      if !wildcard && materials[mi].name != materialName { continue }
+      guard
+        let g = materials[mi].tslGraph,
+        var buf = materials[mi].tslBuffer,
+        let slot = g.uniformSlotByName[uniformName],
+        let vec4 = XRTslMaterialValidator.packUniformVec4(type: slot.type, raw: value)
+      else { continue }
+      let b = slot.slot * 4
+      buf[b] = vec4.x
+      buf[b + 1] = vec4.y
+      buf[b + 2] = vec4.z
+      buf[b + 3] = vec4.w
+      materials[mi].tslBuffer = buf
+      applyTslEvaluation(at: mi, graph: g, buffer: buf)
+      updated = true
+    }
+    if updated { flush() }
+    return updated
+  }
+
+  private func applyTslEvaluation(at mi: Int, graph: XRTslValidatedGraph, buffer: [Float]) {
+    let eval = graph.evaluateSurfaceFactors(buf68: buffer)
+    if let col = eval.baseColor {
+      materials[mi].baseColor.x = Double(col.x)
+      materials[mi].baseColor.y = Double(col.y)
+      materials[mi].baseColor.z = Double(col.z)
+    }
+    if let op = eval.opacity {
+      materials[mi].baseColor.w = Double(op)
+    }
+    if let em = eval.emissive {
+      materials[mi].emissive = SIMD3<Double>(Double(em.x), Double(em.y), Double(em.z))
+    }
+    if let rgh = eval.roughness {
+      materials[mi].roughness = Double(rgh)
+    }
+    if let met = eval.metalness {
+      materials[mi].metallic = Double(met)
+    }
+    dirtyMaterials.insert(mi)
+  }
+
   /// Whether a select trigger (`pointer/onSelect`) targets node `index` or one of its
   /// ancestors, i.e. whether tapping it can run behavior.
   public func isSelectable(_ index: Int) -> Bool {
@@ -1180,6 +1273,19 @@ public final class XRLiveRuntimeSession {
     evalCount = 0
     tick(dt)
     stepFollowAndOrbit(dt: dt, headPose: headPose, handPoses: handPoses)
+    if hasAnimatedTsl && dt.isFinite && dt > 0 {
+      let clampedDt = Float(min(dt, 0.25))
+      tslElapsedSec = XRTslMaterialValidator.safeMod(
+        tslElapsedSec + clampedDt, XRTslMaterialValidator.timePeriodSec)
+      for mi in 0..<materials.count {
+        guard let g = materials[mi].tslGraph, g.usesTime, var buf = materials[mi].tslBuffer else {
+          continue
+        }
+        buf[64] = tslElapsedSec
+        materials[mi].tslBuffer = buf
+        applyTslEvaluation(at: mi, graph: g, buffer: buf)
+      }
+    }
     flush()
   }
 

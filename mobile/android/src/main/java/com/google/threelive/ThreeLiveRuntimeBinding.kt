@@ -136,6 +136,10 @@ class ThreeLiveRuntimeBinding(private val renderer: ThreeLiveSceneRenderer, glb:
         renderer.setMaterialAlphaCutoff(materialIndex, alphaCutoff)
       }
 
+      override fun onTslUniformsChanged(materialIndex: Int, buf68: FloatArray) {
+        renderer.setMaterialTslUniforms(materialIndex, buf68)
+      }
+
       override fun onInteractivityEvent(eventId: String, payloadJson: String) {
         callbacks?.onInteractivityEvent(eventId, payloadJson)
       }
@@ -271,6 +275,14 @@ class ThreeLiveRuntimeBinding(private val renderer: ThreeLiveSceneRenderer, glb:
     }
     rootWasSet = hasRoot
   }
+
+  /** Updates a named `TSL.uniform` across both [session] and [renderer]. */
+  fun setMaterialUniform(materialName: String, uniformName: String, value: FloatArray): Boolean =
+    session.setMaterialUniform(materialName, uniformName, value)
+
+  /** Scalar convenience overload for [setMaterialUniform]. */
+  fun setMaterialUniform(materialName: String, uniformName: String, value: Float): Boolean =
+    session.setMaterialUniform(materialName, uniformName, value)
 
   /** The head (camera) pose for a renderer camera world matrix. */
   fun headPoseOf(cameraWorld: FloatArray): XRPose {
