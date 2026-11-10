@@ -5,19 +5,22 @@
  */
 
 /**
- * @fileoverview Parametric Mechanical CAD Parts Plugin (`partsPlugin` / `THREE.CAD`).
+ * @fileoverview Parametric Mechanical CAD Domain Kit (`mechanicalKitPlugin` /
+ * `THREE.Mechanical`).
  *
  * Self-contained analytic `BufferGeometry` generators for standard machine
- * elements: involute spur gears (straight & helical), internal ring gears,
- * linear racks, multi-groove pulleys, ISO metric bolts/screws (`hex`, `socket`,
- * `countersunk`, `button`), hex/flange/nyloc nuts, chamfered washers, stepped
- * CNC shafts, deep-groove ball bearings, Bishop-frame helical springs,
- * bolt-circle mounting flanges, and structural extrusions (`t-slot`, `i-beam`,
- * `c-channel`, `l-angle`, `rect-tube`).
+ * elements: involute spur gears (straight & helical), intersecting-axis bevel
+ * gears, internal ring gears, linear racks, V-belt / flat-crown / toothed
+ * timing pulleys, ISO metric bolts/screws (`hex`, `socket`, `countersunk`,
+ * `button`), hex/flange/nyloc nuts, chamfered washers, stepped CNC shafts,
+ * rigid & jaw-spider shaft couplers, deep-groove ball bearings, UCP mounted
+ * pillow-block bearings, Bishop-frame helical springs, bolt-circle mounting
+ * flanges, and structural extrusions (`t-slot`, `i-beam`, `c-channel`,
+ * `l-angle`, `rect-tube`, `round-tube`, `hex-bar`).
  *
- * NOTE: `installPartsExtension` is serialized via `Function.prototype.toString()`
+ * NOTE: `installMechanicalKit` is serialized via `Function.prototype.toString()`
  * into sandboxed Web Workers and embedded in `three-author-engine.js` for the
- * Rust/Android/iOS compiler. Keep `installPartsExtension` 100% self-contained
+ * Rust/Android/iOS compiler. Keep `installMechanicalKit` 100% self-contained
  * (no module-scoped runtime references inside its body, and no ES2022 class
  * field initializers).
  */
@@ -62,7 +65,7 @@ export interface MetricFastenerSpec {
   readonly washer: WasherOptions;
 }
 
-/** Kinematic meshing helper result returned by `THREE.CAD.gearMeshDistance`. */
+/** Kinematic meshing helper result returned by `THREE.Mechanical.gearMeshDistance`. */
 export interface GearMeshInfo {
   readonly centerDistance: number;
   readonly ratio: number;
@@ -70,7 +73,7 @@ export interface GearMeshInfo {
   valueOf(): number;
 }
 
-/** Options for `THREE.CAD.SpurGearGeometry`. */
+/** Options for `THREE.Mechanical.SpurGearGeometry`. */
 export interface SpurGearOptions {
   module?: number;
   teeth?: number;
@@ -88,7 +91,7 @@ export interface SpurGearOptions {
   profileSamples?: number;
 }
 
-/** Options for `THREE.CAD.InternalRingGearGeometry`. */
+/** Options for `THREE.Mechanical.InternalRingGearGeometry`. */
 export interface InternalRingGearOptions {
   module?: number;
   teeth?: number;
@@ -103,7 +106,7 @@ export interface InternalRingGearOptions {
   profileSamples?: number;
 }
 
-/** Options for `THREE.CAD.RackGeometry`. */
+/** Options for `THREE.Mechanical.RackGeometry`. */
 export interface RackOptions {
   module?: number;
   teeth?: number;
@@ -113,10 +116,31 @@ export interface RackOptions {
   backHeight?: number;
 }
 
-/** Options for `THREE.CAD.PulleyGeometry`. */
+/** Options for `THREE.Mechanical.BevelGearGeometry`. */
+export interface BevelGearOptions {
+  module?: number;
+  teeth?: number;
+  mateTeeth?: number;
+  coneAngleDeg?: number;
+  pressureAngleDeg?: number;
+  faceWidth?: number;
+  thickness?: number;
+  bore?: number;
+  boreRadius?: number;
+  hubRadius?: number;
+  hubLength?: number;
+  profileSamples?: number;
+}
+
+/** Belt profile style for `THREE.Mechanical.PulleyGeometry`. */
+export type PulleyProfileKind = 'v-belt' | 'flat' | 'timing';
+
+/** Options for `THREE.Mechanical.PulleyGeometry`. */
 export interface PulleyOptions {
+  profile?: PulleyProfileKind;
   pitchRadius?: number;
   width?: number;
+  teeth?: number;
   grooves?: number;
   grooveDepth?: number;
   grooveAngleDeg?: number;
@@ -129,7 +153,7 @@ export interface PulleyOptions {
   radialSegments?: number;
 }
 
-/** Options for `THREE.CAD.BoltGeometry` / `ScrewGeometry`. */
+/** Options for `THREE.Mechanical.BoltGeometry`. */
 export interface BoltOptions {
   preset?: string;
   scale?: number;
@@ -147,7 +171,7 @@ export interface BoltOptions {
   radialSegments?: number;
 }
 
-/** Options for `THREE.CAD.NutGeometry` / `HexNutGeometry`. */
+/** Options for `THREE.Mechanical.NutGeometry`. */
 export interface NutOptions {
   preset?: string;
   scale?: number;
@@ -163,7 +187,7 @@ export interface NutOptions {
   radialSegments?: number;
 }
 
-/** Options for `THREE.CAD.WasherGeometry`. */
+/** Options for `THREE.Mechanical.WasherGeometry`. */
 export interface WasherOptions {
   preset?: string;
   scale?: number;
@@ -182,7 +206,7 @@ export interface ShaftSegmentSpec {
   chamfer?: number;
 }
 
-/** Options for `THREE.CAD.ShaftGeometry`. */
+/** Options for `THREE.Mechanical.ShaftGeometry`. */
 export interface ShaftOptions {
   segments?: readonly ShaftSegmentSpec[];
   steps?: readonly ShaftSegmentSpec[];
@@ -196,7 +220,7 @@ export interface ShaftOptions {
   radialSegments?: number;
 }
 
-/** Options for `THREE.CAD.BearingGeometry`. */
+/** Options for `THREE.Mechanical.BearingGeometry`. */
 export interface BearingOptions {
   innerDiameter?: number;
   innerRadius?: number;
@@ -211,7 +235,7 @@ export interface BearingOptions {
   radialSegments?: number;
 }
 
-/** Options for `THREE.CAD.HelicalSpringGeometry`. */
+/** Options for `THREE.Mechanical.HelicalSpringGeometry`. */
 export interface HelicalSpringOptions {
   meanRadius?: number;
   wireRadius?: number;
@@ -222,7 +246,7 @@ export interface HelicalSpringOptions {
   radialSegments?: number;
 }
 
-/** Options for `THREE.CAD.FlangePlateGeometry`. */
+/** Options for `THREE.Mechanical.FlangePlateGeometry`. */
 export interface FlangePlateOptions {
   outerRadius?: number;
   thickness?: number;
@@ -240,15 +264,50 @@ export interface FlangePlateOptions {
   radialSegments?: number;
 }
 
+/** Coupling style for `THREE.Mechanical.ShaftCouplerGeometry`. */
+export type ShaftCouplerStyle = 'jaw-spider' | 'rigid-clamp';
+
+/** Options for `THREE.Mechanical.ShaftCouplerGeometry`. */
+export interface ShaftCouplerOptions {
+  style?: ShaftCouplerStyle;
+  bore1?: number;
+  bore2?: number;
+  outerDiameter?: number;
+  outerRadius?: number;
+  length?: number;
+  jaws?: number;
+  clampScrews?: boolean;
+  radialSegments?: number;
+}
+
+/** Options for `THREE.Mechanical.PillowBlockGeometry`. */
+export interface PillowBlockOptions {
+  bore?: number;
+  shaftDiameter?: number;
+  boreRadius?: number;
+  centerHeight?: number;
+  baseLength?: number;
+  baseWidth?: number;
+  baseThickness?: number;
+  housingRadius?: number;
+  housingWidth?: number;
+  boltSpacing?: number;
+  boltHoleDiameter?: number;
+  slotLength?: number;
+  radialSegments?: number;
+}
+
 /** Supported structural extrusion cross-sections. */
 export type StructuralProfileKind =
   | 't-slot'
   | 'i-beam'
   | 'c-channel'
   | 'l-angle'
-  | 'rect-tube';
+  | 'rect-tube'
+  | 'round-tube'
+  | 'hex-bar';
 
-/** Options for `THREE.CAD.ProfileExtrusionGeometry`. */
+/** Options for `THREE.Mechanical.ProfileExtrusionGeometry`. */
 export interface ProfileExtrusionOptions {
   profile?: StructuralProfileKind;
   width?: number;
@@ -257,19 +316,24 @@ export interface ProfileExtrusionOptions {
   wallThickness?: number;
   thickness?: number;
   slotWidth?: number;
+  bore?: number;
+  boreRadius?: number;
+  radialSegments?: number;
 }
 
 /**
- * Self-contained installer attaching `THREE.CAD` and standard parametric
- * machine-part `BufferGeometry` classes onto a `THREE` namespace and registry.
+ * Self-contained installer attaching `THREE.Mechanical` onto a `THREE`
+ * namespace and registry.
  */
 // tslint:disable-next-line:no-any Heterogeneous host/worker THREE and registry objects.
-export function installPartsExtension(threeNs: any, reg?: any): any {
+export function installMechanicalKit(threeNs: any, reg?: any): any {
   if (!threeNs || !threeNs.BufferGeometry || !threeNs.BufferAttribute) {
     return null;
   }
-  if (reg?.authorNamespace?.CAD?.SpurGearGeometry) {
-    return {CAD: reg.authorNamespace.CAD, ...reg.authorNamespace.CAD};
+  if (reg?.authorNamespace?.Mechanical?.SpurGearGeometry) {
+    return {
+      Mechanical: reg.authorNamespace.Mechanical,
+    };
   }
 
   const BufferGeometry = threeNs.BufferGeometry;
@@ -404,6 +468,37 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
   function translateRawY(b: RawMeshBuffers, dy: number): RawMeshBuffers {
     if (Math.abs(dy) < 1e-12) return b;
     for (let i = 1; i < b.pos.length; i += 3) b.pos[i] += dy;
+    return b;
+  }
+
+  function translateRaw(
+    b: RawMeshBuffers,
+    dx: number,
+    dy: number,
+    dz: number,
+  ): RawMeshBuffers {
+    for (let i = 0; i < b.pos.length; i += 3) {
+      b.pos[i] += dx;
+      b.pos[i + 1] += dy;
+      b.pos[i + 2] += dz;
+    }
+    return b;
+  }
+
+  // +90° rotation around +X: (x, y, z) -> (x, -z, y) (det = +1).
+  // Maps extrude2DWithHoles (u=x, y_ext, z=-v) -> (x=u, y=v, z=y_ext),
+  // and revolveClosedProfile around +Y -> revolved around +Z!
+  function rotateRawX90(b: RawMeshBuffers): RawMeshBuffers {
+    for (let i = 0; i < b.pos.length; i += 3) {
+      const py = b.pos[i + 1];
+      const pz = b.pos[i + 2];
+      b.pos[i + 1] = -pz;
+      b.pos[i + 2] = py;
+      const ny = b.nrm[i + 1];
+      const nz = b.nrm[i + 2];
+      b.nrm[i + 1] = -nz;
+      b.nrm[i + 2] = ny;
+    }
     return b;
   }
 
@@ -1798,22 +1893,398 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     }
   }
 
+  class BevelGearGeometry extends BufferGeometry {
+    constructor(options: BevelGearOptions = {}) {
+      super();
+      const mod = clamp(num(options.module, 0.01), 1e-4, 10);
+      const teeth = clampInt(options.teeth, 6, MAX_TEETH, 20);
+      const mateTeeth = clampInt(options.mateTeeth, 6, MAX_TEETH, teeth);
+      const coneRad =
+        options.coneAngleDeg != null
+          ? (clamp(num(options.coneAngleDeg, 45), 10, 80) * Math.PI) / 180
+          : Math.atan2(teeth, mateTeeth);
+      const coneAngleDeg = (coneRad * 180) / Math.PI;
+      const pressureAngleDeg = clamp(num(options.pressureAngleDeg, 20), 12, 32);
+      const samples = clampInt(
+        options.profileSamples,
+        2,
+        teeth > 80 ? 3 : 8,
+        3,
+      );
+
+      const gear = buildInvoluteGearContour(
+        mod,
+        teeth,
+        pressureAngleDeg,
+        false,
+        samples,
+      );
+      const sinC = Math.max(0.15, Math.sin(coneRad));
+      const cosC = Math.max(0.15, Math.cos(coneRad));
+      const coneDist = gear.pitchRadius / sinC;
+      const faceWidth = clamp(
+        num(
+          options.faceWidth ?? options.thickness,
+          Math.min(coneDist * 0.3, mod * 3.2),
+        ),
+        mod * 0.4,
+        coneDist * 0.52,
+      );
+      const innerScale = clamp((coneDist - faceWidth) / coneDist, 0.42, 0.94);
+      const crownH = Math.max(1e-4, faceWidth * cosC);
+      const yTop = crownH * 0.5;
+      const yMid = -crownH * 0.5;
+
+      const maxBoreR = gear.rootRadius * innerScale * 0.78;
+      const boreR = clamp(
+        pickDia(options.bore, options.boreRadius, gear.pitchRadius * 0.32) * 0.5,
+        0,
+        maxBoreR,
+      );
+      const hubR = clamp(
+        num(options.hubRadius, 0),
+        0,
+        gear.rootRadius * 0.88,
+      );
+      const hubLen = clamp(num(options.hubLength, 0), 0, crownH * 4);
+      const hasHub = hubR > boreR + mod * 0.2 && hubLen > 1e-5;
+      const yHub = yMid - hubLen;
+
+      const outerBot = sanitizeLoop(gear.loop, true);
+      const outerTop = outerBot.map(
+        (p): Pt2 => [p[0] * innerScale, p[1] * innerScale],
+      );
+      const boreSegs = clamp(Math.round(Math.max(24, teeth)), 16, 48);
+      const boreHole =
+        boreR > 1e-6
+          ? sanitizeLoop(circlePts(boreR, boreSegs, 0, 0, false), false)
+          : null;
+      const hubOuter = hasHub
+        ? sanitizeLoop(circlePts(hubR, 36, 0, 0, true), true)
+        : null;
+      const hubHole = hubOuter ? hubOuter.slice().reverse() : null;
+
+      const pos: number[] = [];
+      const nrm: number[] = [];
+      const uv: number[] = [];
+      const idx: number[] = [];
+      let vOff = 0;
+      const span = Math.max(1e-6, gear.outerRadius * 2);
+
+      const emitCap = (
+        capOuter: readonly Pt2[],
+        capHoles: readonly Pt2[][],
+        yVal: number,
+        upward: boolean,
+      ) => {
+        const {verts, tris} = triangulatePolygonWithHoles(capOuter, capHoles);
+        for (const p of verts) {
+          pos.push(p[0], yVal, -p[1]);
+          nrm.push(0, upward ? 1 : -1, 0);
+          uv.push(0.5 + p[0] / span, 0.5 + (upward ? 1 : -1) * (p[1] / span));
+        }
+        for (let i = 0; i < tris.length; i += 3) {
+          const a = tris[i];
+          const b = tris[i + 1];
+          const c = tris[i + 2];
+          if (Math.abs(cross2(verts[a], verts[b], verts[c])) > 1e-14) {
+            if (upward) idx.push(vOff + a, vOff + b, vOff + c);
+            else idx.push(vOff + a, vOff + c, vOff + b);
+          }
+        }
+        vOff += verts.length;
+      };
+
+      const emitLoftedWall = (
+        botLoop: readonly Pt2[],
+        topLoop: readonly Pt2[],
+        y0: number,
+        y1: number,
+      ) => {
+        const ln = botLoop.length;
+        let perim = 0;
+        for (let i = 0; i < ln; i++) {
+          const a0 = botLoop[i];
+          const b0 = botLoop[(i + 1) % ln];
+          const a1 = topLoop[i];
+          const b1 = topLoop[(i + 1) % ln];
+          const segLen = Math.hypot(b0[0] - a0[0], b0[1] - a0[1]);
+          if (segLen <= 1e-10) continue;
+          // Compute exact outward normal from quad triangles (v0,v1,v3) + (v0,v3,v2)
+          const x0 = a0[0], z0 = -a0[1];
+          const x1 = b0[0], z1 = -b0[1];
+          const x2 = a1[0], z2 = -a1[1];
+          const x3 = b1[0], z3 = -b1[1];
+          const dy = y1 - y0;
+          // T1 = (v1-v0) x (v3-v0), T2 = (v3-v0) x (v2-v0)
+          const e1x = x1 - x0, e1z = z1 - z0;
+          const d3x = x3 - x0, d3z = z3 - z0;
+          const e2x = x2 - x0, e2z = z2 - z0;
+          const n1x = -e1z * dy;
+          const n1y = e1z * d3x - e1x * d3z;
+          const n1z = e1x * dy;
+          const c2x = dy * (e2z - d3z);
+          const c2y = d3z * e2x - d3x * e2z;
+          const c2z = dy * (d3x - e2x);
+          const nx = n1x + c2x;
+          const ny = n1y + c2y;
+          const nz = n1z + c2z;
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          const ux = nx / nl, uy = ny / nl, uz = nz / nl;
+
+          const u0 = perim;
+          perim += segLen;
+          const base = vOff;
+          pos.push(x0, y0, z0, x1, y0, z1, x2, y1, z2, x3, y1, z3);
+          nrm.push(ux, uy, uz, ux, uy, uz, ux, uy, uz, ux, uy, uz);
+          uv.push(u0, 0, perim, 0, u0, 1, perim, 1);
+          idx.push(base, base + 1, base + 3, base, base + 3, base + 2);
+          vOff += 4;
+        }
+      };
+
+      emitCap(outerTop, boreHole ? [boreHole] : [], yTop, true);
+      emitCap(
+        outerBot,
+        hubHole ? [hubHole] : boreHole ? [boreHole] : [],
+        yMid,
+        false,
+      );
+      if (hubOuter) {
+        emitCap(hubOuter, boreHole ? [boreHole] : [], yHub, false);
+        emitLoftedWall(hubOuter, hubOuter, yHub, yMid);
+      }
+      emitLoftedWall(outerBot, outerTop, yMid, yTop);
+      if (boreHole) {
+        emitLoftedWall(boreHole, boreHole, hasHub ? yHub : yMid, yTop);
+      }
+
+      applyBuffers(this, {pos, nrm, uv, idx}, 'BevelGearGeometry', {
+        module: mod,
+        teeth,
+        mateTeeth,
+        coneAngleDeg,
+        pressureAngleDeg,
+        faceWidth,
+        crownHeight: crownH,
+        bore: boreR * 2,
+        pitchRadius: gear.pitchRadius,
+        smallPitchRadius: gear.pitchRadius * innerScale,
+        outerRadius: gear.outerRadius,
+        hubRadius: hasHub ? hubR : 0,
+        hubLength: hasHub ? hubLen : 0,
+      });
+    }
+  }
+
   class PulleyGeometry extends BufferGeometry {
     constructor(options: PulleyOptions = {}) {
       super();
+      const profile: PulleyProfileKind = options.profile ?? 'v-belt';
       const pitchR = clamp(num(options.pitchRadius, 0.06), 0.004, 10);
       const grooves = clampInt(options.grooves, 1, 16, 1);
-      const width = clamp(num(options.width, 0.018 * grooves + 0.008), 0.003, 10);
+      const width = clamp(
+        num(
+          options.width,
+          profile === 'v-belt' ? 0.018 * grooves + 0.008 : 0.022,
+        ),
+        0.003,
+        10,
+      );
       const flangeH = clamp(
         options.flangeHeight != null
           ? num(options.flangeHeight, pitchR * 0.08)
           : options.flangeRadius != null
             ? num(options.flangeRadius, pitchR * 1.08) - pitchR
             : pitchR * 0.08,
-        0.001,
+        profile === 'flat' ? 0 : 0.001,
         pitchR * 0.5,
       );
       const outerR = pitchR + flangeH;
+      const radialSegs = clampInt(options.radialSegments, 12, MAX_RAD_SEGS, 48);
+
+      if (profile === 'timing') {
+        const teeth = clampInt(
+          options.teeth,
+          8,
+          MAX_TEETH,
+          clamp(Math.round((TAU * pitchR) / 0.005), 14, 72),
+        );
+        const toothPitch = (TAU * pitchR) / teeth;
+        const tDepth = clamp(
+          num(options.grooveDepth, toothPitch * 0.38),
+          toothPitch * 0.15,
+          Math.min(pitchR * 0.35, toothPitch * 0.6),
+        );
+        const rTip = pitchR;
+        const rRoot = Math.max(0.002, rTip - tDepth);
+        const boreR = clamp(
+          pickDia(options.bore, options.boreRadius, rRoot * 0.36) * 0.5,
+          0,
+          rRoot * 0.78,
+        );
+        const hubR = clamp(
+          num(options.hubRadius, Math.max(boreR * 1.65, rRoot * 0.55)),
+          boreR + 0.001,
+          rRoot * 0.92,
+        );
+        const hubW = clamp(
+          num(options.hubWidth, width * 1.3),
+          width,
+          width * 3,
+        );
+        const hW = width * 0.5;
+        const hHub = hubW * 0.5;
+        const flangeT = Math.min(width * 0.14, 0.0035);
+        const eps = Math.min(8e-5, width * 0.01);
+        const beltW = Math.max(width * 0.5, width - 2 * flangeT - 2 * eps);
+
+        // Synchronous GT2/HTD toothed outer contour
+        const stepAng = TAU / teeth;
+        const loop: Pt2[] = [];
+        for (let i = 0; i < teeth; i++) {
+          const baseA = i * stepAng;
+          const a0 = baseA + stepAng * 0.08;
+          const a1 = baseA + stepAng * 0.22;
+          const a2 = baseA + stepAng * 0.52;
+          const a3 = baseA + stepAng * 0.66;
+          loop.push(
+            [rTip * Math.cos(a0), rTip * Math.sin(a0)],
+            [rRoot * Math.cos(a1), rRoot * Math.sin(a1)],
+            [rRoot * Math.cos(a2), rRoot * Math.sin(a2)],
+            [rTip * Math.cos(a3), rTip * Math.sin(a3)],
+          );
+        }
+        const holes =
+          boreR > 1e-6 ? [circlePts(boreR, radialSegs, 0, 0, false)] : [];
+        const parts: RawMeshBuffers[] = [
+          extrude2DWithHoles(loop, holes, beltW),
+        ];
+
+        const yFlangeIn = beltW * 0.5 + eps;
+        const yFlangeOut = Math.max(yFlangeIn + 5e-4, hW);
+        // Bottom retaining flange (+ lower hub extension if hubW > width)
+        const botFlange: Pt2[] =
+          hHub > yFlangeOut + 1e-5
+            ? [
+                [boreR, -hHub],
+                [hubR, -hHub],
+                [hubR, -yFlangeOut],
+                [outerR, -yFlangeOut],
+                [outerR, -yFlangeIn],
+                [boreR, -yFlangeIn],
+              ]
+            : [
+                [boreR, -yFlangeOut],
+                [outerR, -yFlangeOut],
+                [outerR, -yFlangeIn],
+                [boreR, -yFlangeIn],
+              ];
+        const topFlange: Pt2[] =
+          hHub > yFlangeOut + 1e-5
+            ? [
+                [boreR, yFlangeIn],
+                [outerR, yFlangeIn],
+                [outerR, yFlangeOut],
+                [hubR, yFlangeOut],
+                [hubR, hHub],
+                [boreR, hHub],
+              ]
+            : [
+                [boreR, yFlangeIn],
+                [outerR, yFlangeIn],
+                [outerR, yFlangeOut],
+                [boreR, yFlangeOut],
+              ];
+        parts.push(
+          revolveClosedProfile(botFlange, radialSegs),
+          revolveClosedProfile(topFlange, radialSegs),
+        );
+
+        applyBuffers(this, mergeRaw(parts), 'PulleyGeometry', {
+          profile,
+          teeth,
+          pitchRadius: pitchR,
+          outerRadius: outerR,
+          width,
+          grooveDepth: tDepth,
+          bore: boreR * 2,
+          hubRadius: hubR,
+          hubWidth: hubW,
+        });
+        return;
+      }
+
+      if (profile === 'flat') {
+        const boreR = clamp(
+          pickDia(options.bore, options.boreRadius, pitchR * 0.25) * 0.5,
+          0,
+          pitchR * 0.78,
+        );
+        const hubR = clamp(
+          num(options.hubRadius, Math.max(boreR * 1.7, pitchR * 0.36)),
+          boreR + 0.001,
+          pitchR * 0.88,
+        );
+        const hubW = clamp(
+          num(options.hubWidth, width * 1.2),
+          width * 0.6,
+          width * 3,
+        );
+        const hW = width * 0.5;
+        const hHub = hubW * 0.5;
+        const crown = Math.min(pitchR * 0.04, width * 0.045);
+        const rimEdgeR = pitchR - crown * 0.5;
+        const rimMidR = pitchR + crown * 0.5;
+        const flangeT = flangeH > 1e-4 ? Math.min(width * 0.12, 0.0035) : 0;
+        const recessR =
+          rimEdgeR - Math.max(0.002, (rimEdgeR - hubR) * 0.28);
+        const hasWebRecess = recessR > hubR + 0.002 && width > 0.01;
+        const webHalfT = width * 0.24;
+
+        const pts: Pt2[] = [[boreR, -hHub], [hubR, -hHub]];
+        if (hasWebRecess) {
+          pts.push([hubR, -webHalfT], [recessR, -webHalfT], [recessR, -hW]);
+        } else if (Math.abs(hHub - hW) > 1e-6) {
+          pts.push([hubR, -hW]);
+        }
+        if (flangeT > 0) {
+          pts.push(
+            [outerR, -hW],
+            [outerR, -hW + flangeT],
+            [rimEdgeR, -hW + flangeT],
+            [rimMidR, 0],
+            [rimEdgeR, hW - flangeT],
+            [outerR, hW - flangeT],
+            [outerR, hW],
+          );
+        } else {
+          pts.push([rimEdgeR, -hW], [rimMidR, 0], [rimEdgeR, hW]);
+        }
+        if (hasWebRecess) {
+          pts.push([recessR, hW], [recessR, webHalfT], [hubR, webHalfT]);
+        } else if (Math.abs(hHub - hW) > 1e-6) {
+          pts.push([hubR, hW]);
+        }
+        pts.push([hubR, hHub], [boreR, hHub]);
+
+        applyBuffers(
+          this,
+          revolveClosedProfile(pts, radialSegs),
+          'PulleyGeometry',
+          {
+            profile,
+            pitchRadius: pitchR,
+            outerRadius: flangeT > 0 ? outerR : rimMidR,
+            width,
+            bore: boreR * 2,
+            hubRadius: hubR,
+            hubWidth: hubW,
+          },
+        );
+        return;
+      }
+
       const gDepth = clamp(
         num(options.grooveDepth, Math.min(pitchR * 0.22, (width / grooves) * 0.65)),
         0.001,
@@ -1831,7 +2302,6 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
         (outerR - gDepth) * 0.9,
       );
       const hubW = clamp(num(options.hubWidth, width * 1.25), width * 0.6, width * 3);
-      const radialSegs = clampInt(options.radialSegments, 12, MAX_RAD_SEGS, 48);
 
       const hW = width * 0.5;
       const hHub = hubW * 0.5;
@@ -1874,6 +2344,7 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
         revolveClosedProfile(pts, radialSegs),
         'PulleyGeometry',
         {
+          profile,
           pitchRadius: pitchR,
           outerRadius: outerR,
           width,
@@ -2719,6 +3190,421 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     }
   }
 
+  class ShaftCouplerGeometry extends BufferGeometry {
+    constructor(options: ShaftCouplerOptions = {}) {
+      super();
+      const style: ShaftCouplerStyle =
+        options.style === 'rigid-clamp' ? 'rigid-clamp' : 'jaw-spider';
+      const d1 = clamp(num(options.bore1, 0.012), 0.002, 2);
+      const d2 = clamp(num(options.bore2, d1), 0.002, 2);
+      const maxBore = Math.max(d1, d2);
+      const od = Math.max(
+        maxBore * 1.85,
+        clamp(
+          pickDia(options.outerDiameter, options.outerRadius, maxBore * 2.5),
+          0.006,
+          5,
+        ),
+      );
+      const rOut = od * 0.5;
+      const rB1 = Math.min(d1 * 0.5, rOut * 0.72);
+      const rB2 = Math.min(d2 * 0.5, rOut * 0.72);
+      const length = clamp(num(options.length, od * 1.4), od * 0.6, 10);
+      const hL = length * 0.5;
+      const radialSegs = clampInt(options.radialSegments, 16, MAX_RAD_SEGS, 36);
+      const eps = Math.min(8e-5, length * 0.004);
+      const parts: RawMeshBuffers[] = [];
+
+      if (style === 'rigid-clamp') {
+        const waistHalf = length * 0.1;
+        const collarH = hL - waistHalf - eps;
+        const buildSplitCollar = (rBore: number, yCenter: number) => {
+          const slotHalf = Math.min(rBore * 0.32, (rOut - rBore) * 0.35);
+          const xIn = Math.sqrt(Math.max(1e-8, rBore * rBore - slotHalf * slotHalf));
+          const xOut = Math.sqrt(Math.max(1e-8, rOut * rOut - slotHalf * slotHalf));
+          const angOut = Math.atan2(slotHalf, xOut);
+          const angIn = Math.atan2(slotHalf, xIn);
+          const loop: Pt2[] = [
+            [xIn, slotHalf],
+            [xOut, slotHalf],
+          ];
+          for (let i = 1; i < radialSegs; i++) {
+            const a = angOut + ((TAU - 2 * angOut) * i) / radialSegs;
+            loop.push([rOut * Math.cos(a), rOut * Math.sin(a)]);
+          }
+          loop.push([xOut, -slotHalf], [xIn, -slotHalf]);
+          for (let i = 1; i < radialSegs; i++) {
+            const a = TAU - angIn - ((TAU - 2 * angIn) * i) / radialSegs;
+            loop.push([rBore * Math.cos(a), rBore * Math.sin(a)]);
+          }
+          return translateRawY(extrude2DWithHoles(loop, [], collarH), yCenter);
+        };
+        parts.push(
+          buildSplitCollar(rB1, -waistHalf - eps - collarH * 0.5),
+          buildSplitCollar(rB2, waistHalf + eps + collarH * 0.5),
+          // Unslotted recessed center bridge ring connecting lower & upper clamp halves
+          revolveClosedProfile(
+            [
+              [Math.max(rB1, rB2), -waistHalf],
+              [rOut * 0.88, -waistHalf],
+              [rOut * 0.88, waistHalf],
+              [Math.max(rB1, rB2), waistHalf],
+            ],
+            radialSegs,
+          ),
+        );
+        if (options.clampScrews !== false) {
+          // Two socket-head clamp screw caps proud on +Z flank of upper & lower clamp ears
+          const screwR = Math.min(collarH * 0.28, (rOut - Math.max(rB1, rB2)) * 0.32);
+          const screwX = 0.52 * (Math.max(rB1, rB2) + rOut);
+          const zStart = Math.sqrt(Math.max(0, rOut * rOut - screwX * screwX)) + eps;
+          const cap = rotateRawX90(
+            revolveClosedProfile(
+              [
+                [0, 0],
+                [screwR, 0],
+                [screwR, screwR * 1.1],
+                [screwR * 0.45, screwR * 1.1],
+                [screwR * 0.45, screwR * 0.55],
+                [0, screwR * 0.55],
+              ],
+              16,
+            ),
+          );
+          for (const yc of [
+            -waistHalf - eps - collarH * 0.5,
+            waistHalf + eps + collarH * 0.5,
+          ]) {
+            parts.push(
+              translateRaw(
+                {
+                  pos: cap.pos.slice(),
+                  nrm: cap.nrm.slice(),
+                  uv: cap.uv.slice(),
+                  idx: cap.idx.slice(),
+                },
+                screwX,
+                yc,
+                zStart,
+              ),
+            );
+          }
+        }
+      } else {
+        // 'jaw-spider': 2 interlocking multi-jaw metal hubs + central elastomer spider
+        const nJaws = clampInt(options.jaws, 2, 8, 3);
+        const jawHalf = length * 0.2;
+        const hubEndY = jawHalf + eps;
+        const ch = Math.min((rOut - Math.max(rB1, rB2)) * 0.18, (hL - hubEndY) * 0.25);
+
+        // Bottom hub (-hL .. -hubEndY) and top hub (+hubEndY .. +hL)
+        parts.push(
+          revolveClosedProfile(
+            [
+              [rB1, -hL],
+              [rOut - ch, -hL],
+              [rOut, -hL + ch],
+              [rOut, -hubEndY],
+              [rB1, -hubEndY],
+            ],
+            radialSegs,
+          ),
+          revolveClosedProfile(
+            [
+              [rB2, hubEndY],
+              [rOut, hubEndY],
+              [rOut, hL - ch],
+              [rOut - ch, hL],
+              [rB2, hL],
+            ],
+            radialSegs,
+          ),
+        );
+
+        const rJawIn = Math.max(Math.max(rB1, rB2) + (rOut - Math.max(rB1, rB2)) * 0.28, rOut * 0.48);
+        const pitchAng = TAU / nJaws;
+        const jawSpan = pitchAng * 0.28;
+        const jawLen = 2 * jawHalf - eps;
+        const buildJawSector = (a0: number, a1: number): Pt2[] => {
+          const segs = 6;
+          const pts: Pt2[] = [];
+          for (let s = segs; s >= 0; s--) {
+            const a = a0 + ((a1 - a0) * s) / segs;
+            pts.push([rJawIn * Math.cos(a), rJawIn * Math.sin(a)]);
+          }
+          for (let s = 0; s <= segs; s++) {
+            const a = a0 + ((a1 - a0) * s) / segs;
+            pts.push([rOut * Math.cos(a), rOut * Math.sin(a)]);
+          }
+          return pts;
+        };
+
+        for (let k = 0; k < nJaws; k++) {
+          const cBot = k * pitchAng;
+          parts.push(
+            translateRawY(
+              extrude2DWithHoles(
+                buildJawSector(cBot - jawSpan * 0.5, cBot + jawSpan * 0.5),
+                [],
+                jawLen,
+              ),
+              -eps * 0.5,
+            ),
+          );
+          const cTop = cBot + pitchAng * 0.5;
+          parts.push(
+            translateRawY(
+              extrude2DWithHoles(
+                buildJawSector(cTop - jawSpan * 0.5, cTop + jawSpan * 0.5),
+                [],
+                jawLen,
+              ),
+              eps * 0.5,
+            ),
+          );
+        }
+
+        // Elastomer spider star occupying center ring + 2*nJaws radial lobes between jaws
+        const nLobes = nJaws * 2;
+        const lobePitch = TAU / nLobes;
+        const lobeHalf = Math.max(0.03, (lobePitch - jawSpan) * 0.38);
+        const rSpiderRing = rJawIn - Math.max(eps * 2, (rOut - rJawIn) * 0.08);
+        const rSpiderTip = rOut * 0.98;
+        const rSpiderBore = Math.min(Math.max(rB1, rB2) * 0.95, rSpiderRing * 0.72);
+        const spiderOuter: Pt2[] = [];
+        for (let k = 0; k < nLobes; k++) {
+          const cLobe = (k + 0.5) * lobePitch;
+          const aPrev = k * lobePitch + jawSpan * 0.52;
+          const a0 = cLobe - lobeHalf;
+          const a1 = cLobe + lobeHalf;
+          const aNext = (k + 1) * lobePitch - jawSpan * 0.52;
+          spiderOuter.push(
+            [rSpiderRing * Math.cos(aPrev), rSpiderRing * Math.sin(aPrev)],
+            [rSpiderRing * Math.cos(a0), rSpiderRing * Math.sin(a0)],
+            [rSpiderTip * Math.cos(a0), rSpiderTip * Math.sin(a0)],
+            [rSpiderTip * Math.cos(cLobe), rSpiderTip * Math.sin(cLobe)],
+            [rSpiderTip * Math.cos(a1), rSpiderTip * Math.sin(a1)],
+            [rSpiderRing * Math.cos(a1), rSpiderRing * Math.sin(a1)],
+            [rSpiderRing * Math.cos(aNext), rSpiderRing * Math.sin(aNext)],
+          );
+        }
+        const spiderHoles =
+          rSpiderBore > 1e-5
+            ? [circlePts(rSpiderBore, 24, 0, 0, false)]
+            : [];
+        parts.push(
+          extrude2DWithHoles(
+            spiderOuter,
+            spiderHoles,
+            Math.max(1e-4, 2 * jawHalf - 3 * eps),
+          ),
+        );
+      }
+
+      applyBuffers(this, mergeRaw(parts), 'ShaftCouplerGeometry', {
+        style,
+        bore1: rB1 * 2,
+        bore2: rB2 * 2,
+        outerDiameter: od,
+        length,
+      });
+    }
+  }
+
+  class PillowBlockGeometry extends BufferGeometry {
+    constructor(options: PillowBlockOptions = {}) {
+      super();
+      const boreDia = clamp(
+        pickDia(
+          options.bore ?? options.shaftDiameter,
+          options.boreRadius,
+          0.02,
+        ),
+        0.004,
+        2,
+      );
+      const boreR = boreDia * 0.5;
+      const outerRaceR = boreR * 1.62;
+      const housingR = Math.max(
+        outerRaceR * 1.28,
+        clamp(num(options.housingRadius, boreR * 2.25), outerRaceR * 1.25, 4),
+      );
+      const baseT = clamp(
+        num(options.baseThickness, boreDia * 0.65),
+        boreDia * 0.25,
+        housingR * 1.2,
+      );
+      const centerH = Math.max(
+        baseT + housingR * 0.88,
+        clamp(
+          num(options.centerHeight, boreDia * 1.66),
+          baseT + outerRaceR * 1.18,
+          6,
+        ),
+      );
+      const baseL = Math.max(
+        housingR * 4.6,
+        clamp(num(options.baseLength, boreDia * 6.2), housingR * 4.6, 12),
+      );
+      const baseW = clamp(
+        num(options.baseWidth, boreDia * 1.9),
+        boreDia * 0.8,
+        6,
+      );
+      const housingW = clamp(
+        num(options.housingWidth, baseW * 0.8),
+        baseW * 0.35,
+        baseW * 0.96,
+      );
+      const radialSegs = clampInt(options.radialSegments, 16, MAX_RAD_SEGS, 32);
+      const eps = Math.min(8e-5, baseT * 0.01);
+
+      // 1. Slotted cast-iron mounting base plate (y in [0, baseT])
+      const hBL = baseL * 0.5;
+      const hBW = baseW * 0.5;
+      const cr = Math.min(hBW * 0.35, hBL * 0.12);
+      const baseOuter: Pt2[] = [];
+      const cornerSpecs: ReadonlyArray<[number, number, number]> = [
+        [hBL - cr, -hBW + cr, -Math.PI * 0.5],
+        [hBL - cr, hBW - cr, 0],
+        [-hBL + cr, hBW - cr, Math.PI * 0.5],
+        [-hBL + cr, -hBW + cr, Math.PI],
+      ];
+      for (const [cx, cy, aStart] of cornerSpecs) {
+        for (let s = 0; s <= 4; s++) {
+          const a = aStart + (s * Math.PI * 0.5) / 4;
+          baseOuter.push([cx + cr * Math.cos(a), cy + cr * Math.sin(a)]);
+        }
+      }
+
+      const pedHalfW = Math.min(hBL * 0.56, housingR * 1.22);
+      const boltX = clamp(
+        num(options.boltSpacing, baseL * 0.76) * 0.5,
+        pedHalfW + boreDia * 0.35,
+        hBL * 0.84,
+      );
+      const maxSlotSpanX = Math.max(
+        1e-4,
+        Math.min((hBL - boltX) * 0.72, (boltX - pedHalfW) * 0.72),
+      );
+      const slotR = clamp(
+        num(options.boltHoleDiameter, boreDia * 0.5) * 0.5,
+        1e-4,
+        Math.min(hBW * 0.58, maxSlotSpanX * 0.85),
+      );
+      const slotTravel = clamp(
+        num(options.slotLength, slotR * 3) * 0.5 - slotR,
+        0,
+        Math.max(0, maxSlotSpanX - slotR),
+      );
+      const baseHoles: Pt2[][] = [];
+      if (slotR > 1e-4) {
+        for (const sgn of [-1, 1]) {
+          const cx = sgn * boltX;
+          const slotPts: Pt2[] = [];
+          for (let s = 0; s <= 6; s++) {
+            const a = -Math.PI * 0.5 + (s * Math.PI) / 6;
+            slotPts.push([
+              cx + slotTravel + slotR * Math.cos(a),
+              slotR * Math.sin(a),
+            ]);
+          }
+          for (let s = 0; s <= 6; s++) {
+            const a = Math.PI * 0.5 + (s * Math.PI) / 6;
+            slotPts.push([
+              cx - slotTravel + slotR * Math.cos(a),
+              slotR * Math.sin(a),
+            ]);
+          }
+          baseHoles.push(slotPts);
+        }
+      }
+      const baseMesh = translateRawY(
+        extrude2DWithHoles(baseOuter, baseHoles, baseT),
+        baseT * 0.5,
+      );
+
+      // 2. Arching cast pedestal housing (extruded along Z in [-housingW/2, +housingW/2])
+      const yPedBot = baseT + eps;
+      const archStartAng = -0.22;
+      const archEndAng = Math.PI + 0.22;
+      const pedOuter: Pt2[] = [
+        [-pedHalfW, yPedBot],
+        [pedHalfW, yPedBot],
+      ];
+      const archSegs = Math.max(20, radialSegs);
+      for (let s = 0; s <= archSegs; s++) {
+        const a = archStartAng + ((archEndAng - archStartAng) * s) / archSegs;
+        pedOuter.push([
+          housingR * Math.cos(a),
+          centerH + housingR * Math.sin(a),
+        ]);
+      }
+      const rSeat = outerRaceR + eps;
+      const pedHole = circlePts(rSeat, radialSegs, 0, centerH, false);
+      const pedMesh = rotateRawX90(
+        extrude2DWithHoles(pedOuter, [pedHole], housingW),
+      );
+
+      // 3. Self-aligning wide-inner-ring bearing insert along Z shaft axis
+      const hInsOut = housingW * 0.45;
+      const hInsIn = housingW * 0.68;
+      const rCollar = boreR + (outerRaceR - boreR) * 0.38;
+      const insertMesh = translateRaw(
+        rotateRawX90(
+          revolveClosedProfile(
+            [
+              [boreR, -hInsIn],
+              [rCollar, -hInsIn],
+              [rCollar, -hInsOut],
+              [outerRaceR * 0.96, -hInsOut],
+              [outerRaceR, 0],
+              [outerRaceR * 0.96, hInsOut],
+              [rCollar, hInsOut],
+              [rCollar, hInsIn],
+              [boreR, hInsIn],
+            ],
+            radialSegs,
+          ),
+        ),
+        0,
+        centerH,
+        0,
+      );
+
+      // 4. Top grease zerk fitting on housing crown
+      const zerkR = Math.max(0.0012, housingR * 0.11);
+      const zerkY = centerH + housingR + eps;
+      const zerkMesh = revolveClosedProfile(
+        [
+          [0, zerkY],
+          [zerkR, zerkY],
+          [zerkR, zerkY + zerkR * 0.9],
+          [zerkR * 0.55, zerkY + zerkR * 1.4],
+          [zerkR * 0.72, zerkY + zerkR * 2.0],
+          [0, zerkY + zerkR * 2.3],
+        ],
+        14,
+      );
+
+      applyBuffers(
+        this,
+        mergeRaw([baseMesh, pedMesh, insertMesh, zerkMesh]),
+        'PillowBlockGeometry',
+        {
+          bore: boreDia,
+          centerHeight: centerH,
+          baseLength: baseL,
+          baseWidth: baseW,
+          baseThickness: baseT,
+          housingRadius: housingR,
+          housingWidth: housingW,
+          boltSpacing: boltX * 2,
+        },
+      );
+    }
+  }
+
   class ProfileExtrusionGeometry extends BufferGeometry {
     constructor(options: ProfileExtrusionOptions = {}) {
       super();
@@ -2787,6 +3673,37 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
           [hw - t, hh - t],
           [hw - t, -hh + t],
         ]);
+      } else if (profile === 'round-tube') {
+        const radialSegs = clampInt(
+          options.radialSegments,
+          12,
+          MAX_RAD_SEGS,
+          36,
+        );
+        outer = circlePts(hw, radialSegs, 0, 0, true);
+        const explicitBore =
+          options.bore != null || options.boreRadius != null
+            ? clamp(pickDia(options.bore, options.boreRadius, 0) * 0.5, 0, hw * 0.94)
+            : Math.max(0, hw - t);
+        if (explicitBore > 1e-5) {
+          holes.push(circlePts(explicitBore, radialSegs, 0, 0, false));
+        }
+      } else if (profile === 'hex-bar') {
+        outer = hexPts(w, true);
+        const boreR = clamp(
+          pickDia(options.bore, options.boreRadius, 0) * 0.5,
+          0,
+          w * 0.44,
+        );
+        if (boreR > 1e-5) {
+          const radialSegs = clampInt(
+            options.radialSegments,
+            12,
+            MAX_RAD_SEGS,
+            28,
+          );
+          holes.push(circlePts(boreR, radialSegs, 0, 0, false));
+        }
       } else {
         // 't-slot' (e.g. 2020 / 4040 aluminum profile with 4 undercut T-slots + center tap bore)
         const slotW = clamp(
@@ -2862,7 +3779,7 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     }
   }
 
-  const CAD = {
+  const Mechanical = {
     MAX_PART_TEETH: MAX_TEETH,
     MAX_PART_RADIAL_SEGMENTS: MAX_RAD_SEGS,
     MAX_PART_COILS: MAX_COILS,
@@ -2870,16 +3787,17 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     metricFastener,
     gearMeshDistance,
     SpurGearGeometry,
+    BevelGearGeometry,
     InternalRingGearGeometry,
     RackGeometry,
     PulleyGeometry,
     BoltGeometry,
-    ScrewGeometry: BoltGeometry,
     NutGeometry,
-    HexNutGeometry: NutGeometry,
     WasherGeometry,
     ShaftGeometry,
+    ShaftCouplerGeometry,
     BearingGeometry,
+    PillowBlockGeometry,
     HelicalSpringGeometry,
     FlangePlateGeometry,
     ProfileExtrusionGeometry,
@@ -2887,6 +3805,7 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
 
   for (const Ctor of [
     SpurGearGeometry,
+    BevelGearGeometry,
     InternalRingGearGeometry,
     RackGeometry,
     PulleyGeometry,
@@ -2894,7 +3813,9 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     NutGeometry,
     WasherGeometry,
     ShaftGeometry,
+    ShaftCouplerGeometry,
     BearingGeometry,
+    PillowBlockGeometry,
     HelicalSpringGeometry,
     FlangePlateGeometry,
     ProfileExtrusionGeometry,
@@ -2907,14 +3828,13 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     }
   }
   try {
-    Object.freeze(CAD);
+    Object.freeze(Mechanical);
   } catch {
     // Ignore if host environment disallows freezing.
   }
 
   const exportsMap = {
-    CAD,
-    ...CAD,
+    Mechanical,
   };
 
   if (reg && typeof reg === 'object') {
@@ -2924,7 +3844,7 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
     Object.assign(reg.authorNamespace, exportsMap);
   } else {
     try {
-      threeNs.CAD = CAD;
+      threeNs.Mechanical = Mechanical;
     } catch {
       // Frozen THREE proxy resolves via reg.authorNamespace.
     }
@@ -2934,13 +3854,14 @@ export function installPartsExtension(threeNs: any, reg?: any): any {
 }
 
 /**
- * `<three-live>` and `<xr-live>` plugin registering parametric mechanical CAD
- * machine-part geometries (`THREE.CAD.*`) onto `THREE` and worker sandboxes.
+ * `<three-live>` and `<xr-live>` domain kit plugin registering parametric
+ * mechanical machine-part geometries (`THREE.Mechanical.*`) onto `THREE`
+ * and worker sandboxes.
  */
-export const partsPlugin: ThreeLivePlugin = {
-  name: 'parts',
+export const mechanicalKitPlugin: ThreeLivePlugin = {
+  name: 'kit-mechanical',
   onRegister(): void {
-    registerWorkerExtensionInstaller(installPartsExtension);
+    registerWorkerExtensionInstaller(installMechanicalKit);
     const reg = getSharedRegistry();
     const threeNs =
       reg.threeNamespace ??
@@ -2948,7 +3869,7 @@ export const partsPlugin: ThreeLivePlugin = {
         ? (globalThis as Record<string, unknown>)['THREE']
         : undefined);
     if (threeNs) {
-      installPartsExtension(threeNs, reg);
+      installMechanicalKit(threeNs, reg);
     }
   },
 };

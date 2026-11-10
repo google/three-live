@@ -5,47 +5,52 @@
  */
 
 /**
- * @fileoverview Parametric Mechanical CAD Parts plugin bundle for `<three-live>`
- * and `<xr-live>` (`three-live-parts.min.js`).
+ * @fileoverview Parametric Mechanical domain kit bundle for `<three-live>`
+ * and `<xr-live>` (`three-live-kit-mechanical.min.js` / `three-live/kits/mechanical`).
  */
 
 import {registerPlugin} from './plugin';
 import {
   type BearingOptions,
+  type BevelGearOptions,
   type BoltOptions,
   type FlangePlateOptions,
   type GearMeshInfo,
   type HelicalSpringOptions,
-  installPartsExtension,
+  installMechanicalKit,
   type InternalRingGearOptions,
   MAX_PART_COILS,
   MAX_PART_HOLES,
   MAX_PART_RADIAL_SEGMENTS,
   MAX_PART_TEETH,
+  mechanicalKitPlugin,
   type MetricFastenerSpec,
   type NutOptions,
-  partsPlugin,
+  type PillowBlockOptions,
   type ProfileExtrusionOptions,
   type PulleyOptions,
+  type PulleyProfileKind,
   type RackOptions,
+  type ShaftCouplerOptions,
+  type ShaftCouplerStyle,
   type ShaftOptions,
   type ShaftSegmentSpec,
   type SpurGearOptions,
   type StructuralProfileKind,
   type WasherOptions,
-} from './plugins/parts';
+} from './kits/mechanical';
 
-// Auto-register Mechanical Parts plugin
-registerPlugin(partsPlugin);
+registerPlugin(mechanicalKitPlugin);
 
 export {
-  installPartsExtension,
+  installMechanicalKit,
   MAX_PART_COILS,
   MAX_PART_HOLES,
   MAX_PART_RADIAL_SEGMENTS,
   MAX_PART_TEETH,
-  partsPlugin,
+  mechanicalKitPlugin,
   type BearingOptions,
+  type BevelGearOptions,
   type BoltOptions,
   type FlangePlateOptions,
   type GearMeshInfo,
@@ -53,9 +58,13 @@ export {
   type InternalRingGearOptions,
   type MetricFastenerSpec,
   type NutOptions,
+  type PillowBlockOptions,
   type ProfileExtrusionOptions,
   type PulleyOptions,
+  type PulleyProfileKind,
   type RackOptions,
+  type ShaftCouplerOptions,
+  type ShaftCouplerStyle,
   type ShaftOptions,
   type ShaftSegmentSpec,
   type SpurGearOptions,

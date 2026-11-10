@@ -120,13 +120,14 @@ export {
   resolveViewerBloom,
 } from './three-live/src/plugins/postprocessing';
 export {
-  installPartsExtension,
+  installMechanicalKit,
   MAX_PART_COILS,
   MAX_PART_HOLES,
   MAX_PART_RADIAL_SEGMENTS,
   MAX_PART_TEETH,
-  partsPlugin,
+  mechanicalKitPlugin,
   type BearingOptions,
+  type BevelGearOptions,
   type BoltOptions,
   type FlangePlateOptions,
   type GearMeshInfo,
@@ -134,15 +135,19 @@ export {
   type InternalRingGearOptions,
   type MetricFastenerSpec,
   type NutOptions,
+  type PillowBlockOptions,
   type ProfileExtrusionOptions,
   type PulleyOptions,
+  type PulleyProfileKind,
   type RackOptions,
+  type ShaftCouplerOptions,
+  type ShaftCouplerStyle,
   type ShaftOptions,
   type ShaftSegmentSpec,
   type SpurGearOptions,
   type StructuralProfileKind,
   type WasherOptions,
-} from './three-live/src/plugins/parts';
+} from './three-live/src/kits/mechanical';
 export {
   installProceduralExtension,
   proceduralPlugin,

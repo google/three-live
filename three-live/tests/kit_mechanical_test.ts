@@ -13,13 +13,13 @@
 // limitations under the License.
 
 import {
-  installPartsExtension,
+  installMechanicalKit,
   MAX_PART_COILS,
   MAX_PART_HOLES,
   MAX_PART_RADIAL_SEGMENTS,
   MAX_PART_TEETH,
-  partsPlugin,
-} from '../src/parts';
+  mechanicalKitPlugin,
+} from '../src/kit-mechanical';
 import {
   BufferAttribute,
   BufferGeometry,
@@ -31,6 +31,7 @@ import {
   THREE,
   Vector3,
 } from '../src/three-author';
+import {getSharedRegistry} from '../src/plugin';
 import {parseGLB} from '../src/three-view';
 
 let passed = 0;
@@ -221,26 +222,38 @@ function auditGeometry(
   };
 }
 
-console.log('=== Running three_parts_test.ts (Parametric Mechanical CAD Parts Audit) ===');
+console.log('=== Running kit_mechanical_test.ts (Parametric Mechanical CAD Parts Audit) ===');
 
 // 1. Plugin registration & namespace attachment
-partsPlugin.onRegister?.();
-const CAD = THREE.CAD;
-assert(Boolean(CAD && CAD.SpurGearGeometry), 'partsPlugin attaches THREE.CAD onto THREE proxy');
+mechanicalKitPlugin.onRegister?.();
+const Mechanical = THREE.Mechanical;
+const regNs = getSharedRegistry().authorNamespace ?? {};
+assert(
+  Boolean(
+    Mechanical &&
+      Mechanical.SpurGearGeometry &&
+      mechanicalKitPlugin.name === 'kit-mechanical' &&
+      !('CAD' in regNs) &&
+      !('SpurGearGeometry' in regNs) &&
+      !('ScrewGeometry' in Mechanical) &&
+      !('HexNutGeometry' in Mechanical),
+  ),
+  'mechanicalKitPlugin attaches strictly scoped THREE.Mechanical with zero legacy aliases or root THREE leaks',
+);
 assert(
   MAX_PART_TEETH === 200 &&
     MAX_PART_RADIAL_SEGMENTS === 128 &&
     MAX_PART_COILS === 64 &&
     MAX_PART_HOLES === 64,
-  'exported quota constants match THREE.CAD limits',
+  'exported quota constants match THREE.Mechanical limits',
 );
 assert(
-  Object.isFrozen(CAD) && Object.isFrozen(CAD.SpurGearGeometry.prototype),
-  'THREE.CAD and part prototypes are frozen against sandbox mutation',
+  Object.isFrozen(Mechanical) && Object.isFrozen(Mechanical.SpurGearGeometry.prototype),
+  'THREE.Mechanical and part prototypes are frozen against sandbox mutation',
 );
 
 // 2. ISO metric fastener table & scaling
-const m6 = CAD.metricFastener('M6x25');
+const m6 = Mechanical.metricFastener('M6x25');
 assert(
   Math.abs(m6.threadDiameter - 0.006) < 1e-9 &&
     Math.abs(m6.pitch - 0.001) < 1e-9 &&
@@ -248,7 +261,7 @@ assert(
     Math.abs((m6.length ?? 0) - 0.025) < 1e-9,
   'metricFastener("M6x25") returns exact ISO 4014/4762/4032 meter dimensions',
 );
-const m3Scaled = CAD.metricFastener('M3x10', 10);
+const m3Scaled = Mechanical.metricFastener('M3x10', 10);
 assert(
   Math.abs(m3Scaled.threadDiameter - 0.03) < 1e-9 &&
     Math.abs((m3Scaled.length ?? 0) - 0.1) < 1e-9,
@@ -257,7 +270,7 @@ assert(
 
 // 3. Audit all 12 standard machine parts & sub-configurations
 // 3a. SpurGearGeometry (straight, helical, keyway + lightening holes, raised hub)
-const sunGear = new CAD.SpurGearGeometry({
+const sunGear = new Mechanical.SpurGearGeometry({
   module: 0.005,
   teeth: 16,
   thickness: 0.014,
@@ -265,7 +278,7 @@ const sunGear = new CAD.SpurGearGeometry({
 });
 auditGeometry(sunGear, 'SpurGearGeometry (straight 16T)', {expectWatertight: true});
 
-const planetGear = new CAD.SpurGearGeometry({
+const planetGear = new Mechanical.SpurGearGeometry({
   module: 0.005,
   teeth: 13,
   thickness: 0.014,
@@ -278,7 +291,7 @@ auditGeometry(planetGear, 'SpurGearGeometry (13T + keyway + 4 web holes)', {
   expectWatertight: true,
 });
 
-const helicalBossGear = new CAD.SpurGearGeometry({
+const helicalBossGear = new Mechanical.SpurGearGeometry({
   module: 0.006,
   teeth: 24,
   thickness: 0.016,
@@ -290,7 +303,7 @@ const helicalBossGear = new CAD.SpurGearGeometry({
 auditGeometry(helicalBossGear, 'SpurGearGeometry (24T helical 18° + raised hub)');
 
 // 3b. InternalRingGearGeometry + kinematic meshing equations
-const ringGear = new CAD.InternalRingGearGeometry({
+const ringGear = new Mechanical.InternalRingGearGeometry({
   module: 0.005,
   teeth: 42,
   thickness: 0.016,
@@ -301,8 +314,8 @@ auditGeometry(ringGear, 'InternalRingGearGeometry (42T + 6 flange holes)', {
   expectWatertight: true,
 });
 
-const extMesh = CAD.gearMeshDistance(sunGear, planetGear);
-const intMesh = CAD.gearMeshDistance(ringGear, planetGear);
+const extMesh = Mechanical.gearMeshDistance(sunGear, planetGear);
+const intMesh = Mechanical.gearMeshDistance(ringGear, planetGear);
 assert(
   Math.abs(extMesh.centerDistance - (16 + 13) * 0.5 * 0.005) < 1e-9 &&
     Math.abs(intMesh.centerDistance - (42 - 13) * 0.5 * 0.005) < 1e-9 &&
@@ -310,8 +323,32 @@ assert(
   'gearMeshDistance computes exact planetary sun + 2*planet = ring center distances',
 );
 
-// 3c. RackGeometry
-const rack = new CAD.RackGeometry({
+// 3c. BevelGearGeometry (miter 1:1 + 90° pinion/crown with rear hub)
+auditGeometry(
+  new Mechanical.BevelGearGeometry({
+    module: 0.005,
+    teeth: 18,
+    mateTeeth: 18,
+    bore: 0.016,
+  }),
+  'BevelGearGeometry (18T:18T 45° miter gear)',
+  {expectWatertight: true},
+);
+auditGeometry(
+  new Mechanical.BevelGearGeometry({
+    module: 0.005,
+    teeth: 14,
+    mateTeeth: 28,
+    bore: 0.012,
+    hubRadius: 0.02,
+    hubLength: 0.012,
+  }),
+  'BevelGearGeometry (14T:28T bevel pinion + rear hub collar)',
+  {expectWatertight: true},
+);
+
+// 3c-2. RackGeometry
+const rack = new Mechanical.RackGeometry({
   module: 0.005,
   teeth: 10,
   thickness: 0.014,
@@ -319,17 +356,40 @@ const rack = new CAD.RackGeometry({
 });
 auditGeometry(rack, 'RackGeometry (10T linear rack)', {expectWatertight: true});
 
-// 3d. PulleyGeometry
-const pulley = new CAD.PulleyGeometry({
+// 3d. PulleyGeometry (V-belt, flat crowned, timing GT2/HTD)
+const pulley = new Mechanical.PulleyGeometry({
   pitchRadius: 0.05,
   grooves: 3,
   width: 0.036,
   bore: 0.016,
 });
 auditGeometry(pulley, 'PulleyGeometry (3-groove V-pulley)', {expectWatertight: true});
+auditGeometry(
+  new Mechanical.PulleyGeometry({
+    profile: 'flat',
+    pitchRadius: 0.045,
+    width: 0.028,
+    bore: 0.014,
+  }),
+  'PulleyGeometry (flat crowned belt pulley)',
+  {expectWatertight: true},
+);
+auditGeometry(
+  new Mechanical.PulleyGeometry({
+    profile: 'timing',
+    pitchRadius: 0.032,
+    teeth: 36,
+    width: 0.018,
+    bore: 0.008,
+    hubRadius: 0.014,
+    hubWidth: 0.026,
+  }),
+  'PulleyGeometry (36T synchronous timing belt pulley + hub)',
+  {expectWatertight: true},
+);
 
 // 3e. BoltGeometry (all 4 head types)
-const hexBolt = new CAD.BoltGeometry({
+const hexBolt = new Mechanical.BoltGeometry({
   preset: 'M8x30',
   scale: 10,
   headType: 'hex',
@@ -341,7 +401,7 @@ assert(
   'BoltGeometry bearing origin places under-head seat at y = 0 and tip at -length',
 );
 
-const sockBolt = new CAD.BoltGeometry({
+const sockBolt = new Mechanical.BoltGeometry({
   preset: 'M6x20',
   scale: 10,
   headType: 'socket',
@@ -350,7 +410,7 @@ auditGeometry(sockBolt, 'BoltGeometry (M6x20 socket head cap screw)', {
   expectWatertight: true,
 });
 
-const btnBolt = new CAD.BoltGeometry({
+const btnBolt = new Mechanical.BoltGeometry({
   preset: 'M5x16',
   scale: 10,
   headType: 'button',
@@ -360,7 +420,7 @@ auditGeometry(btnBolt, 'BoltGeometry (M5x16 button head, centered)', {
   expectWatertight: true,
 });
 
-const cskBolt = new CAD.BoltGeometry({
+const cskBolt = new Mechanical.BoltGeometry({
   preset: 'M6x20',
   scale: 10,
   headType: 'countersunk',
@@ -375,25 +435,25 @@ assert(
 
 // 3f. NutGeometry (standard, flanged, nyloc)
 auditGeometry(
-  new CAD.NutGeometry({preset: 'M8', scale: 10}),
+  new Mechanical.NutGeometry({preset: 'M8', scale: 10}),
   'NutGeometry (M8 hex nut)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new CAD.NutGeometry({preset: 'M8', scale: 10, flanged: true, nyloc: true}),
+  new Mechanical.NutGeometry({preset: 'M8', scale: 10, flanged: true, nyloc: true}),
   'NutGeometry (M8 flanged nyloc locknut)',
 );
 
 // 3g. WasherGeometry
 auditGeometry(
-  new CAD.WasherGeometry({preset: 'M8', scale: 10}),
+  new Mechanical.WasherGeometry({preset: 'M8', scale: 10}),
   'WasherGeometry (M8 chamfered washer)',
   {expectWatertight: true},
 );
 
 // 3h. ShaftGeometry (stepped hollow + D-shaft)
 auditGeometry(
-  new CAD.ShaftGeometry({
+  new Mechanical.ShaftGeometry({
     segments: [
       {diameter: 0.02, length: 0.04, chamfer: 0.0015},
       {diameter: 0.032, length: 0.05},
@@ -405,19 +465,55 @@ auditGeometry(
   {expectWatertight: true},
 );
 auditGeometry(
-  new CAD.ShaftGeometry({diameter: 0.02, length: 0.08, dCut: 0.003}),
+  new Mechanical.ShaftGeometry({diameter: 0.02, length: 0.08, dCut: 0.003}),
   'ShaftGeometry (D-cut motor shaft)',
   {expectWatertight: true},
 );
 
-// 3i. BearingGeometry (open rolling-element + sealed flanged)
+// 3h-2. ShaftCouplerGeometry (jaw-spider + rigid-clamp)
 auditGeometry(
-  new CAD.BearingGeometry({innerDiameter: 0.02, outerDiameter: 0.047, width: 0.014, balls: 9}),
+  new Mechanical.ShaftCouplerGeometry({
+    style: 'jaw-spider',
+    bore1: 0.008,
+    bore2: 0.012,
+    outerDiameter: 0.03,
+    length: 0.042,
+    jaws: 3,
+  }),
+  'ShaftCouplerGeometry (3-jaw elastomer spider stepped coupler)',
+  {expectWatertight: true},
+);
+auditGeometry(
+  new Mechanical.ShaftCouplerGeometry({
+    style: 'rigid-clamp',
+    bore1: 0.01,
+    bore2: 0.012,
+    outerDiameter: 0.028,
+    length: 0.04,
+  }),
+  'ShaftCouplerGeometry (slotted rigid-clamp shaft coupler)',
+  {expectWatertight: true},
+);
+
+// 3i. BearingGeometry (open rolling-element + sealed flanged) + PillowBlockGeometry
+auditGeometry(
+  new Mechanical.BearingGeometry({innerDiameter: 0.02, outerDiameter: 0.047, width: 0.014, balls: 9}),
   'BearingGeometry (6204 open 9-ball deep-groove bearing)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new CAD.BearingGeometry({
+  new Mechanical.PillowBlockGeometry({
+    bore: 0.02,
+    centerHeight: 0.0333,
+    baseLength: 0.127,
+    baseWidth: 0.038,
+    boltSpacing: 0.095,
+  }),
+  'PillowBlockGeometry (UCP204 cast mounted pillow-block bearing)',
+  {expectWatertight: true},
+);
+auditGeometry(
+  new Mechanical.BearingGeometry({
     innerDiameter: 0.02,
     outerDiameter: 0.047,
     width: 0.014,
@@ -430,7 +526,7 @@ auditGeometry(
 
 // 3j. HelicalSpringGeometry
 auditGeometry(
-  new CAD.HelicalSpringGeometry({
+  new Mechanical.HelicalSpringGeometry({
     meanRadius: 0.025,
     wireRadius: 0.004,
     coils: 6.5,
@@ -443,7 +539,7 @@ auditGeometry(
 
 // 3k. FlangePlateGeometry
 auditGeometry(
-  new CAD.FlangePlateGeometry({
+  new Mechanical.FlangePlateGeometry({
     outerRadius: 0.08,
     thickness: 0.014,
     bore: 0.05,
@@ -455,20 +551,23 @@ auditGeometry(
   'FlangePlateGeometry (8-bolt weld-neck pipe flange)',
 );
 
-// 3l. ProfileExtrusionGeometry (all 5 structural profiles)
+// 3l. ProfileExtrusionGeometry (all 7 structural profiles)
 for (const profile of [
   't-slot',
   'i-beam',
   'c-channel',
   'l-angle',
   'rect-tube',
+  'round-tube',
+  'hex-bar',
 ] as const) {
   auditGeometry(
-    new CAD.ProfileExtrusionGeometry({
+    new Mechanical.ProfileExtrusionGeometry({
       profile,
       width: 0.04,
       height: 0.04,
       length: 0.2,
+      ...(profile === 'hex-bar' ? {bore: 0.014} : {}),
     }),
     `ProfileExtrusionGeometry (${profile})`,
     {expectWatertight: true},
@@ -480,7 +579,7 @@ for (const [name, fn] of [
   [
     'SpurGear hostile options',
     () =>
-      new CAD.SpurGearGeometry({
+      new Mechanical.SpurGearGeometry({
         teeth: 999999,
         module: -5,
         bore: 999,
@@ -489,9 +588,49 @@ for (const [name, fn] of [
       }),
   ],
   [
+    'BevelGear hostile options',
+    () =>
+      new Mechanical.BevelGearGeometry({
+        teeth: 999999,
+        mateTeeth: -10,
+        coneAngleDeg: 999,
+        bore: 999,
+        hubRadius: 999,
+      }),
+  ],
+  [
+    'PillowBlock hostile options',
+    () =>
+      new Mechanical.PillowBlockGeometry({
+        bore: -5,
+        centerHeight: -10,
+        boltSpacing: 999,
+        boltHoleDiameter: 999,
+      }),
+  ],
+  [
+    'ShaftCoupler hostile options',
+    () =>
+      new Mechanical.ShaftCouplerGeometry({
+        bore1: 999,
+        bore2: -5,
+        outerDiameter: 0.001,
+        jaws: 999,
+      }),
+  ],
+  [
+    'TimingPulley hostile options',
+    () =>
+      new Mechanical.PulleyGeometry({
+        profile: 'timing',
+        teeth: 999999,
+        bore: 999,
+      }),
+  ],
+  [
     'InternalRingGear hostile options',
     () =>
-      new CAD.InternalRingGearGeometry({
+      new Mechanical.InternalRingGearGeometry({
         teeth: 1,
         outerRadius: -10,
         boltCount: 9999,
@@ -500,7 +639,7 @@ for (const [name, fn] of [
   [
     'Bolt hostile options',
     () =>
-      new CAD.BoltGeometry({
+      new Mechanical.BoltGeometry({
         preset: 'not-a-size',
         threadDiameter: NaN,
         length: -2,
@@ -510,7 +649,7 @@ for (const [name, fn] of [
   [
     'Spring hostile options',
     () =>
-      new CAD.HelicalSpringGeometry({
+      new Mechanical.HelicalSpringGeometry({
         coils: Infinity,
         wireRadius: 999,
         meanRadius: 0.002,
@@ -518,7 +657,7 @@ for (const [name, fn] of [
   ],
   [
     'Shaft empty segments',
-    () => new CAD.ShaftGeometry({segments: [], bore: 999}),
+    () => new Mechanical.ShaftGeometry({segments: [], bore: 999}),
   ],
 ] as const) {
   const g = fn();
@@ -529,13 +668,13 @@ for (const [name, fn] of [
 // 5. Worker Function.prototype.toString() isolation + GLB & USDZ export round-trip
 {
   const isolatedInstaller = new Function(
-    'return (' + installPartsExtension.toString() + ');',
+    'return (' + installMechanicalKit.toString() + ');',
   )();
   const mockReg: Record<string, unknown> = {};
   const installed = isolatedInstaller({BufferGeometry, BufferAttribute, Vector3}, mockReg);
   assert(
-    Boolean(installed?.CAD?.SpurGearGeometry && (mockReg as any).authorNamespace?.CAD),
-    'installPartsExtension.toString() executes cleanly in isolated Worker realm with zero outer closures',
+    Boolean(installed?.Mechanical?.SpurGearGeometry && (mockReg as any).authorNamespace?.Mechanical && !((mockReg as any).authorNamespace?.CAD) && !((mockReg as any).authorNamespace?.SpurGearGeometry)),
+    'installMechanicalKit.toString() executes cleanly in isolated Worker realm with zero outer closures',
   );
 
   // Build an instanced gearbox assembly and export to GLB + USDZ
@@ -569,7 +708,7 @@ for (const [name, fn] of [
   );
 }
 
-console.log(`\n🏆 three-parts Audit Results: ${passed} Passed, ${failed} Failed.`);
+console.log(`\n🏆 kit-mechanical Audit Results: ${passed} Passed, ${failed} Failed.`);
 if (failed > 0) {
   process.exit(1);
 }

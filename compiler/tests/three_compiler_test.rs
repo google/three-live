@@ -4899,9 +4899,9 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
             roughness: 0.3
         });
 
-        const g1 = new THREE.CAD.SpurGearGeometry({ teeth: 16, module: 0.008, thickness: 0.02, boreRadius: 0.014 });
-        const g2 = new THREE.CAD.SpurGearGeometry({ teeth: 10, module: 0.008, thickness: 0.02, boreRadius: 0.009 });
-        const dist = THREE.CAD.gearMeshDistance(g1, g2);
+        const g1 = new THREE.Mechanical.SpurGearGeometry({ teeth: 16, module: 0.008, thickness: 0.02, boreRadius: 0.014 });
+        const g2 = new THREE.Mechanical.SpurGearGeometry({ teeth: 10, module: 0.008, thickness: 0.02, boreRadius: 0.009 });
+        const dist = THREE.Mechanical.gearMeshDistance(g1, g2);
         const gearA = new THREE.Mesh(g1, steel);
         gearA.name = "DriveGear";
         gearA.position.set(-0.22, 0.12, 0);
@@ -4913,7 +4913,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         scene.add(gearB);
 
         const rack = new THREE.Mesh(
-            new THREE.CAD.RackGeometry({ teeth: 8, module: 0.008, width: 0.02, backHeight: 0.015 }),
+            new THREE.Mechanical.RackGeometry({ teeth: 8, module: 0.008, width: 0.02, backHeight: 0.015 }),
             steel
         );
         rack.name = "LinearRack";
@@ -4921,7 +4921,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         scene.add(rack);
 
         const pulley = new THREE.Mesh(
-            new THREE.CAD.PulleyGeometry({ pitchRadius: 0.045, width: 0.024, boreRadius: 0.012, grooves: 2, flangeRadius: 0.052, radialSegments: 24 }),
+            new THREE.Mechanical.PulleyGeometry({ pitchRadius: 0.045, width: 0.024, boreRadius: 0.012, grooves: 2, flangeRadius: 0.052, radialSegments: 24 }),
             brass
         );
         pulley.name = "GroovedPulley";
@@ -4929,7 +4929,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         scene.add(pulley);
 
         const shaft = new THREE.Mesh(
-            new THREE.CAD.ShaftGeometry({
+            new THREE.Mechanical.ShaftGeometry({
                 steps: [
                     { length: 0.05, radius: 0.015 },
                     { length: 0.07, radius: 0.022 },
@@ -4946,7 +4946,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         scene.add(shaft);
 
         const bearing = new THREE.Mesh(
-            new THREE.CAD.BearingGeometry({ innerRadius: 0.015, outerRadius: 0.036, width: 0.014, balls: 8, radialSegments: 24 }),
+            new THREE.Mechanical.BearingGeometry({ innerRadius: 0.015, outerRadius: 0.036, width: 0.014, balls: 8, radialSegments: 24 }),
             steel
         );
         bearing.name = "BallBearing";
@@ -4954,7 +4954,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         scene.add(bearing);
 
         const spring = new THREE.Mesh(
-            new THREE.CAD.HelicalSpringGeometry({ meanRadius: 0.024, wireRadius: 0.004, length: 0.09, coils: 5 }),
+            new THREE.Mechanical.HelicalSpringGeometry({ meanRadius: 0.024, wireRadius: 0.004, length: 0.09, coils: 5 }),
             brass
         );
         spring.name = "CompressionSpring";
@@ -5037,7 +5037,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         });
 
         const ring = new THREE.Mesh(
-            new THREE.CAD.InternalRingGearGeometry({ teeth: 16, module: 0.008, outerRadius: 0.1, thickness: 0.018, boltHoles: 4, boltCircleRadius: 0.086, boltHoleRadius: 0.004 }),
+            new THREE.Mechanical.InternalRingGearGeometry({ teeth: 16, module: 0.008, outerRadius: 0.1, thickness: 0.018, boltHoles: 4, boltCircleRadius: 0.086, boltHoleRadius: 0.004 }),
             steel
         );
         ring.name = "RingGear";
@@ -5045,7 +5045,7 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         scene.add(ring);
 
         const extrusion = new THREE.Mesh(
-            new THREE.CAD.ProfileExtrusionGeometry({ profile: "t-slot", width: 0.04, height: 0.04, thickness: 0.004, length: 0.24 }),
+            new THREE.Mechanical.ProfileExtrusionGeometry({ profile: "t-slot", width: 0.04, height: 0.04, thickness: 0.004, length: 0.24 }),
             steel
         );
         extrusion.name = "TSlotRail";
@@ -5090,24 +5090,24 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
             roughness: 0.25
         });
 
-        const m10 = THREE.CAD.metricFastener("M10x35", { scale: 2.0 });
-        const bolt = new THREE.Mesh(new THREE.CAD.BoltGeometry({ ...m10.bolt, headType: "socket", radialSegments: 16 }), steel);
+        const m10 = THREE.Mechanical.metricFastener("M10x35", { scale: 2.0 });
+        const bolt = new THREE.Mesh(new THREE.Mechanical.BoltGeometry({ ...m10.bolt, headType: "socket", radialSegments: 16 }), steel);
         bolt.name = "SocketBoltM10";
         bolt.position.set(-0.1, 0.08, 0.0);
         scene.add(bolt);
 
-        const nut = new THREE.Mesh(new THREE.CAD.NutGeometry({ ...m10.nut, nutType: "nyloc", radialSegments: 16 }), steel);
+        const nut = new THREE.Mesh(new THREE.Mechanical.NutGeometry({ ...m10.nut, nutType: "nyloc", radialSegments: 16 }), steel);
         nut.name = "NylocNutM10";
         nut.position.set(-0.02, 0.02, 0.0);
         scene.add(nut);
 
-        const washer = new THREE.Mesh(new THREE.CAD.WasherGeometry({ ...m10.washer, radialSegments: 16 }), steel);
+        const washer = new THREE.Mesh(new THREE.Mechanical.WasherGeometry({ ...m10.washer, radialSegments: 16 }), steel);
         washer.name = "FlatWasherM10";
         washer.position.set(-0.02, 0.002, 0.0);
         scene.add(washer);
 
         const flange = new THREE.Mesh(
-            new THREE.CAD.FlangePlateGeometry({ outerRadius: 0.06, boreRadius: 0.02, thickness: 0.012, hubRadius: 0.032, hubHeight: 0.014, boltHoles: 4, boltCircleRadius: 0.045, boltHoleRadius: 0.005, radialSegments: 24 }),
+            new THREE.Mechanical.FlangePlateGeometry({ outerRadius: 0.06, boreRadius: 0.02, thickness: 0.012, hubRadius: 0.032, hubHeight: 0.014, boltHoles: 4, boltCircleRadius: 0.045, boltHoleRadius: 0.005, radialSegments: 24 }),
             steel
         );
         flange.name = "PipeFlange";
