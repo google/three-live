@@ -26,18 +26,11 @@
 
 import {getSharedRegistry, type ThreeLivePlugin} from '../plugin';
 import {
-  type AIVoiceEditOptions,
-  type AIVoiceEditResult,
-  type AIVoiceSelection,
-  selectByVoice,
-  type AIVoiceElement,
-  type AIVoiceSession,
-  type AIVoiceSessionOptions,
-  connectVoice,
-  installVoiceButton,
-  setSelectOnTap,
-  startVoiceEdit,
-} from './ai-voice';
+  type AIImageInput,
+  compileFromImage,
+  type CompileFromImageOptions,
+} from './ai-image';
+import {type AISelectionMode, installSelectionState} from './ai-select';
 import {
   type AITextureElement,
   installTextureSupport,
@@ -45,12 +38,19 @@ import {
   onElementRun,
   withElementTexturePack,
 } from './ai-texture';
-import {type AISelectionMode, installSelectionState} from './ai-select';
 import {
-  type AIImageInput,
-  type CompileFromImageOptions,
-  compileFromImage,
-} from './ai-image';
+  type AIVoiceEditOptions,
+  type AIVoiceEditResult,
+  type AIVoiceElement,
+  type AIVoiceSelection,
+  type AIVoiceSession,
+  type AIVoiceSessionOptions,
+  connectVoice,
+  installVoiceButton,
+  selectByVoice,
+  setSelectOnTap,
+  startVoiceEdit,
+} from './ai-voice';
 
 /** One part of a multimodal chat message (`text` or `image_url`). */
 export type AIChatContentPart =
@@ -147,7 +147,10 @@ export interface AIEditableElement {
   ) => Promise<EditSceneResult>;
   undoEdit?: () => Promise<boolean>;
   startVoiceEdit?: (options?: AIVoiceEditOptions) => Promise<AIVoiceEditResult>;
-  selectByVoice?: (query: string, options?: {mode?: AISelectionMode}) => Promise<AIVoiceSelection>;
+  selectByVoice?: (
+    query: string,
+    options?: {mode?: AISelectionMode},
+  ) => Promise<AIVoiceSelection>;
   connectVoice?: (options: AIVoiceSessionOptions) => Promise<AIVoiceSession>;
   setSelectOnTap?: (enabled: boolean) => void;
   hasAttribute?(name: string): boolean;
@@ -170,10 +173,7 @@ const SYSTEM_PROMPT = [
   '- Change only what the instruction asks; keep every other object, name, and value as it is.',
   '- Give new meshes and groups descriptive `.name` values; keep existing names stable.',
   '- Keep objects resting on y = 0 and within view of the camera.',
-  '- Supported: core geometries and materials (MeshStandardMaterial / MeshPhysicalMaterial with PBR maps), lights,',
-  '  Group, InstancedMesh, THREE.CSG, THREE.CanvasTexture, THREE.ProceduralTexture presets',
-  '  (wood, marble, brick, concrete, brushedMetal, rust, leather, fabric, carbonFiber, checkerboard, grid),',
-  '  and declarative mesh.userData.xr traits. Optional per-frame motion: function animate(t) { ... }.',
+  '- Supported: core geometries and materials (MeshStandardMaterial / MeshPhysicalMaterial with PBR maps, and MeshStandardNodeMaterial with loop-free THREE.TSL colorNode / emissiveNode / roughnessNode / metalnessNode / opacityNode / bumpNode / positionNode), lights, Group, InstancedMesh, THREE.CSG, THREE.CanvasTexture, THREE.ProceduralTexture presets (wood, marble, brick, concrete, brushedMetal, rust, leather, fabric, carbonFiber, checkerboard, grid), and declarative mesh.userData.xr traits. Optional per-frame motion: function animate(t) { ... }.',
   '- Keep every userData.xr.material preset; add a prompt (AI texture) only when the instruction asks for a specific surface.',
 ].join('\n');
 
@@ -316,7 +316,10 @@ export function sceneSummary(model: unknown): {
     const hasName = rawName.length > 0 && !isAutoNodeName;
     if (hasName) meshNames.add(rawName);
     if (n?.mesh !== undefined) meshes++;
-    if (!hasName && (n?.extras?.xr != null || n?.extras?.interactivity != null)) {
+    if (
+      !hasName &&
+      (n?.extras?.xr != null || n?.extras?.interactivity != null)
+    ) {
       unnamedXrNodes++;
     }
   }
@@ -375,7 +378,9 @@ export function dryRunCompile(
           onModelReady: (model: unknown) =>
             finish(() => resolve({model, warnings})),
           onError: (err: Error) =>
-            finish(() => reject(err instanceof Error ? err : new Error(String(err)))),
+            finish(() =>
+              reject(err instanceof Error ? err : new Error(String(err))),
+            ),
           onToast: (msg: string) => {
             if (warnings.length < 20) warnings.push(String(msg));
           },
@@ -392,7 +397,9 @@ export function dryRunCompile(
         }
       },
       (err) =>
-        finish(() => reject(err instanceof Error ? err : new Error(String(err)))),
+        finish(() =>
+          reject(err instanceof Error ? err : new Error(String(err))),
+        ),
     );
   });
 }
@@ -404,7 +411,8 @@ const MAX_SELECTED = 50;
 export function normalizeSelection(
   value: string | readonly string[] | null | undefined,
 ): string[] {
-  const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+  const list =
+    typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
   const out: string[] = [];
   for (const v of list) {
     const name = typeof v === 'string' ? v.slice(0, 200) : '';

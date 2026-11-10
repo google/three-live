@@ -449,17 +449,18 @@ live Three.js scenes:
     `< 35 KB gz`, `three-live-cad.min.js` at `< 10 KB gz`,
     `three-live-procedural.min.js` at `< 31 KB gz`,
     `three-live-animation.min.js` at `< 11 KB gz`, `three-live-ai.min.js` at
-    `< 29 KB gz`, and `three-live-webgpu.min.js` at `< 22 KB gz`, or
-    `< 198 KB gz` combined in `three-live-full.min.js`) add `KHR_interactivity`
-    behavior graphs, PBR Next materials, `KHR_materials_variants`,
-    `EXT_meshopt_compression`, HDRI and spherical-harmonics lighting, contact
-    shadows, multi-light depth shadow maps (`shadow-maps` / `shadowMapsPlugin`),
-    3D hotspots, post-processing (`bloom` and `outline`), automatic multi-tier
-    Level-of-Detail (`lod` / `THREE.LOD` / `MSFT_lod`), 2D
-    `Shape`/`ExtrudeGeometry`, 3D `CSG` Booleans, 3D vector `TextGeometry`,
-    64-joint GPU skeletal skinning, morph targets, keyframe cross-fading,
-    two-bone / FABRIK inverse kinematics (`ik`), LLM scene editing, and
-    `GPURenderBundle` WebGPU scene acceleration
+    `< 29 KB gz`, `three-live-webgpu.min.js` at `< 23 KB gz`, and
+    `three-live-tsl.min.js` at `< 19 KB gz`, or `< 219 KB gz` combined in
+    `three-live-full.min.js`) add `KHR_interactivity` behavior graphs, PBR Next
+    materials, `KHR_materials_variants`, `EXT_meshopt_compression`, HDRI and
+    spherical-harmonics lighting, contact shadows, multi-light depth shadow maps
+    (`shadow-maps` / `shadowMapsPlugin`), 3D hotspots, post-processing (`bloom`
+    and `outline`), automatic multi-tier Level-of-Detail (`lod` / `THREE.LOD` /
+    `MSFT_lod`), 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` Booleans, 3D vector
+    `TextGeometry`, 64-joint GPU skeletal skinning, morph targets, keyframe
+    cross-fading, two-bone / FABRIK inverse kinematics (`ik`), loop-free
+    `THREE.TSL` procedural node materials (`tslPlugin` / `GOOGLE_material_tsl`),
+    LLM scene editing, and `GPURenderBundle` WebGPU scene acceleration
     (`renderer="auto | webgpu | webgl2"`).
 *   **Hardware XR sensors (`xr-live-sensors.min.js`, `< 10 KB gz`):** Adds
     hardware XR depth occlusion (`XRDepthManager`), analytical heightfield
@@ -486,9 +487,10 @@ live Three.js scenes:
     automatically switching to a double-buffered `mapAsync` WebGL2 coprocessor
     during WebXR stereo sessions or mixed glTF + splat Z-occluded scenes.
 
-#### Core 3D, CAD, and animation plugins (`three-live`)
+#### Core 3D, CAD, TSL, and animation plugins (`three-live`)
 
-The following table lists the fifteen modular 3D, CAD, and animation plugins:
+The following table lists the modular 3D, CAD, TSL, AI, WebGPU, and animation
+plugins:
 
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Plugin | Attribute or Three.js API | What it adds |
@@ -510,6 +512,9 @@ The following table lists the fifteen modular 3D, CAD, and animation plugins:
 | **`morph`** | `morphTargetInfluences` | GPU morph-target vertex displacement and weight blending. |
 | **`keyframes`** | `animationCrossfadeDuration` | Linear, step, and cubic-spline (`CUBICSPLINE`) TRS keyframe interpolation with smooth clip cross-fading. |
 | **`ik`** | `THREE.IKSolver`, `xr.ik` | Analytic two-bone (arm/leg with pole vector) and multi-joint FABRIK inverse kinematics chains. |
+| **`tsl`** | `THREE.TSL`, `THREE.MeshStandardNodeMaterial`, `el.setMaterialUniform()`, `GOOGLE_material_tsl` | Loop-free procedural node materials (`<= 128` SSA nodes, `<= 16` 60 Hz uniforms, 45 math/noise/Fresnel/triplanar/Voronoi/bump ops, `TL501`–`TL504` validator) compiled natively to WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, Apple RealityKit USDZ `UsdShade` / MaterialX `NodeGraph`s, Android Filament (`filamat-android` + CPU fallback), and the Rust headless PBR rasterizer. |
+| **`ai`** | `el.editScene()`, `el.compileFromImage()`, `el.connectVoice()`, `xr.material.prompt` | Bring-your-own-LLM sandboxed scene editing, image-to-scene reconstruction with spatial priors, Tap & Speak / Talk-to-Select, and content-addressed AI PBR texture packs. |
+| **`webgpu`** | `renderer="auto\|webgpu\|webgl2"` | `GPURenderBundle` + storage-buffer WebGPU scene accelerator with `depth24plus` shadow maps, custom TSL WGSL pipelines, and 1×1-scissor GPU picking. |
 <!-- mdformat on -->
 
 #### Spatial perception, splat, audio, and multimodal AI plugins (`xr-live`)

@@ -79,7 +79,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 ### 3. Allowed `THREE.*` Constructors inside `<script type="text/three">`
 - Math & IK: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`, `IKSolver` (`solveTwoBone`, `solveFABRIK`)
 - Geometries & CAD: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `LatheGeometry`, `TubeGeometry`, `Shape`, `Path`, `ShapeGeometry`, `ExtrudeGeometry`, `TextGeometry`, `CSG` (`union`, `subtract`, `intersect`), `BufferGeometry`, `BufferAttribute`
-- Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` (plus `mesh.userData.variants` for `KHR_materials_variants`)
+- Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial`, and loop-free `MeshStandardNodeMaterial` / `MeshPhysicalNodeMaterial` (`three-live-tsl` / `three-live-full` / `xr-live-full`; sockets `colorNode`, `opacityNode`, `emissiveNode`, `roughnessNode`, `metalnessNode`, `normalScaleNode`, `bumpNode`, `positionNode` using `THREE.TSL` built-ins `uv`, `time`, `positionLocal`, `positionWorld`, `normalLocal`, `normalWorld`, `viewDirection`, `uniform(val, name)`, math/vector ops, and procedural `fresnel`, `simplexNoise2D`, `simplexNoise3D`, `voronoi2D`, `checker`, `triplanar`, `hueShift`, `bumpFromHeight`, `remap`; max 128 nodes, max 16 uniforms, never `TSL.Loop` or `ShaderMaterial`; plus `mesh.userData.variants` for `KHR_materials_variants`)
 - Material presets (`procedural` plugin; built into the CLI/MCP compiler): spread `THREE.ProceduralTexture.wood({ color: 0x8b5a2b, scale: 10, seed: 3 })` (also `marble`, `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`) into `MeshStandardMaterial` for seamless, deterministic `map` + `normalMap` + roughness/metalness textures, or set `mesh.userData.xr = { material: 'marble' }` to bake a preset tinted by the material color (when non-white). Each preset adds up to 3 textures against the 16-texture scene quota: identical options return shared textures, and `normalStrength: 0` skips the normal map. Optional AI texture: add `prompt` (and `size: 256 | 512 | 1024`, `seed`) to the object form, e.g. `mesh.userData.xr = { material: { preset: 'brick', prompt: 'weathered temple stone with moss' } }`. The compiler never generates images: the albedo comes from a texture pack the host supplies, and until an entry exists the preset is shown. Always keep a `preset` as the fallback.
 - Scene Graph, LOD & Instancing: `Scene`, `Group`, `Mesh`, `LOD` (`addLevel`, `getObjectForDistance`), `InstancedMesh` (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`), `Object3D` (`position`, `rotation`, `scale`, `matrix`, `castShadow`, `receiveShadow`, `add`, `remove`, `traverse`)
 - Lights & Cameras: `AmbientLight`, `DirectionalLight`, `SpotLight`, `PointLight`, `HemisphereLight` (with `light.castShadow = true` and `light.shadow.{mapSize, bias, normalBias, radius}`), `Camera`, `PerspectiveCamera`
@@ -91,7 +91,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 | DO (Supported & Fast) | DO NOT (Unsupported / Anti-Pattern) |
 | :------------------------------------------------------------------------------ | :------------------------------------------------------------------ |
-| Use `new THREE.MeshStandardMaterial({ color, metalness, roughness })` | Do NOT use `THREE.ShaderMaterial` or custom GLSL strings in scripts |
+| Use `new THREE.MeshStandardMaterial({ color, metalness, roughness })` or loop-free `new THREE.MeshStandardNodeMaterial()` + `THREE.TSL` | Do NOT use `THREE.ShaderMaterial`, `TSL.Loop`, or raw GLSL/WGSL strings in scripts |
 | Add objects to the global `scene` (`scene.add(mesh)`) | Do NOT instantiate `new THREE.WebGLRenderer()` or call `renderer.render()` |
 | Set `mesh.userData.xr = { grab: '2-hand', handles: { rotateAxis: 'y' } }` | Do NOT write manual WebXR session setup (`navigator.xr.requestSession`) |
 | Set `mesh.userData.interactivity = { onSelect: [{ action: 'toggleTransform', ... }] }` | Do NOT try to access `window` or `document` inside sandboxed `<script type="text/three">` |
@@ -1780,6 +1780,57 @@ default `three-live-viewer` and `three-live` bundles:
     `r8unorm`/`rgba8unorm` attachment with isolated picking uniforms and refines
     exact hit points via narrowed triangle raycasting.
 
+### Opt-in Loop-Free Node Materials (`three-live/tsl`)
+
+Import `three-live/tsl` (or include `dist/three-live-tsl.min.js`, built into
+`three-live-full.min.js` and `xr-live-full.min.js`) to author procedural PBR
+shaders with `THREE.MeshStandardNodeMaterial` (`MeshPhysicalNodeMaterial`) and
+`THREE.TSL` inside `<script type="text/three">` with **zero byte overhead** on
+core viewer/author bundles when omitted:
+
+```html
+<script type="module" src="/dist/three-live.min.js"></script>
+<script type="module" src="/dist/three-live-tsl.min.js"></script>
+
+<three-live id="holo" allow-client-scripts camera-controls ar>
+  <script type="text/three">
+    const TSL = THREE.TSL;
+    const uSpeed = TSL.uniform(4.5, 'uSpeed');
+    const rim = TSL.fresnel(2.2);
+    const scan = TSL.sin(TSL.positionWorld.y.mul(20.0).sub(TSL.time.mul(uSpeed))).mul(0.5).add(0.5);
+
+    const mat = new THREE.MeshStandardNodeMaterial({ name: 'HoloMat', roughness: 0.12 });
+    mat.colorNode = TSL.color(0x38bdf8);
+    mat.emissiveNode = TSL.color(0x38bdf8).mul(rim.mul(1.5).add(scan.mul(0.5)));
+    mat.opacityNode = rim.mul(0.75).add(0.12);
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 48, 32), mat));
+  </script>
+</three-live>
+
+<script type="module">
+  // Update named TSL uniforms at 60-120 Hz without recompiling GPU shaders:
+  document.getElementById('holo').setMaterialUniform('HoloMat', 'uSpeed', 8.0);
+</script>
+```
+
+-   **Supported Sockets:** `colorNode` (`vec3`), `opacityNode` (`float`,
+    auto-enables `transparent = true` unless `alphaTest > 0`), `emissiveNode`
+    (`vec3`, feeds HDR `bloom`), `roughnessNode` (`float`), `metalnessNode`
+    (`float`), `normalScaleNode` (`float`), `bumpNode` (`vec3` via
+    `TSL.bumpFromHeight(h, strength)`), and `positionNode` (`vec3` local-space
+    vertex displacement with displaced shadow-map depth passes).
+-   **Bounded Loop-Free `GOOGLE_material_tsl` v1 IR (`TL501`–`TL504`):**
+    Topologically sorted, hash-consed SSA DAG (`<= 128` nodes, `<= 16` uniforms,
+    zero cycles, no `TSL.Loop` / `TSL.While`, safe
+    `div`/`sqrt`/`pow`/`log`/`normalize` NaN/Inf guards, and indexed
+    `uTslParams[0..15]` uniform packing so user strings never enter shader
+    source code).
+-   **5-Target Native Compilation:** Compiles from one `GOOGLE_material_tsl`
+    extension to WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, Apple
+    RealityKit `.usdz` `UsdShade` / MaterialX (`ND_*`) `NodeGraph`s, Android
+    Filament (`compileOnly` `filamat-android` `MaterialBuilder` disk cache with
+    automatic CPU PBR fallback), and the Rust CLI/MCP headless PBR rasterizer.
+
 ### Built-in `EXT_meshopt_compression` & Pluggable Decoders
 
 `EXT_meshopt_compression` and `KHR_meshopt_compression` (`ATTRIBUTES` vertex
@@ -1906,9 +1957,11 @@ assets to be located.
     `THREE.CSG.subtract`, `THREE.CSG.intersect`), `BufferGeometry`,
     `BufferAttribute`.
 -   **Materials & Variants:** `MeshStandardMaterial`, `MeshBasicMaterial`,
-    `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` (mapped
-    to glTF PBR metallic-roughness + PBR Next extensions, plus
-    `mesh.userData.variants` for `KHR_materials_variants`).
+    `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial`, and
+    `MeshStandardNodeMaterial` / `THREE.TSL` (when `three-live-tsl` or
+    `three-live-full` is loaded; mapped to glTF PBR metallic-roughness + PBR
+    Next + `GOOGLE_material_tsl`, plus `mesh.userData.variants` for
+    `KHR_materials_variants`).
 -   **Scene Graph & GPU Instancing:** `Scene`, `Group`, `Mesh`, `InstancedMesh`
     (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`),
     `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`,

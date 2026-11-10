@@ -651,7 +651,7 @@ export function installTslExtension(threeNs: any, reg?: any): any {
   class MeshStandardNodeMaterial extends threeNs.MeshPhysicalMaterial {
     isMeshStandardNodeMaterial: boolean;
     colorNode: unknown;
-    private _opacityNode: unknown = null;
+    private _opacityNode: unknown;
     emissiveNode: unknown;
     roughnessNode: unknown;
     metalnessNode: unknown;
@@ -676,6 +676,7 @@ export function installTslExtension(threeNs: any, reg?: any): any {
 
     constructor(opts: Record<string, unknown> = {}) {
       super(opts);
+      this._opacityNode = null;
       this.isMeshStandardNodeMaterial = true;
       this.colorNode = opts['colorNode'] ?? null;
       this.opacityNode = opts['opacityNode'] ?? null;

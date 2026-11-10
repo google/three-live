@@ -28,20 +28,22 @@ This file provides high-signal context, architectural invariants, and authoring 
 Goal                                                                                                                          | Element        | Recommended Bundle             | Enforced Budget
 :---------------------------------------------------------------------------------------------------------------------------- | :------------- | :----------------------------- | :-------------:
 `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting)                                                                  | `<three-live>` | `three-live-viewer.min.js`     | `< 31 KB gz`
+
 Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                                          | `<three-live>` | `three-live.min.js`            | `< 77 KB gz`
 Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js`     | `< 35 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                                    | `<three-live>` | `three-live-cad.min.js`        | `< 10 KB gz`
 Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers                         | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                                     | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
 Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select                          | `<three-live>` | `three-live-ai.min.js`         | `< 29 KB gz`
-Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`)                                 | `<three-live>` | `three-live-webgpu.min.js`     | `< 22 KB gz`
-Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU                                            | `<three-live>` | `three-live-full.min.js`       | `< 198 KB gz`
+Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`)                                 | `<three-live>` | `three-live-webgpu.min.js`     | `< 23 KB gz`
+Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`GOOGLE_material_tsl` -> GLSL/WGSL/USDZ)          | `<three-live>` | `three-live-tsl.min.js`        | `< 19 KB gz`
+Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL                                      | `<three-live>` | `three-live-full.min.js`       | `< 219 KB gz`
 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`                                 | `<xr-live>`    | `xr-live.min.js`               | `< 89 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP                                   | `<xr-live>`    | `xr-live-sensors.min.js`       | `< 10 KB gz`
 Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                                    | `<xr-live>`    | `xr-live-spatial.min.js`       | `< 63 KB gz`
 Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio)              | `<xr-live>`    | `xr-live-sim.min.js`           | `< 30 KB gz`
 Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator                                          | `<xr-live>`    | `xr-live-webgpu.min.js`        | `< 12 KB gz`
-Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU plugins                             | `<xr-live>`    | `xr-live-full.min.js`          | `< 307 KB gz`
+Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins                       | `<xr-live>`    | `xr-live-full.min.js`          | `< 328 KB gz`
 
 ---
 
@@ -149,8 +151,12 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         (`three-live/src/plugins/meshopt.ts`), `KHR_materials_variants`
         (`three-live/src/plugins/variants.ts`), HDR bloom & silhouette outlines
         (`three-live/src/plugins/postprocessing.ts`), analytical 2-bone & FABRIK
-        IK (`three-live/src/plugins/ik.ts`), Worker/iframe sandboxing, and
-        plugin hooks (`three-live/src/plugin.ts`).
+        IK (`three-live/src/plugins/ik.ts`), loop-free `THREE.TSL` &
+        `MeshStandardNodeMaterial` (`three-live/src/tsl/` +
+        `three-live/src/plugins/tsl.ts` compiling `GOOGLE_material_tsl` to
+        WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and USDZ
+        `UsdShade` / MaterialX), Worker/iframe sandboxing, and plugin hooks
+        (`three-live/src/plugin.ts`).
     -   `<xr-live>` (`xr-live/src/xr-live-element.ts`), the 15 spatial plugins
         (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`,
         `world-understanding`, `gemini-live`, `spatial-paint`,
@@ -166,9 +172,10 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
     -   Embeds `compiler/assets/three-author-engine.min.js` inside an isolated
         Boa JS context with strict opcode/wall-clock watchdogs, outputting
         `.glb` (including `EXT_mesh_gpu_instancing`, `KHR_materials_variants`,
-        and `KHR_audio_emitter`) and `.usdz` (including `PointInstancer`,
-        `VariantSets`, and `SpatialAudio`) bytes via C FFI
-        (`compiler/include/three_live.h`) and `three-live-cli`.
+        `KHR_audio_emitter`, and validated `GOOGLE_material_tsl` SSA node graphs
+        via `compiler/src/tsl.rs`) and `.usdz` (including `PointInstancer`,
+        `VariantSets`, `SpatialAudio`, and `UsdShade` / MaterialX `NodeGraph`s)
+        bytes via C FFI (`compiler/include/three_live.h`) and `three-live-cli`.
 4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
     -   **Android (`mobile/android/src/main/java/com/google/threelive/`):**
         `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt` +
@@ -178,11 +185,12 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         `IKSolver.kt`, `LodController.kt`), `XRSimWorld.kt` + simulation
         controllers (`CharacterController.kt`, `SteeringAgents.kt`,
         `RigidBodyPhysics.kt`, `HitZones.kt`, `Objectives.kt`, `SynthAudio.kt`,
-        `XRSimParity.kt`, `XRSimRenderBridge.kt`), `XRLiveRuntimeSession.kt`,
-        and `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
+        `XRSimParity.kt`, `XRSimRenderBridge.kt`), `TslMaterialCompiler.kt`,
+        `XRLiveRuntimeSession.kt`, and `mobile/android-filament/`
+        (`ThreeLiveFilamentRenderer.kt`, `TslFilamatBridge.kt`).
     -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):**
         `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`,
-        `XRSpatialRealityKitFeatures.swift` + modular feature controllers
+        `XRTslMaterialValidator.swift`, `XRSpatialRealityKitFeatures.swift` + modular feature controllers
         (`SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
         `ExplodedView.swift`, `PersistentAnchors.swift`,
         `SpatialLocomotion.swift`, `SharedRoom.swift`, `SpatialAudio.swift`,

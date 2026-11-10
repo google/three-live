@@ -26,6 +26,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Loop-Free Node Materials (`three-live-tsl` / `tslPlugin` /
+    `GOOGLE_material_tsl`):** Opt-in cross-platform procedural PBR shader graph
+    authoring via `THREE.MeshStandardNodeMaterial` (`MeshPhysicalNodeMaterial`)
+    and `THREE.TSL` (`colorNode`, `opacityNode`, `emissiveNode`,
+    `roughnessNode`, `metalnessNode`, `normalScaleNode`, `bumpNode`, and vertex
+    `positionNode`), available standalone in `three-live-tsl.min.js`
+    (`three-live/tsl`, `< 19 KB gz`, 0 B overhead on core viewer/author bundles)
+    and built into `three-live-full.min.js` and `xr-live-full.min.js`.
+    Deduplicates common subexpressions into a canonical, topologically sorted
+    SSA DAG (`gltf.materials[m].extensions.GOOGLE_material_tsl`, `<= 128` nodes,
+    `<= 16` uniforms, 45
+    math/vector/Fresnel/simplexNoise2D/3D/Voronoi/triplanar/bump ops) verified
+    in `O(N)` with identical FNV-1a structural hashes and `TL501`–`TL504`
+    diagnostics across TypeScript, Rust, Kotlin, and Swift. Compiles natively to
+    **WebGL2 GLSL ES 300**, **WebGPU WGSL `GPURenderBundle`s** (including
+    displaced shadow-map depth passes), **Apple RealityKit `.usdz` `UsdShade` /
+    MaterialX (`ND_*`) `NodeGraph`s**, **Android Filament** (`compileOnly`
+    `filamat-android` `MaterialBuilder` disk cache with automatic CPU PBR
+    fallback), and the **Rust CLI/MCP headless PBR rasterizer**, with 60–120 Hz
+    zero-recompile uniform updates via
+    `setMaterialUniform(materialName, uniformName, value)` across Web, Android
+    (`XRLiveRuntimeSession` / `ThreeLiveFilamentRenderer`), and iOS
+    (`XRLiveRuntimeSession` / `XRLiveRealityKitSession`).
+
 -   **Multi-Light Depth Shadow Maps (`shadowMapsPlugin`, folded into
     `three-live-studio.min.js`):** Real-time directional, spot, and point light
     depth shadow mapping (`light.castShadow`,

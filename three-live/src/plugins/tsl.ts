@@ -273,12 +273,15 @@ function attachHostMethods(target: unknown): void {
 function registerTslHooks(): void {
   const reg = getSharedRegistry();
   registerWorkerExtensionInstaller(installTslExtension);
-  if (reg.threeNamespace) {
-    installTslExtension(reg.threeNamespace, reg);
-  } else {
-    if (!reg.authorNamespace) reg.authorNamespace = {};
-    // Install onto a minimal shim if `three-author` loads later; `three-author`
-    // also executes `workerExtensionInstallers` on load!
+  const threeNs =
+    reg.threeNamespace ??
+    (typeof globalThis !== 'undefined'
+      ? (globalThis as Record<string, unknown>)['THREE']
+      : undefined);
+  if (threeNs) {
+    installTslExtension(threeNs, reg);
+  } else if (!reg.authorNamespace) {
+    reg.authorNamespace = {};
   }
   reg.tslWgslCompiler = (graph, basePbrWgsl, baseShadowDepthWgsl) => {
     if (!graph || typeof graph !== 'object') return null;
