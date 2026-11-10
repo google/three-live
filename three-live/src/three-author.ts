@@ -36,6 +36,7 @@ import {getSharedRegistry} from './plugin';
 import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
 import {installLodExtension} from './plugins/lod';
+import {installPartsExtension} from './plugins/parts';
 import {installProceduralExtension} from './plugins/procedural';
 import {makePngDeflater, PngDeflater} from './png-deflate';
 import {
@@ -5258,6 +5259,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   registerXRTraitSerializer();
   registerSimTraitSchema();
   installCadExtension(THREE, getSharedRegistry());
+  installPartsExtension(THREE, getSharedRegistry());
   installIKExtension(THREE, getSharedRegistry());
   installLodExtension(THREE, getSharedRegistry());
   installProceduralExtension(THREE, getSharedRegistry());

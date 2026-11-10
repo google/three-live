@@ -4881,3 +4881,267 @@ fn test_front_side_material_exports_double_sided_false() {
     assert_eq!(gltf["materials"][0]["doubleSided"], serde_json::json!(false));
     assert_eq!(gltf["materials"][1]["doubleSided"], serde_json::json!(true));
 }
+
+#[test]
+fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
+    // Sub-assembly 1: Drivetrain (SpurGear + Pinion + gearMeshDistance + Rack + Pulley + Shaft + Bearing + HelicalSpring)
+    let drivetrain_script = r#"
+        const steel = new THREE.MeshStandardMaterial({
+            name: "MachinedSteel",
+            color: 0xcbd5e1,
+            metalness: 0.85,
+            roughness: 0.25
+        });
+        const brass = new THREE.MeshStandardMaterial({
+            name: "GearBrass",
+            color: 0xd97706,
+            metalness: 0.8,
+            roughness: 0.3
+        });
+
+        const g1 = new THREE.CAD.SpurGearGeometry({ teeth: 16, module: 0.008, thickness: 0.02, boreRadius: 0.014 });
+        const g2 = new THREE.CAD.SpurGearGeometry({ teeth: 10, module: 0.008, thickness: 0.02, boreRadius: 0.009 });
+        const dist = THREE.CAD.gearMeshDistance(g1, g2);
+        const gearA = new THREE.Mesh(g1, steel);
+        gearA.name = "DriveGear";
+        gearA.position.set(-0.22, 0.12, 0);
+        scene.add(gearA);
+
+        const gearB = new THREE.Mesh(g2, brass);
+        gearB.name = "PinionGear";
+        gearB.position.set(-0.22 + dist.centerDistance, 0.12, 0);
+        scene.add(gearB);
+
+        const rack = new THREE.Mesh(
+            new THREE.CAD.RackGeometry({ teeth: 8, module: 0.008, width: 0.02, backHeight: 0.015 }),
+            steel
+        );
+        rack.name = "LinearRack";
+        rack.position.set(-0.18, 0.015, 0.16);
+        scene.add(rack);
+
+        const pulley = new THREE.Mesh(
+            new THREE.CAD.PulleyGeometry({ pitchRadius: 0.045, width: 0.024, boreRadius: 0.012, grooves: 2, flangeRadius: 0.052, radialSegments: 24 }),
+            brass
+        );
+        pulley.name = "GroovedPulley";
+        pulley.position.set(0.18, 0.06, 0.14);
+        scene.add(pulley);
+
+        const shaft = new THREE.Mesh(
+            new THREE.CAD.ShaftGeometry({
+                steps: [
+                    { length: 0.05, radius: 0.015 },
+                    { length: 0.07, radius: 0.022 },
+                    { length: 0.05, radius: 0.014 }
+                ],
+                chamfer: 0.002,
+                radialSegments: 24
+            }),
+            steel
+        );
+        shaft.name = "SteppedShaft";
+        shaft.position.set(-0.28, 0.022, -0.14);
+        shaft.rotation.z = Math.PI * 0.5;
+        scene.add(shaft);
+
+        const bearing = new THREE.Mesh(
+            new THREE.CAD.BearingGeometry({ innerRadius: 0.015, outerRadius: 0.036, width: 0.014, balls: 8, radialSegments: 24 }),
+            steel
+        );
+        bearing.name = "BallBearing";
+        bearing.position.set(-0.02, 0.04, -0.14);
+        scene.add(bearing);
+
+        const spring = new THREE.Mesh(
+            new THREE.CAD.HelicalSpringGeometry({ meanRadius: 0.024, wireRadius: 0.004, length: 0.09, coils: 5 }),
+            brass
+        );
+        spring.name = "CompressionSpring";
+        spring.position.set(0.16, 0.045, -0.12);
+        scene.add(spring);
+
+        const base = new THREE.Mesh(
+            new THREE.BoxGeometry(0.9, 0.02, 0.7),
+            new THREE.MeshStandardMaterial({ name: "Workbench", color: 0x1e293b, roughness: 0.85 })
+        );
+        base.name = "Workbench";
+        base.position.set(0, -0.01, 0);
+        scene.add(base);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(1.2, 2.0, 1.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 0.5, 0.85);
+        camera.lookAt(0.0, 0.08, 0.0);
+    "#;
+
+    let report1 =
+        three_live_compiler::validate_and_lint_scene(drivetrain_script, "drivetrain.js", 1.5);
+    let errs1: Vec<_> = report1
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report1.valid && errs1.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics on drivetrain CAD assembly, got: {:?}",
+        report1.diagnostics
+    );
+
+    let glb1 = three_live_compiler::transcode_three_to_glb(drivetrain_script)
+        .expect("Drivetrain CAD assembly should compile to GLB");
+    assert!(glb1.len() > 15_000, "Expected rich GLB binary, got {} bytes", glb1.len());
+
+    let usdz1 = three_live_compiler::transcode_three_to_usdz(drivetrain_script)
+        .expect("Drivetrain CAD assembly should compile to USDZ");
+    let usda1 = String::from_utf8_lossy(&usdz1);
+    for expected_name in [
+        "DriveGear",
+        "PinionGear",
+        "LinearRack",
+        "GroovedPulley",
+        "SteppedShaft",
+        "BallBearing",
+        "CompressionSpring",
+    ] {
+        assert!(usda1.contains(expected_name), "USDZ missing CAD part node {}", expected_name);
+    }
+
+    let mut engine = three_live_compiler::ThreeEngine::new().unwrap();
+    let sg1 = engine.execute(drivetrain_script).expect("Drivetrain CAD scene graph executes");
+    assert_eq!(sg1.meshes.len(), 8);
+    let (w, h, rgba) = three_live_compiler::render_scene_rgba(
+        &sg1,
+        &three_live_compiler::RenderOptions {
+            width: 256,
+            height: 256,
+            view: three_live_compiler::RenderViewMode::Quad,
+            show_grid: true,
+            show_annotations: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!((w, h), (256, 256));
+    assert_eq!(rgba.len(), 256 * 256 * 4);
+
+    // Sub-assembly 2: Planetary Ring & T-Slot Frame (InternalRingGear + ProfileExtrusion)
+    let ring_frame_script = r#"
+        const steel = new THREE.MeshStandardMaterial({
+            name: "MachinedSteel",
+            color: 0xcbd5e1,
+            metalness: 0.85,
+            roughness: 0.25
+        });
+
+        const ring = new THREE.Mesh(
+            new THREE.CAD.InternalRingGearGeometry({ teeth: 16, module: 0.008, outerRadius: 0.1, thickness: 0.018, boltHoles: 4, boltCircleRadius: 0.086, boltHoleRadius: 0.004 }),
+            steel
+        );
+        ring.name = "RingGear";
+        ring.position.set(-0.12, 0.11, 0);
+        scene.add(ring);
+
+        const extrusion = new THREE.Mesh(
+            new THREE.CAD.ProfileExtrusionGeometry({ profile: "t-slot", width: 0.04, height: 0.04, thickness: 0.004, length: 0.24 }),
+            steel
+        );
+        extrusion.name = "TSlotRail";
+        extrusion.position.set(0.12, 0.02, 0.0);
+        extrusion.rotation.y = Math.PI * 0.5;
+        scene.add(extrusion);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(1.2, 2.0, 1.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 0.4, 0.75);
+        camera.lookAt(0.0, 0.06, 0.0);
+    "#;
+
+    let report2 =
+        three_live_compiler::validate_and_lint_scene(ring_frame_script, "ring_frame.js", 1.5);
+    let errs2: Vec<_> = report2
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report2.valid && errs2.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics on ring/frame CAD assembly, got: {:?}",
+        report2.diagnostics
+    );
+    let usdz2 = three_live_compiler::transcode_three_to_usdz(ring_frame_script)
+        .expect("Ring/frame CAD assembly should compile to USDZ");
+    let usda2 = String::from_utf8_lossy(&usdz2);
+    for expected_name in ["RingGear", "TSlotRail"] {
+        assert!(usda2.contains(expected_name), "USDZ missing CAD part node {}", expected_name);
+    }
+
+    // Sub-assembly 3: Bolted Pipe Flange (metricFastener + Bolt + Nut + Washer + FlangePlate)
+    let flange_fastener_script = r#"
+        const steel = new THREE.MeshStandardMaterial({
+            name: "MachinedSteel",
+            color: 0xcbd5e1,
+            metalness: 0.85,
+            roughness: 0.25
+        });
+
+        const m10 = THREE.CAD.metricFastener("M10x35", { scale: 2.0 });
+        const bolt = new THREE.Mesh(new THREE.CAD.BoltGeometry({ ...m10.bolt, headType: "socket", radialSegments: 16 }), steel);
+        bolt.name = "SocketBoltM10";
+        bolt.position.set(-0.1, 0.08, 0.0);
+        scene.add(bolt);
+
+        const nut = new THREE.Mesh(new THREE.CAD.NutGeometry({ ...m10.nut, nutType: "nyloc", radialSegments: 16 }), steel);
+        nut.name = "NylocNutM10";
+        nut.position.set(-0.02, 0.02, 0.0);
+        scene.add(nut);
+
+        const washer = new THREE.Mesh(new THREE.CAD.WasherGeometry({ ...m10.washer, radialSegments: 16 }), steel);
+        washer.name = "FlatWasherM10";
+        washer.position.set(-0.02, 0.002, 0.0);
+        scene.add(washer);
+
+        const flange = new THREE.Mesh(
+            new THREE.CAD.FlangePlateGeometry({ outerRadius: 0.06, boreRadius: 0.02, thickness: 0.012, hubRadius: 0.032, hubHeight: 0.014, boltHoles: 4, boltCircleRadius: 0.045, boltHoleRadius: 0.005, radialSegments: 24 }),
+            steel
+        );
+        flange.name = "PipeFlange";
+        flange.position.set(0.12, 0.014, 0.0);
+        scene.add(flange);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(1.2, 2.0, 1.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 0.4, 0.75);
+        camera.lookAt(0.0, 0.05, 0.0);
+    "#;
+
+    let report3 = three_live_compiler::validate_and_lint_scene(
+        flange_fastener_script,
+        "flange_fastener.js",
+        1.5,
+    );
+    let errs3: Vec<_> = report3
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report3.valid && errs3.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics on flange/fastener CAD assembly, got: {:?}",
+        report3.diagnostics
+    );
+    let usdz3 = three_live_compiler::transcode_three_to_usdz(flange_fastener_script)
+        .expect("Flange/fastener CAD assembly should compile to USDZ");
+    let usda3 = String::from_utf8_lossy(&usdz3);
+    for expected_name in ["SocketBoltM10", "NylocNutM10", "FlatWasherM10", "PipeFlange"] {
+        assert!(usda3.contains(expected_name), "USDZ missing CAD part node {}", expected_name);
+    }
+}

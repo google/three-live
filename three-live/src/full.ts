@@ -34,6 +34,7 @@ export * from './ai';
 export * from './animation';
 export * from './cad';
 export * from './index';
+export * from './parts';
 export * from './procedural';
 export * from './studio';
 export * from './three-author';
