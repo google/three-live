@@ -1225,6 +1225,44 @@ fragColor=vec4(N,1.0);
         firstTurnMsgs[0].content.includes('THREE.TSL'),
       'SYSTEM_PROMPT teaches LLM about MeshStandardNodeMaterial & loop-free THREE.TSL',
     );
+    // Verify grazing-angle slope clamp in _tslBump across GLSL & WGSL
+    const bumpScene = new THREE.Scene();
+    const bumpMat = new THREE.MeshStandardNodeMaterial({
+      name: 'GrazingFloorMat',
+      side: THREE.FrontSide,
+    });
+    bumpMat.bumpNode = TSL.bumpFromHeight(
+      TSL.simplexNoise2D(TSL.uv.mul(250.0)),
+      0.08,
+    );
+    bumpScene.add(new THREE.Mesh(new THREE.PlaneGeometry(4, 4), bumpMat));
+    const bumpGlb = parseGLB(bumpScene.toGLB());
+    assert.strictEqual(
+      bumpGlb.gltf.materials[0].doubleSided,
+      false,
+      'MeshStandardNodeMaterial honors side: THREE.FrontSide -> doubleSided: false',
+    );
+    const bumpRes = validateTslGraph(
+      bumpGlb.gltf.materials[0].extras.tsl,
+      'GrazingFloorMat',
+    );
+    assert.strictEqual(bumpRes.ok, true);
+    if (bumpRes.ok) {
+      const glslBump = compileTslToGlsl(
+        bumpRes.graph,
+        'out vec2 vUV;\nvoid main(){\ngl_Position=vec4(0.0);\n}',
+        'in vec2 vUV;\nvoid main(){\nmetallic=clamp(metallic,0.0,1.0);\n}',
+      );
+      const wgslBump = compileTslToWgsl(bumpRes.graph, SCENE_PBR_WGSL, null);
+      assert.ok(
+        glslBump.fs.includes('0.85*ad/max(gl,1e-8)'),
+        'GLSL _tslBump clamps grazing-angle tangent gradient slope',
+      );
+      assert.ok(
+        wgslBump.pbrWgsl.includes('0.85*ad/max(length(g),1e-8)'),
+        'WGSL _tslBump clamps grazing-angle tangent gradient slope',
+      );
+    }
     console.log(
       '   [PASS] Isolated V8 Worker-realm serialization & three-live-ai editScene() TSL authoring',
     );

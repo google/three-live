@@ -173,9 +173,18 @@ export const contactShadowPlugin: ThreeLivePlugin = {
       if (mesh.transform) b = xform(mesh.transform, b);
       if (viewer.modelRootMatrix) b = xform(viewer.modelRootMatrix, b);
       const [wx, wy, wz, whx, why, whz] = b;
+      const mName = mesh.name || '';
+      if (
+        /ceiling|wall|molding|chairrail|window|sill|muntin|header|apron|pier/i.test(
+          mName,
+        ) ||
+        (why > 1.0 && Math.min(whx, whz) < 0.15)
+      ) {
+        continue;
+      }
       const item = [wx, wz, whx, whz, wy - why, wy + why];
       if (
-        /floor|table|pedestal|ground|base|plane/i.test(mesh.name || '') ||
+        /floor|table|pedestal|ground|base|plane|rug/i.test(mName) ||
         (why < 0.14 && Math.min(whx, whz) > 0.45)
       ) {
         supports.push(item);

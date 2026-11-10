@@ -4849,3 +4849,35 @@ fn test_tsl_node_material_glb_roundtrip_diagnostics_and_rasterizer() {
         .expect("TSL GLB should round-trip to USDZ");
     assert!(String::from_utf8_lossy(&glb_usdz).contains("def NodeGraph \"TSLGraph\""));
 }
+
+#[test]
+fn test_front_side_material_exports_double_sided_false() {
+    let script = r#"
+        const frontMat = new THREE.MeshStandardMaterial({
+            name: "SingleSidedCeiling",
+            color: 0xf4ebe0,
+            side: THREE.FrontSide
+        });
+        const defMat = new THREE.MeshStandardMaterial({
+            name: "DefaultDoubleSided",
+            color: 0xcccccc
+        });
+        const c = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), frontMat);
+        c.name = "Ceiling";
+        scene.add(c);
+        const f = new THREE.Mesh(new THREE.BoxGeometry(4, 0.1, 4), defMat);
+        f.name = "Floor";
+        scene.add(f);
+    "#;
+    let mut engine = three_live_compiler::ThreeEngine::new().unwrap();
+    let sg = engine.execute(script).expect("FrontSide scene should compile");
+    assert_eq!(sg.materials.len(), 2);
+    assert!(!sg.materials[0].double_sided, "side: THREE.FrontSide must set double_sided = false");
+    assert!(sg.materials[1].double_sided, "default Material must keep double_sided = true");
+
+    let glb = three_live_compiler::transcode_three_to_glb(script).unwrap();
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+    assert_eq!(gltf["materials"][0]["doubleSided"], serde_json::json!(false));
+    assert_eq!(gltf["materials"][1]["doubleSided"], serde_json::json!(true));
+}

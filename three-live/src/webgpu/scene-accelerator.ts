@@ -44,12 +44,14 @@ import {
 } from '../plugins/shadow-maps';
 import {
   PART_FLAG_CAST_SHADOW,
+  PART_FLAG_CULL_BACK,
   PART_FLAG_HAS_BASE_TEX,
   PART_FLAG_HAS_EMISSIVE_TEX,
   PART_FLAG_HAS_MR_TEX,
   PART_FLAG_HAS_NORMAL_TEX,
   PART_FLAG_HAS_OCC_TEX,
   PART_FLAG_HIDDEN,
+  PART_FLAG_NEG_DET,
   PART_FLAG_NO_SECTION_CLIP,
   PART_FLAG_RECEIVE_SHADOW,
   PART_FLAG_WORLD_SPACE,
@@ -258,6 +260,7 @@ interface PrimitiveLike {
   normalScale?: number;
   occlusionStrength?: number;
   alphaMode?: string;
+  doubleSided?: boolean;
   texture?: object | null;
   metallicRoughnessTexture?: object | null;
   normalTexture?: object | null;
@@ -2198,12 +2201,14 @@ function syncSceneResources(
     else if (stereoMode === 'ou') flags |= 2 << PART_STEREO_SHIFT;
 
     const bb = allowBillboard ? xr?.['billboard'] : undefined;
-    const isWorldSpace =
+      const isWorldSpace =
       g.isBackdrop ||
       mesh.worldSpace === true ||
       mesh.name === '__xr_reticle__' ||
       Boolean(bb);
     if (isWorldSpace) flags |= PART_FLAG_WORLD_SPACE;
+    const cullBack = prim.doubleSided === false;
+    if (cullBack) flags |= PART_FLAG_CULL_BACK;
 
     let baseMat: Float32Array = mesh.transform;
     if (bb) {
@@ -2323,7 +2328,18 @@ function syncSceneResources(
 
       f32[w + 28] = normScale;
       f32[w + 29] = occStrength;
-      u32[w + 30] = flags >>> 0;
+      let instFlags = flags;
+      if (cullBack) {
+        const eff = isWorldSpace
+          ? instMat
+          : mat4Multiply(_tmpMatA, root, instMat);
+        const det =
+          eff[0] * (eff[5] * eff[10] - eff[6] * eff[9]) -
+          eff[4] * (eff[1] * eff[10] - eff[2] * eff[9]) +
+          eff[8] * (eff[1] * eff[6] - eff[2] * eff[5]);
+        if (det < 0) instFlags |= PART_FLAG_NEG_DET;
+      }
+      u32[w + 30] = instFlags >>> 0;
       u32[w + 31] = pickId;
     }
   }

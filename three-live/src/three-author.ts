@@ -2079,8 +2079,13 @@ export class Material {
   public opacity: number;
   public transparent: boolean;
   public wireframe: boolean;
-  public side: number; // 2 = DoubleSide
-  public doubleSided: boolean;
+  public side: number; // 0 = FrontSide, 1 = BackSide, 2 = DoubleSide
+  public get doubleSided(): boolean {
+    return this.side === 2;
+  }
+  public set doubleSided(v: boolean) {
+    this.side = v ? 2 : 0;
+  }
   public map: Texture | string | null;
   public normalMap: Texture | string | null;
   public normalScale: Vector2;
@@ -2119,8 +2124,10 @@ export class Material {
     this.opacity = numberOr(params.opacity, 1);
     this.transparent = booleanOr(params.transparent, false);
     this.wireframe = booleanOr(params.wireframe, false);
-    this.side = numberOr(params.side, 2);
-    this.doubleSided = booleanOr(params.doubleSided, true);
+    this.side = numberOr(params.side, params.doubleSided === false ? 0 : 2);
+    if (params.doubleSided !== undefined && params.side === undefined) {
+      this.side = params.doubleSided ? 2 : 0;
+    }
     this.map = params.map || null;
     this.normalMap = params.normalMap || null;
     const ns = params.normalScale;
@@ -5507,7 +5514,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           ],
           metallic: mat.metalness !== undefined ? mat.metalness : 0.0,
           roughness: mat.roughness !== undefined ? mat.roughness : 0.5,
-          double_sided: mat.side === 2 || mat.doubleSided,
+          double_sided:
+            mat.side !== undefined ? mat.side === 2 : Boolean(mat.doubleSided ?? true),
           alpha_blend: Boolean(mat.transparent || (mat.opacity ?? 1) < 1),
           base_color_texture: mapUrl || null,
           metallic_roughness_texture: mrUri || null,
