@@ -29,7 +29,7 @@ import java.nio.ByteBuffer
  * Optional runtime bridge to `com.google.android.filament:filamat-android` (`compileOnly`).
  *
  * When the host Android app includes `filamat-android`, `TslFilamatBridge` compiles validated
- * `GOOGLE_material_tsl` graphs into native `.filamat` shaders (OpenGL ES + Vulkan), caches the
+ * `extras.tsl` graphs into native `.filamat` shaders (OpenGL ES + Vulkan), caches the
  * compiled bytecode under `context.codeCacheDir` keyed by structural DAG hash, and binds uniform
  * updates (`uTslP0..uTslP15`, `uTslTime`) at 60–120 Hz without recompilation. When `filamat` is
  * absent on the classpath, [isAvailable] returns `false` and `ThreeLiveFilamentRenderer` falls back

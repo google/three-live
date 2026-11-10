@@ -206,7 +206,7 @@ pub struct Material3D {
     /// Explicit alpha-blending flag (`THREE.Material.transparent = true`).
     #[serde(default)]
     pub alpha_blend: bool,
-    /// Optional validated `GOOGLE_material_tsl` v1 node graph extension.
+    /// Optional validated `extras.tsl` v1 node graph payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tsl: Option<serde_json::Value>,
 }

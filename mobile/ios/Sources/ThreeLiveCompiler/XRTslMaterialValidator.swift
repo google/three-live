@@ -15,7 +15,7 @@
 import Foundation
 import simd
 
-/// Uniform slot metadata inside a validated `GOOGLE_material_tsl` graph.
+/// Uniform slot metadata inside a validated `extras.tsl` graph.
 public struct XRTslUniformSlot: Sendable, Equatable {
   public let name: String
   public let slot: Int
@@ -29,7 +29,7 @@ public struct XRTslValidationIssue: Error, Sendable, Equatable {
   public let message: String
 }
 
-/// Validated `GOOGLE_material_tsl` v1 DAG with structural FNV-1a hash and deterministic CPU eval.
+/// Validated `extras.tsl` v1 DAG with structural FNV-1a hash and deterministic CPU eval.
 public struct XRTslValidatedGraph: Sendable {
   struct Node: Sendable {
     let op: String
@@ -78,9 +78,9 @@ public struct XRTslValidatedGraph: Sendable {
   }
 }
 
-/// Pure-Swift `GOOGLE_material_tsl` v1 validator & deterministic CPU evaluator.
+/// Pure-Swift `extras.tsl` v1 validator & deterministic CPU evaluator.
 public enum XRTslMaterialValidator {
-  public static let extensionName = "GOOGLE_material_tsl"
+  public static let extrasKey = "tsl"
   public static let maxNodes = 128
   public static let maxUniforms = 16
   public static let timePeriodSec: Float = 3600.0
@@ -219,7 +219,7 @@ public enum XRTslMaterialValidator {
     guard let obj = XRJSON.object(raw) else {
       return .failure(
         XRTslValidationIssue(
-          code: "TL501", message: "Invalid GOOGLE_material_tsl on '\(materialLabel)'."))
+          code: "TL501", message: "Invalid extras.tsl on '\(materialLabel)'."))
     }
     guard XRJSON.number(obj["version"]) == 1.0 else {
       return .failure(

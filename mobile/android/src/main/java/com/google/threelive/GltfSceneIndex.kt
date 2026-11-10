@@ -99,7 +99,7 @@ class GltfSceneIndex(gltfJson: String) {
   /** Whether material `i` sets `doubleSided == true`. */
   val materialDoubleSided: BooleanArray
 
-  /** Validated `GOOGLE_material_tsl` graphs per material (`null` when absent or invalid). */
+  /** Validated `extras.tsl` graphs per material (`null` when absent or invalid). */
   val materialTslGraphs: List<TslValidatedGraph?>
 
   /** Whether node `i` has an explicit `extras.shadow` override in the GLB. */
@@ -205,8 +205,8 @@ class GltfSceneIndex(gltfJson: String) {
       )
       metallics[mIdx] = finiteFloat(pbr?.get("metallicFactor"), 1f)
       roughnesses[mIdx] = finiteFloat(pbr?.get("roughnessFactor"), 1f)
-      val exts = MiniJson.asMap(m?.get("extensions"))
-      val rawTsl = exts?.get(TslMaterialCompiler.EXTENSION_NAME)
+      val extras = MiniJson.asMap(m?.get("extras"))
+      val rawTsl = extras?.get(TslMaterialCompiler.EXTRAS_KEY)
       matTsl.add(
         if (rawTsl != null) {
           TslMaterialCompiler.validate(rawTsl, matName.ifEmpty { "Material_$mIdx" })

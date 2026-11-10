@@ -17,7 +17,7 @@
 
 /**
  * @fileoverview Deterministic IEEE-754 CPU Reference Evaluator for
- * `GOOGLE_material_tsl` graphs (kept separate from `three-live-tsl.min.js` so
+ * `extras.tsl` graphs (kept separate from `three-live-tsl.min.js` so
  * browser GPU bundles stay `< 12 KB gz`).
  */
 
@@ -259,7 +259,7 @@ export function tslVoronoi2D(ux: number, uy: number, jitter: number): number {
   return tslSafeClamp(minDist, 0, 1);
 }
 
-/** Evaluates a validated `GOOGLE_material_tsl` DAG on the CPU. */
+/** Evaluates a validated `extras.tsl` DAG on the CPU. */
 export function evaluateTslGraphCpu(
   graph: ValidatedTslGraph,
   ctx: TslEvalContext = {},

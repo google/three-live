@@ -16,7 +16,7 @@
  */
 
 /**
- * @fileoverview Loop-Free TSL (`GOOGLE_material_tsl`) -> WebGPU WGSL Compiler.
+ * @fileoverview Loop-Free TSL (`extras.tsl`) -> WebGPU WGSL Compiler.
  */
 
 import type {CompiledTslWgsl} from '../plugin';

@@ -654,6 +654,12 @@ function serializeScene(
     const aoTex: Record<string, unknown> | undefined = addTex((m as any).aoMap);
     const os = Math.max(0, Math.min(1, finUsd((m as any).aoMapIntensity, 1)));
     if (aoTex && os !== 1) aoTex.strength = os;
+    const tslGraph = (
+      m as {_serializeTslGraph?: () => Record<string, unknown> | null}
+    )._serializeTslGraph?.();
+    if (tslGraph) {
+      matExtras.tsl = tslGraph;
+    }
     const matDef: Record<string, unknown> = {
       name: m.name || '',
       pbrMetallicRoughness: pbr,
@@ -712,13 +718,6 @@ function serializeScene(
         iridescenceFactor: m.iridescence,
         iridescenceIor: m.iridescenceIOR ?? 1.3,
       };
-    }
-    const tslGraph = (
-      m as {_serializeTslGraph?: () => Record<string, unknown> | null}
-    )._serializeTslGraph?.();
-    if (tslGraph) {
-      ext.GOOGLE_material_tsl = tslGraph;
-      nodeExtensionsUsed.add('GOOGLE_material_tsl');
     }
     if (Object.keys(ext).length > 0) {
       matDef.extensions = ext;
@@ -1807,9 +1806,11 @@ export function extractMeshesFromGLB(
       let textures: Array<USDAMeshTexture | undefined> | undefined;
       // tslint:disable-next-line:no-any glTF material extensions object.
       let ext: Record<string, any> = {};
+      let tslGraph: unknown;
 
       if (prim.material !== undefined && materials[prim.material]) {
         const mat = materials[prim.material];
+        tslGraph = mat.extras?.tsl;
         materialName = matIdNames[prim.material] || `Material_${prim.material}`;
         const pbr = mat.pbrMetallicRoughness || {};
         const rgb3 = (
@@ -1911,7 +1912,7 @@ export function extractMeshesFromGLB(
         opacity,
         emissiveColor,
         ...(textures ? {textures} : {}),
-        ...(ext.GOOGLE_material_tsl ? {tslGraph: ext.GOOGLE_material_tsl} : {}),
+        ...(tslGraph ? {tslGraph} : {}),
         xrTraits: nodeXr || mesh.extras?.xr,
         ...(invisible ? {invisible: true} : {}),
       });

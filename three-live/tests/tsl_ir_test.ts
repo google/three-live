@@ -33,7 +33,7 @@ import {
 import {
   MAX_TSL_NODES,
   MAX_TSL_UNIFORMS,
-  TSL_EXTENSION_NAME,
+  TSL_EXTRAS_KEY,
   validateTslGraph,
 } from '../src/tsl/ir';
 
@@ -74,14 +74,14 @@ const {TSL, MeshStandardNodeMaterial} = T;
   const parsed = parseGLB(glbBytes);
   const gltf = parsed.gltf;
   assert.ok(
-    Array.isArray(gltf.extensionsUsed) &&
-      gltf.extensionsUsed.includes(TSL_EXTENSION_NAME),
-    'extensionsUsed includes GOOGLE_material_tsl',
+    !Array.isArray(gltf.extensionsUsed) ||
+      !gltf.extensionsUsed.some((e: string) => e.includes('material_tsl')),
+    'TSL lives in extras.tsl without registering an unratified glTF extension',
   );
   const matDef = gltf.materials[0];
   assert.strictEqual(matDef.alphaMode, 'BLEND');
-  const rawTsl = matDef.extensions?.[TSL_EXTENSION_NAME];
-  assert.ok(rawTsl, 'material extensions.GOOGLE_material_tsl present');
+  const rawTsl = matDef.extras?.[TSL_EXTRAS_KEY];
+  assert.ok(rawTsl, 'material extras.tsl present');
   assert.strictEqual(rawTsl.version, 1);
 
   // `sharedRim` used in both emissiveNode and opacityNode must be CSE-deduplicated to 1 fresnel op!

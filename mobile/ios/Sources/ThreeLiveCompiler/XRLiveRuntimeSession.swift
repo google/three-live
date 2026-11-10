@@ -625,8 +625,8 @@ public final class XRLiveRuntimeSession {
         let e = Self.doubles(m["emissiveFactor"], defaults: [0, 0, 0])
         mat.emissive = SIMD3<Double>(e[0], e[1], e[2])
         mat.alphaCutoff = XRJSON.number(m["alphaCutoff"]).flatMap { $0.isFinite ? $0 : nil } ?? 0.5
-        if let exts = XRJSON.object(m["extensions"]),
-          let rawTsl = exts[XRTslMaterialValidator.extensionName],
+        if let extras = XRJSON.object(m["extras"]),
+          let rawTsl = extras[XRTslMaterialValidator.extrasKey],
           let g = XRTslMaterialValidator.validate(
             rawTsl, materialLabel: mName.isEmpty ? "Material_\(mIdx)" : mName)
         {
@@ -1106,7 +1106,7 @@ public final class XRLiveRuntimeSession {
     return Self.publicMaterial(materials[index])
   }
 
-  /// Validated `GOOGLE_material_tsl` graph on material `index`, if present.
+  /// Validated `extras.tsl` graph on material `index`, if present.
   public func tslMaterialGraph(at index: Int) -> XRTslValidatedGraph? {
     guard index >= 0, index < materials.count else { return nil }
     return materials[index].tslGraph

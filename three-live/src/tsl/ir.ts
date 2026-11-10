@@ -16,12 +16,12 @@
  */
 
 /**
- * @fileoverview Canonical Loop-Free TSL (`GOOGLE_material_tsl`) IR Schema and
+ * @fileoverview Canonical Loop-Free TSL (`extras.tsl`) IR Schema and
  * Single-Pass `O(N)` Topological DAG Validator (`TL501–TL504`).
  */
 
-/** glTF material extension identifier for loop-free TSL node graphs. */
-export const TSL_EXTENSION_NAME = 'GOOGLE_material_tsl';
+/** glTF material `extras` key for loop-free TSL node graphs (`materials[i].extras.tsl`). */
+export const TSL_EXTRAS_KEY = 'tsl';
 
 /** Hard per-material SSA node quota preventing GPU ALU amplification / TDR. */
 export const MAX_TSL_NODES = 128;
@@ -32,10 +32,10 @@ export const MAX_TSL_UNIFORMS = 16;
 /** Time wrap period in seconds preserving fp32 phase precision over long runs. */
 export const TSL_TIME_PERIOD_SEC = 3600;
 
-/** Scalar and vector value types supported in `GOOGLE_material_tsl`. */
+/** Scalar and vector value types supported in `extras.tsl`. */
 export type TslType = 'float' | 'vec2' | 'vec3' | 'vec4';
 
-/** Built-in shader stage inputs available to `GOOGLE_material_tsl` graphs. */
+/** Built-in shader stage inputs available to `extras.tsl` graphs. */
 export type TslBuiltinName =
   | 'positionLocal'
   | 'positionWorld'
@@ -47,7 +47,7 @@ export type TslBuiltinName =
   | 'instanceIndex'
   | 'time';
 
-/** Complete bounded op vocabulary of `GOOGLE_material_tsl` v1. */
+/** Complete bounded op vocabulary of `extras.tsl` v1. */
 export type TslOpName =
   | 'const'
   | 'builtin'
@@ -93,13 +93,13 @@ export type TslOpName =
   | 'hueShift'
   | 'bumpFromHeight';
 
-/** Serialized uniform entry in `GOOGLE_material_tsl.uniforms`. */
+/** Serialized uniform entry in `extras.tsl.uniforms`. */
 export interface TslUniformDef {
   readonly type: TslType;
   readonly value: number | readonly number[];
 }
 
-/** Single SSA node in `GOOGLE_material_tsl.nodes`. */
+/** Single SSA node in `extras.tsl.nodes`. */
 export interface TslIrNode {
   readonly op: TslOpName;
   readonly type: TslType;
@@ -109,7 +109,7 @@ export interface TslIrNode {
   readonly mask?: string;
 }
 
-/** Output socket map in `GOOGLE_material_tsl.outputs`. */
+/** Output socket map in `extras.tsl.outputs`. */
 export interface TslOutputs {
   readonly color?: number;
   readonly opacity?: number;
@@ -121,7 +121,7 @@ export interface TslOutputs {
   readonly position?: number;
 }
 
-/** Canonical serialized `GOOGLE_material_tsl` v1 material extension payload. */
+/** Canonical serialized `extras.tsl` v1 material node-graph payload. */
 export interface TslMaterialGraph {
   readonly version: 1;
   readonly uniforms?: Record<string, TslUniformDef>;
@@ -148,14 +148,14 @@ export interface ValidatedTslNode {
   readonly mask?: string;
 }
 
-/** Structured diagnostic produced when validating a `GOOGLE_material_tsl` graph. */
+/** Structured diagnostic produced when validating an `extras.tsl` graph. */
 export interface TslValidationIssue {
   readonly code: 'TL501' | 'TL502' | 'TL503' | 'TL504';
   readonly message: string;
   readonly hint: string;
 }
 
-/** Validated, immutable `GOOGLE_material_tsl` graph with precomputed metadata. */
+/** Validated, immutable `extras.tsl` graph with precomputed metadata. */
 export interface ValidatedTslGraph {
   readonly nodes: readonly ValidatedTslNode[];
   readonly outputs: TslOutputs;
@@ -321,7 +321,7 @@ export function packUniformVec4(
 }
 
 /**
- * Validates an untrusted `GOOGLE_material_tsl` JSON object in `O(N)` time,
+ * Validates an untrusted `extras.tsl` JSON object in `O(N)` time,
  * guaranteeing acyclicity, quotas, type safety, and stage boundaries.
  */
 export function validateTslGraph(
@@ -329,7 +329,7 @@ export function validateTslGraph(
   materialLabel = 'Material',
 ): TslValidationResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return fail('TL501', `Invalid GOOGLE_material_tsl on '${materialLabel}'.`);
+    return fail('TL501', `Invalid extras.tsl on '${materialLabel}'.`);
   }
   const obj = raw as Record<string, unknown>;
   if (obj['version'] !== 1) {

@@ -459,7 +459,7 @@ live Three.js scenes:
     `MSFT_lod`), 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` Booleans, 3D vector
     `TextGeometry`, 64-joint GPU skeletal skinning, morph targets, keyframe
     cross-fading, two-bone / FABRIK inverse kinematics (`ik`), loop-free
-    `THREE.TSL` procedural node materials (`tslPlugin` / `GOOGLE_material_tsl`),
+    `THREE.TSL` procedural node materials (`tslPlugin` / `extras.tsl`),
     LLM scene editing, and `GPURenderBundle` WebGPU scene acceleration
     (`renderer="auto | webgpu | webgl2"`).
 *   **Hardware XR sensors (`xr-live-sensors.min.js`, `< 10 KB gz`):** Adds
@@ -512,7 +512,7 @@ plugins:
 | **`morph`** | `morphTargetInfluences` | GPU morph-target vertex displacement and weight blending. |
 | **`keyframes`** | `animationCrossfadeDuration` | Linear, step, and cubic-spline (`CUBICSPLINE`) TRS keyframe interpolation with smooth clip cross-fading. |
 | **`ik`** | `THREE.IKSolver`, `xr.ik` | Analytic two-bone (arm/leg with pole vector) and multi-joint FABRIK inverse kinematics chains. |
-| **`tsl`** | `THREE.TSL`, `THREE.MeshStandardNodeMaterial`, `el.setMaterialUniform()`, `GOOGLE_material_tsl` | Loop-free procedural node materials (`<= 128` SSA nodes, `<= 16` 60 Hz uniforms, 45 math/noise/Fresnel/triplanar/Voronoi/bump ops, `TL501`–`TL504` validator) compiled natively to WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, Apple RealityKit USDZ `UsdShade` / MaterialX `NodeGraph`s, Android Filament (`filamat-android` + CPU fallback), and the Rust headless PBR rasterizer. |
+| **`tsl`** | `THREE.TSL`, `THREE.MeshStandardNodeMaterial`, `el.setMaterialUniform()`, `extras.tsl` | Loop-free procedural node materials (`<= 128` SSA nodes, `<= 16` 60 Hz uniforms, 45 math/noise/Fresnel/triplanar/Voronoi/bump ops, `TL501`–`TL504` validator) compiled natively to WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, Apple RealityKit USDZ `UsdShade` / MaterialX `NodeGraph`s, Android Filament (`filamat-android` + CPU fallback), and the Rust headless PBR rasterizer. |
 | **`ai`** | `el.editScene()`, `el.compileFromImage()`, `el.connectVoice()`, `xr.material.prompt` | Bring-your-own-LLM sandboxed scene editing, image-to-scene reconstruction with spatial priors, Tap & Speak / Talk-to-Select, and content-addressed AI PBR texture packs. |
 | **`webgpu`** | `renderer="auto\|webgpu\|webgl2"` | `GPURenderBundle` + storage-buffer WebGPU scene accelerator with `depth24plus` shadow maps, custom TSL WGSL pipelines, and 1×1-scissor GPU picking. |
 <!-- mdformat on -->
@@ -584,7 +584,7 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live-ai.min.js`** | **`< 29 KB gz`** | Opt-in bring-your-own-LLM scene editing & image-to-scene synthesis: `el.editScene(instruction)` and `el.compileFromImage(image, {prompt, priors})` with sandbox validation, spatial lint checks, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak and Talk-to-Select voice editing: tap/voice selection, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. AI textures (`userData.xr.material.prompt`) from texture packs or an OpenAI-compatible Images endpoint. Also included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-webgpu.min.js`** | **`< 23 KB gz`** | Opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`): compiles multi-thousand-part CAD and glTF assemblies into pre-recorded render bundles backed by storage buffers, with `depth24plus` 2D-array shadow depth passes + 16-tap Vogel-disk PCF, 1×1-scissor `pickMeshGPU`, Loop-Free TSL `GPURenderBundle` WGSL compilation, and automatic WebGL2 fallback for WebXR, `bloom`/`outline`, transmission, and custom shaders. |
-|  | **`three-live-tsl.min.js`** | **`< 19 KB gz`** | Opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` shader graph compiler (`GOOGLE_material_tsl`): compiles bounded 45-op node materials across WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and `.usdz` `MaterialX` / `UsdShade` with 60 Hz `setMaterialUniform` updates and `TSL.time` animation. |
+|  | **`three-live-tsl.min.js`** | **`< 19 KB gz`** | Opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` shader graph compiler (`extras.tsl`): compiles bounded 45-op node materials across WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and `.usdz` `MaterialX` / `UsdShade` with 60 Hz `setMaterialUniform` updates and `TSL.time` animation. |
 |  | **`three-live-full.min.js`** | **`< 219 KB gz`** | All-in-one 3D bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai` + `webgpu` + `tsl`, all 20 plugins auto-registered). |
 | **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 56 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
 |  | **`xr-live.min.js`** | **`< 89 KB gz`** | Standard `<xr-live>` + **`three-author`** (live Three.js compiler) + runtime USDZ and GLB compiler. |

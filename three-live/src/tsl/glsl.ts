@@ -16,7 +16,7 @@
  */
 
 /**
- * @fileoverview Loop-Free TSL (`GOOGLE_material_tsl`) -> GLSL ES 300 Compiler.
+ * @fileoverview Loop-Free TSL (`extras.tsl`) -> GLSL ES 300 Compiler.
  */
 
 import {

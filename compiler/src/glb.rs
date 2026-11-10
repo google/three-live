@@ -475,8 +475,7 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
         }
         if let Some(ref tsl_val) = mat.tsl {
             if crate::tsl::validate_tsl_graph(tsl_val, &mat.name).is_ok() {
-                add_ext(crate::tsl::TSL_EXTENSION_NAME);
-                mat_exts.insert(crate::tsl::TSL_EXTENSION_NAME.to_string(), tsl_val.clone());
+                mat_json["extras"] = json!({ crate::tsl::TSL_EXTRAS_KEY: tsl_val });
             }
         }
         if !mat_exts.is_empty() {
@@ -1458,8 +1457,8 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
             let occlusion_strength =
                 m["occlusionTexture"]["strength"].as_f64().unwrap_or(1.0) as f32;
             let alpha_blend = m["alphaMode"].as_str() == Some("BLEND");
-            let tsl = m["extensions"]
-                .get(crate::tsl::TSL_EXTENSION_NAME)
+            let tsl = m["extras"]
+                .get(crate::tsl::TSL_EXTRAS_KEY)
                 .cloned()
                 .filter(|v| crate::tsl::validate_tsl_graph(v, &name).is_ok());
             materials.push(Material3D {
