@@ -1052,6 +1052,11 @@ fragColor=vec4(N,1.0);
 // 6. Isolated V8 Worker-Realm Serialization & `three-live-ai` `editScene()` TSL Integration
 (async () => {
   // 6a. Verify `installTslExtension.toString()` is 100% self-contained in an empty V8 realm
+  const installerSource = installTslExtension.toString();
+  assert.ok(
+    !installerSource.includes('__publicField'),
+    'installTslExtension must not emit external __publicField helper calls',
+  );
   const emptyRealm = vm.createContext(Object.create(null));
   const realmCheckScript = `
     (function() {

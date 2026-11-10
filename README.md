@@ -26,6 +26,7 @@ limitations under the License.
 [![Release](https://img.shields.io/github/v/release/google/three-live?include_prereleases&label=Release)](https://github.com/google/three-live/releases)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+**[🧭 Why Three-Live?](docs/why-three-live.md)** •
 **[⚡ Quickstarts (Android • iOS • CLI • Web)](#quickstarts)** •
 **[📦 Install (JitPack • SwiftPM • Cargo • npm)](#install-packages-and-bundles)** •
 **[▶ Live 3D Studio](https://google.github.io/three-live/three/)** •
@@ -640,6 +641,7 @@ components, and LLM authoring workflows:
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Guide | Audience | Contents |
 | :--------------------------------------------- | :------- | :------- |
+| **[`docs/why-three-live.md`](docs/why-three-live.md)** | All developers & evaluators | Architectural rationale, technical capabilities specific to Three-Live, comparison across 3D/XR approaches, and trade-offs. |
 | **[`docs/xr-live.md`](docs/xr-live.md)** | Android, iOS, and XR developers | Complete spatial and native SDK guide: Android (`Filament` + Jetpack XR `SceneCore`), iOS/visionOS (`RealityKit`), canonical `userData.xr` traits, all 15 spatial plugins, the six `xr-live-sim` simulation plugins, depth and physics, 25-joint hands, and WebMCP. |
 | **[`docs/three-live.md`](docs/three-live.md)** | Mobile and web developers | Complete 3D reference: Three.js authoring, `KHR_interactivity`, PBR Next and HDRI, CAD/CSG/Text, animations, 3D hotspots, and sandboxing. |
 | **[`docs/cookbook.md`](docs/cookbook.md)** | All developers | Copy-pasteable Three.js recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, CAD exploded views and measurements, magnetic snapping and persistent anchors, multi-user co-presence, and interactive training and simulation drills (`xr-live-sim`). |

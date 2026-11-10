@@ -792,6 +792,7 @@ interface PrimitiveGpu {
   /** Programs resolved per material index (KHR_materials_variants switching). */
   programCache?: Map<number, ResolvedProgram>;
   isTransmissive?: boolean;
+  alphaMode?: string;
 }
 
 interface MeshGpu {
@@ -1048,6 +1049,7 @@ function extractMaterialProps(
   | 'emissiveTexture'
   | 'emissiveFactor'
   | 'isTransmissive'
+  | 'alphaMode'
 > {
   const pbr = mat?.pbrMetallicRoughness;
   const bcf = pbr?.baseColorFactor;
@@ -1077,6 +1079,7 @@ function extractMaterialProps(
     isTransmissive:
       (mat?.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0) >
       0,
+    alphaMode: typeof mat?.alphaMode === 'string' ? mat.alphaMode : undefined,
   };
 }
 
@@ -3963,6 +3966,7 @@ export class ThreeView {
       return;
     }
     let hasTransmissive = false;
+    let hasRefraction = false;
     const renderList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
     const bindTex2D = (
@@ -4046,12 +4050,26 @@ export class ThreeView {
         }
 
         for (const prim of mesh.primitives) {
-          const isTrans = Boolean((prim as any).isTransmissive);
+          const isRefract = Boolean((prim as any).isTransmissive);
+          const isBlend = prim.alphaMode === 'BLEND';
+          const isTrans = isRefract || isBlend;
           if (!transmissivePass && isTrans) {
             hasTransmissive = true;
+            if (isRefract) hasRefraction = true;
             continue;
           }
           if (transmissivePass && !isTrans) continue;
+          if (isBlend) {
+            gl.enable(gl.BLEND);
+            (gl.blendFuncSeparate || gl.blendFunc)?.call(
+              gl,
+              gl.SRC_ALPHA,
+              gl.ONE_MINUS_SRC_ALPHA,
+              gl.ONE,
+              gl.ONE_MINUS_SRC_ALPHA,
+            );
+            gl.depthMask?.(false);
+          }
 
           const prog = prim.customProgram || this.renderProg;
           const u = prim.customUniforms || this.uRender;
@@ -4221,14 +4239,20 @@ export class ThreeView {
           } else {
             drawPrim(gl, prim);
           }
+          if (isBlend) {
+            gl.depthMask?.(true);
+            gl.disable?.(gl.BLEND);
+          }
         }
       }
     };
 
     drawPass(false);
     if (hasTransmissive) {
-      for (const plugin of registeredPlugins) {
-        plugin.onBeforeTransmissivePass?.(gl, this);
+      if (hasRefraction) {
+        for (const plugin of registeredPlugins) {
+          plugin.onBeforeTransmissivePass?.(gl, this);
+        }
       }
       drawPass(true);
     }

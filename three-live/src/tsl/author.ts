@@ -242,14 +242,14 @@ export function installTslExtension(threeNs: any, reg?: any): any {
   };
 
   class TSLNode {
-    readonly isTSLNode: true;
-    readonly _op: string;
-    readonly _type: TslType;
-    readonly _args: TSLNode[];
-    readonly _val?: number[];
-    readonly _name?: string;
-    readonly _mask?: string;
-    _uVal?: unknown;
+    declare readonly isTSLNode: true;
+    declare readonly _op: string;
+    declare readonly _type: TslType;
+    declare readonly _args: TSLNode[];
+    declare readonly _val?: number[];
+    declare readonly _name?: string;
+    declare readonly _mask?: string;
+    declare _uVal?: unknown;
 
     constructor(
       op: string,
@@ -649,15 +649,15 @@ export function installTslExtension(threeNs: any, reg?: any): any {
   }
 
   class MeshStandardNodeMaterial extends threeNs.MeshPhysicalMaterial {
-    isMeshStandardNodeMaterial: boolean;
-    colorNode: unknown;
-    private _opacityNode: unknown;
-    emissiveNode: unknown;
-    roughnessNode: unknown;
-    metalnessNode: unknown;
-    normalScaleNode: unknown;
-    bumpNode: unknown;
-    positionNode: unknown;
+    declare isMeshStandardNodeMaterial: boolean;
+    declare colorNode: unknown;
+    declare private _opacityNode: unknown;
+    declare emissiveNode: unknown;
+    declare roughnessNode: unknown;
+    declare metalnessNode: unknown;
+    declare normalScaleNode: unknown;
+    declare bumpNode: unknown;
+    declare positionNode: unknown;
 
     get opacityNode(): unknown {
       return this._opacityNode;

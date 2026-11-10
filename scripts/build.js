@@ -712,6 +712,9 @@ function buildThreeLive() {
       path.join(tlDist, 'three-live-cad.min.js'),
       path.join(THREE_LIVE_DIR, 'examples/three-live-cad.min.js'));
   fs.copyFileSync(
+      path.join(tlDist, 'three-live-procedural.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-procedural.min.js'));
+  fs.copyFileSync(
       path.join(tlDist, 'three-live-animation.min.js'),
       path.join(THREE_LIVE_DIR, 'examples/three-live-animation.min.js'));
   fs.copyFileSync(
@@ -732,6 +735,9 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-cad.min.js'),
       path.join(ROOT_DIR, 'examples/three/three-live-cad.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-procedural.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-procedural.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-animation.min.js'),
       path.join(ROOT_DIR, 'examples/three/three-live-animation.min.js'));
