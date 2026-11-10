@@ -24,7 +24,8 @@ use crate::gym::{GymObserveOptions, GymSession, GymStepOutput};
 use crate::reference::{compare_scene_to_reference, decode_reference_image, load_reference_bytes};
 use crate::render::{
     encode_gif_frames, encode_png_rgba, encode_png_rgba_compressed, render_scene_rgba,
-    render_viewport_rgba, stitch_filmstrip_horizontal, RenderOptions, RenderViewMode,
+    render_viewport_rgba, render_viewport_rgba_at_time, stitch_filmstrip_horizontal, RenderOptions,
+    RenderViewMode,
 };
 use crate::scene::{CameraConfig, Diagnostic, SceneGraph};
 use crate::sim::{
@@ -1533,7 +1534,7 @@ fn call_tool_render(args: &Value) -> Value {
             } else {
                 format!("T={:.2}S", t_sec)
             };
-            let rgba = render_viewport_rgba(
+            let rgba = render_viewport_rgba_at_time(
                 &frame_scene,
                 w,
                 h,
@@ -1541,6 +1542,7 @@ fn call_tool_render(args: &Value) -> Value {
                 grid,
                 annotations,
                 Some(&label),
+                t_sec as f32,
             );
             captured.push(rgba);
         }

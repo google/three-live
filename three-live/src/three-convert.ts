@@ -712,6 +712,13 @@ function serializeScene(
         iridescenceIor: m.iridescenceIOR ?? 1.3,
       };
     }
+    const tslGraph = (
+      m as {_serializeTslGraph?: () => Record<string, unknown> | null}
+    )._serializeTslGraph?.();
+    if (tslGraph) {
+      ext.GOOGLE_material_tsl = tslGraph;
+      nodeExtensionsUsed.add('GOOGLE_material_tsl');
+    }
     if (Object.keys(ext).length > 0) {
       matDef.extensions = ext;
     }

@@ -54,6 +54,7 @@ import {
   mat4LookAt,
   mat4Multiply,
 } from './three-view';
+import {installTslExtension} from './tsl/author';
 import {registerSimTraitSchema} from './xr-sim-schema';
 import {
   buildHubsExtension,
@@ -5137,6 +5138,7 @@ const threeExports: Record<string, any> = {
   sceneToGLB,
   sceneToUSDZ,
   authorScriptRunner,
+  warnUnsupported,
   getAuthorWarnings,
   clearAuthorWarnings,
 };
@@ -5251,6 +5253,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   installIKExtension(THREE, getSharedRegistry());
   installLodExtension(THREE, getSharedRegistry());
   installProceduralExtension(THREE, getSharedRegistry());
+  installTslExtension(THREE, getSharedRegistry());
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -5489,6 +5492,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           : emUri && !mat._em
             ? [ei, ei, ei]
             : [0, 0, 0];
+        const tslGraph = (
+          mat as {_serializeTslGraph?: () => Record<string, unknown> | null}
+        )._serializeTslGraph?.();
         materials.push({
           name: mat.name || `Material_${materials.length}`,
           base_color: [
@@ -5500,6 +5506,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           metallic: mat.metalness !== undefined ? mat.metalness : 0.0,
           roughness: mat.roughness !== undefined ? mat.roughness : 0.5,
           double_sided: mat.side === 2 || mat.doubleSided,
+          alpha_blend: Boolean(mat.transparent || (mat.opacity ?? 1) < 1),
           base_color_texture: mapUrl || null,
           metallic_roughness_texture: mrUri || null,
           normal_texture: normUri || null,
@@ -5513,6 +5520,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           transmission: mat.transmission || 0.0,
           ior: mat.ior !== undefined ? mat.ior : 1.5,
           thickness: mat.thickness || 0.0,
+          tsl_json: tslGraph ? JSON.stringify(tslGraph) : null,
         });
         idx = materials.length - 1;
       }
@@ -5908,13 +5916,24 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       );
     };
     for (const message of getAuthorWarnings()) {
-      const [code, hint] =
-        message.includes('ShaderMaterial') ||
+      const tslTag = /\[(TL50[1-4])\]/.exec(message);
+      const [code, hint] = tslTag
+        ? [
+            tslTag[1],
+            tslTag[1] === 'TL504'
+              ? 'Three-Live TSL requires loop-free acyclic expressions; replace TSL.Loop/While with fixed unrolled octaves.'
+              : tslTag[1] === 'TL503'
+                ? 'Do not wire fragment-only nodes (viewDirection, fresnel, bumpFromHeight) into positionNode.'
+                : tslTag[1] === 'TL502'
+                  ? 'Keep TSL materials within <= 128 SSA nodes and <= 16 uniforms.'
+                  : 'Ensure TSL expressions use valid types and swizzle masks on THREE.MeshStandardNodeMaterial.',
+          ]
+        : message.includes('ShaderMaterial') ||
         message.includes('RawShaderMaterial') ||
         message.includes('unsupported material')
           ? [
               'TL101',
-              'Use THREE.MeshStandardMaterial({ color, metalness, roughness }) instead of custom GLSL shaders.',
+              'Use THREE.MeshStandardMaterial({ color, metalness, roughness }) or THREE.MeshStandardNodeMaterial with THREE.TSL instead of custom GLSL shaders.',
             ]
           : message.includes('requestAnimationFrame')
             ? [

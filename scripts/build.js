@@ -1075,6 +1075,22 @@ function reportSizes() {
       failures.push(`dist/${name} unexpectedly bundles shadowMapsPlugin`);
     }
   }
+  // Core & studio bundles must not carry TSL node-material runtime unless
+  // three-live-tsl or full is loaded.
+  for (const name
+           of ['three-live-viewer.min.js',
+               'three-live.min.js',
+               'three-live-studio.min.js',
+               'xr-live-viewer.min.js',
+               'xr-live.min.js',
+  ]) {
+    const filePath = path.join(DIST_DIR, name);
+    if (fs.existsSync(filePath) &&
+        fs.readFileSync(filePath, 'utf8')
+            .includes('isMeshStandardNodeMaterial')) {
+      failures.push(`dist/${name} unexpectedly bundles three-live-tsl`);
+    }
+  }
   if (failures.length > 0) {
     console.error('Bundle size budget check failed:');
     for (const failure of failures) {

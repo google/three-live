@@ -34,6 +34,7 @@ pub mod scene_link;
 pub mod sim;
 pub mod spatial_lint;
 pub mod time;
+pub mod tsl;
 pub mod usdz;
 
 #[cfg(target_arch = "wasm32")]
@@ -57,6 +58,7 @@ pub use render::*;
 pub use scene::{CameraConfig, Diagnostic, SceneGraph};
 pub use sim::*;
 pub use spatial_lint::*;
+pub use tsl::*;
 pub use usdz::*;
 
 #[cfg(any(feature = "wasm", target_arch = "wasm32"))]

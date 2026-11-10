@@ -340,10 +340,16 @@ impl SimStepper {
         self.state.tick
     }
 
-    /// True when the scene changes over time on its own (`animate`, `requestAnimationFrame`, or
-    /// interactivity function hooks).
+    /// True when the scene changes over time on its own (`animate`, `requestAnimationFrame`,
+    /// interactivity function hooks, or `TSL.time` node materials).
     pub fn is_time_varying(&self) -> bool {
         self.script.is_some()
+            || self.initial_scene.materials.iter().any(|m| {
+                m.tsl
+                    .as_ref()
+                    .and_then(|v| crate::tsl::validate_tsl_graph(v, &m.name).ok())
+                    .is_some_and(|g| g.uses_time)
+            })
     }
 
     /// Simulates up to `to_tick` (at most 7200). `actions` is the whole timeline so far, with

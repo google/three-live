@@ -1131,6 +1131,19 @@ impl ThreeEngine {
                                 .and_then(|v| v.as_number())
                                 .unwrap_or(0.0) as f32;
 
+                            let alpha_blend = mat_obj
+                                .get(js_string!("alpha_blend"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_boolean())
+                                .unwrap_or(false);
+
+                            let raw_tsl = read_json_field(
+                                &mat_obj,
+                                "tsl_json",
+                                MAX_INTERACTIVITY_JSON_BYTES,
+                                &mut self.context,
+                            );
+
                             rust_materials.push(Material3D {
                                 name,
                                 base_color,
@@ -1150,6 +1163,8 @@ impl ThreeEngine {
                                 transmission,
                                 ior,
                                 thickness,
+                                alpha_blend,
+                                tsl: raw_tsl,
                             });
                         }
                     }
@@ -1357,7 +1372,7 @@ impl ThreeEngine {
         )
         .filter(|v| v.is_object());
 
-        let diagnostics: Vec<Diagnostic> = scene_obj
+        let mut diagnostics: Vec<Diagnostic> = scene_obj
             .get(js_string!("diagnostics_json"), &mut self.context)
             .ok()
             .and_then(|v| {
@@ -1367,6 +1382,15 @@ impl ThreeEngine {
             })
             .and_then(|json_str| serde_json::from_str::<Vec<Diagnostic>>(&json_str).ok())
             .unwrap_or_default();
+
+        for mat in &mut rust_materials {
+            if let Some(ref tsl_val) = mat.tsl {
+                if let Err(diag) = crate::tsl::validate_tsl_graph(tsl_val, &mat.name) {
+                    diagnostics.push(diag);
+                    mat.tsl = None;
+                }
+            }
+        }
 
         // 5. Scene hierarchy (absent on legacy engine assets -> flat layout).
         let nodes = self.extract_nodes(&scene_obj, rust_meshes.len())?;
