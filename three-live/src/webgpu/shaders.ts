@@ -32,11 +32,11 @@ export const PART_STRIDE_WORDS = 32;
 /** Stride in bytes of one `PartInstance` entry in the storage buffer (128B). */
 export const PART_STRIDE_BYTES = 128;
 
-/** Stride in 32-bit floats of one interleaved vertex (`pos + normal + uv`). */
-export const VERTEX_STRIDE_FLOATS = 8;
+/** Stride in 32-bit floats of one interleaved vertex (`pos + normal + uv + color`). */
+export const VERTEX_STRIDE_FLOATS = 11;
 
-/** Stride in bytes of one interleaved vertex (32B). */
-export const VERTEX_STRIDE_BYTES = 32;
+/** Stride in bytes of one interleaved vertex (44B). */
+export const VERTEX_STRIDE_BYTES = 44;
 
 /** Part flag: `model` is already in world space (skip `sc.modelRoot`). */
 export const PART_FLAG_WORLD_SPACE = 1;
@@ -437,6 +437,7 @@ struct VsOut {
   @location(0) worldPos: vec3<f32>,
   @location(1) normal: vec3<f32>,
   @location(2) uv: vec2<f32>,
+  @location(6) vColor: vec3<f32>,
   @location(3) @interpolate(flat) instIdx: u32,
 };
 
@@ -445,6 +446,7 @@ fn vsMain(
   @location(0) aPos: vec3<f32>,
   @location(1) aNormal: vec3<f32>,
   @location(2) aUV: vec2<f32>,
+  @location(3) aColor: vec3<f32>,
   @builtin(instance_index) instIdx: u32,
 ) -> VsOut {
   let p = parts[instIdx];
@@ -454,6 +456,7 @@ fn vsMain(
     out.worldPos = vec3<f32>(0.0);
     out.normal = vec3<f32>(0.0, 1.0, 0.0);
     out.uv = vec2<f32>(0.0);
+    out.vColor = vec3<f32>(1.0);
     out.instIdx = instIdx;
     return out;
   }
@@ -494,6 +497,7 @@ fn vsMain(
   out.worldPos = world.xyz;
   out.normal = select(vec3<f32>(0.0), rawN / nLen, nLen > 1e-5);
   out.uv = uv;
+  out.vColor = aColor;
   out.instIdx = instIdx;
   return out;
 }
@@ -662,7 +666,7 @@ fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) v
     discard;
   }
 
-  var base = p.baseColor;
+  var base = p.baseColor * vec4<f32>(in.vColor, 1.0);
   if ((pFlags & 2u) != 0u) {
     base *= baseTexel;
   }

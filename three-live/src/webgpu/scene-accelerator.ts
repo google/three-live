@@ -247,6 +247,7 @@ interface PrimitiveLike {
   positions?: Float32Array | null;
   normals?: Float32Array | null;
   uvs?: Float32Array | null;
+  colors?: Float32Array | null;
   indices?: Uint16Array | Uint32Array | null;
   indexCount?: number;
   instanceCount?: number;
@@ -1040,6 +1041,7 @@ function getTslShaderEntry(
               {shaderLocation: 0, offset: 0, format: 'float32x3'},
               {shaderLocation: 1, offset: 12, format: 'float32x3'},
               {shaderLocation: 2, offset: 24, format: 'float32x2'},
+              {shaderLocation: 3, offset: 32, format: 'float32x3'},
             ],
           },
         ],
@@ -1072,6 +1074,7 @@ const PBR_VERTEX_BUFFERS = [
       {shaderLocation: 0, offset: 0, format: 'float32x3'},
       {shaderLocation: 1, offset: 12, format: 'float32x3'},
       {shaderLocation: 2, offset: 24, format: 'float32x2'},
+      {shaderLocation: 3, offset: 32, format: 'float32x3'},
     ],
   },
 ];
@@ -1715,11 +1718,14 @@ function compileScene(
     const pos = g.posRef;
     const norm = g.prim.normals;
     const uvs = g.prim.uvs;
+    const colors = g.prim.colors;
     const vCount = g.vertexCount;
+    const cStride = colors && colors.length === vCount * 4 ? 4 : 3;
     let dst = g.firstVertex * VERTEX_STRIDE_FLOATS;
     for (let v = 0; v < vCount; v++) {
       const p3 = v * 3;
       const u2 = v * 2;
+      const cOff = v * cStride;
       vSlab[dst] = pos[p3];
       vSlab[dst + 1] = pos[p3 + 1];
       vSlab[dst + 2] = pos[p3 + 2];
@@ -1731,6 +1737,15 @@ function compileScene(
       if (uvs && u2 + 1 < uvs.length) {
         vSlab[dst + 6] = uvs[u2];
         vSlab[dst + 7] = uvs[u2 + 1];
+      }
+      if (colors && cOff + 2 < colors.length) {
+        vSlab[dst + 8] = colors[cOff];
+        vSlab[dst + 9] = colors[cOff + 1];
+        vSlab[dst + 10] = colors[cOff + 2];
+      } else {
+        vSlab[dst + 8] = 1;
+        vSlab[dst + 9] = 1;
+        vSlab[dst + 10] = 1;
       }
       dst += VERTEX_STRIDE_FLOATS;
     }

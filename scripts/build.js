@@ -1098,8 +1098,8 @@ function reportSizes() {
   console.log('------------------------------------------------------------------------------');
   const files = [
     {name: 'three-live-viewer.min.js', budgetKb: '31'},
-    {name: 'three-live.min.js', budgetKb: '77'},
-    {name: 'three-live-studio.min.js', budgetKb: '35'},
+    {name: 'three-live.min.js', budgetKb: '78'},
+    {name: 'three-live-studio.min.js', budgetKb: '36'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-kit-mechanical.min.js', budgetKb: '18'},
     {name: 'three-live-kit-architecture.min.js', budgetKb: '16'},
@@ -1112,14 +1112,14 @@ function reportSizes() {
     {name: 'three-live-ai.min.js', budgetKb: '32'},
     {name: 'three-live-webgpu.min.js', budgetKb: '23'},
     {name: 'three-live-tsl.min.js', budgetKb: '19'},
-    {name: 'three-live-full.min.js', budgetKb: '221'},
+    {name: 'three-live-full.min.js', budgetKb: '223'},
     {name: 'xr-live-viewer.min.js', budgetKb: '56'},
-    {name: 'xr-live.min.js', budgetKb: '89'},
+    {name: 'xr-live.min.js', budgetKb: '90'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '63'},
     {name: 'xr-live-sim.min.js', budgetKb: '30'},
     {name: 'xr-live-webgpu.min.js', budgetKb: '12'},
-    {name: 'xr-live-full.min.js', budgetKb: '330'},
+    {name: 'xr-live-full.min.js', budgetKb: '332'},
   ];
   const failures = [];
   for (const f of files) {

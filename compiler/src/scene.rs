@@ -143,6 +143,8 @@ pub struct Mesh3D {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    #[serde(default)]
+    pub colors: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub material_index: Option<usize>,
     #[serde(default)]

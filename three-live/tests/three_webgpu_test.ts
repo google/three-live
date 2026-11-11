@@ -680,7 +680,7 @@ async function runTests(): Promise<void> {
     assert.strictEqual(SCENE_UNIFORM_BYTES, 800);
     assert.strictEqual(PART_STRIDE_BYTES, 128);
     assert.strictEqual(PART_STRIDE_WORDS, 32);
-    assert.strictEqual(VERTEX_STRIDE_BYTES, 32);
+    assert.strictEqual(VERTEX_STRIDE_BYTES, 44);
 
     for (const code of [SCENE_PBR_WGSL, SCENE_SHADOW_WGSL, SCENE_PICK_WGSL]) {
       assert.ok(code.includes('struct SceneUniforms'));
@@ -1409,6 +1409,78 @@ async function runTests(): Promise<void> {
           delete (globalThis as Record<string, unknown>)['navigator'];
         }
       }
+    } finally {
+      resetSceneWebGPUDevice();
+      harness.restoreGlobals();
+    }
+  });
+
+  await test('Stage 1: WebGPU vertex color packing (vSlab offset 8..10, shaderLocation 3) and WGSL vColor multiplication', async () => {
+    assert.ok(
+      SCENE_PBR_WGSL.includes('@location(3) aColor: vec3<f32>') &&
+        SCENE_PBR_WGSL.includes('@location(6) vColor: vec3<f32>') &&
+        SCENE_PBR_WGSL.includes('p.baseColor * vec4<f32>(in.vColor, 1.0)'),
+      'SCENE_PBR_WGSL wires @location(3) aColor -> @location(6) vColor and multiplies p.baseColor',
+    );
+    const gpu = createMockGPUDevice();
+    const harness = createMockHarness();
+    setSceneWebGPUDeviceForTests(gpu.device, 'bgra8unorm');
+    try {
+      harness.attrs.set('renderer', 'webgpu');
+      const glbData = buildMultiPartCadGLBData(1);
+      // Add COLOR_0 accessor to the primitive
+      const binOld = new Uint8Array(glbData.bin);
+      const colFloats = new Float32Array([0.9, 0.1, 0.2, 0.2, 0.9, 0.1, 0.1, 0.2, 0.9]);
+      const colBytes = new Uint8Array(
+        colFloats.buffer,
+        colFloats.byteOffset,
+        colFloats.byteLength,
+      );
+      const binNew = new Uint8Array(binOld.byteLength + colBytes.byteLength);
+      binNew.set(binOld, 0);
+      binNew.set(colBytes, binOld.byteLength);
+      const bvIdx = glbData.gltf.bufferViews.length;
+      glbData.gltf.bufferViews.push({
+        buffer: 0,
+        byteOffset: binOld.byteLength,
+        byteLength: colBytes.byteLength,
+      });
+      const accIdx = glbData.gltf.accessors.length;
+      glbData.gltf.accessors.push({
+        bufferView: bvIdx,
+        byteOffset: 0,
+        componentType: 5126,
+        count: 3,
+        type: 'VEC3',
+      });
+      glbData.gltf.meshes[0].primitives[0].attributes.COLOR_0 = accIdx;
+      glbData.bin = binNew.buffer;
+
+      const viewer = new ThreeView(harness.container, harness.glCanvas, {
+        autoStart: false,
+      });
+      viewer.loadGLBData(glbData);
+      await new Promise((r) => setTimeout(r, 0));
+      viewer.render();
+
+      // Find the vertex buffer write (3 vertices * 44 bytes = 132 bytes)
+      const vWrite = gpu.writes.find((w) => w.byteLength === 3 * 44);
+      assert.ok(vWrite, 'expected 132-byte (3 * 44B) vertex slab upload');
+      const vFloats = new Float32Array(
+        vWrite!.snapshot.buffer,
+        vWrite!.snapshot.byteOffset,
+        3 * 11,
+      );
+      assert.ok(
+        Math.abs(vFloats[8] - 0.9) < 1e-5 &&
+          Math.abs(vFloats[9] - 0.1) < 1e-5 &&
+          Math.abs(vFloats[10] - 0.2) < 1e-5 &&
+          Math.abs(vFloats[11 + 8] - 0.2) < 1e-5 &&
+          Math.abs(vFloats[11 + 9] - 0.9) < 1e-5 &&
+          Math.abs(vFloats[22 + 10] - 0.9) < 1e-5,
+        'WebGPU vSlab packs COLOR_0 at float offsets 8..10 (byte offset 32)',
+      );
+      viewer.destroy();
     } finally {
       resetSceneWebGPUDevice();
       harness.restoreGlobals();

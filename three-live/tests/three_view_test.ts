@@ -2907,6 +2907,94 @@ async function runThreeViewTests() {
     );
   }
 
+  // Stage 1: ThreeView COLOR_0 per-vertex color attribute binding (location 6, VEC3/VEC4/Uint8Array) and generic default.
+  {
+    const boundAttribs: number[] = [];
+    const genericAttrib4fCalls: Array<[number, number, number, number, number]> = [];
+    const vcGl: any = new Proxy(
+      {
+        canvas: {width: 400, height: 400},
+        getShaderParameter: () => true,
+        getProgramParameter: () => true,
+        getUniformLocation: (_p: any, name: string) => ({name}),
+        enableVertexAttribArray: (loc: number) => {
+          boundAttribs.push(loc);
+        },
+        vertexAttrib4f: (
+          loc: number,
+          x: number,
+          y: number,
+          z: number,
+          w: number,
+        ) => {
+          genericAttrib4fCalls.push([loc, x, y, z, w]);
+        },
+      },
+      {
+        get(t, p) {
+          return p in t ? (t as any)[p] : () => ({});
+        },
+      },
+    );
+    const vcCanvas: any = {
+      ...mockCanvas,
+      getContext: () => vcGl,
+    };
+    const vcScene = new THREE.Scene();
+    const vcGeo = new THREE.BufferGeometry();
+    vcGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(
+        new Float32Array([-0.5, 0, 0, 0.5, 0, 0, 0, 0.8, 0]),
+        3,
+      ),
+    );
+    vcGeo.setAttribute(
+      'normal',
+      new THREE.BufferAttribute(
+        new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+        3,
+      ),
+    );
+    vcGeo.setAttribute(
+      'color',
+      new THREE.BufferAttribute(
+        new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+        3,
+      ),
+    );
+    vcGeo.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
+    vcScene.add(
+      new THREE.Mesh(
+        vcGeo,
+        new THREE.MeshStandardMaterial({vertexColors: true}),
+      ),
+    );
+
+    const vcGlb = parseGLB(vcScene.toGLB());
+    const vcView = new ThreeView(vcCanvas, vcCanvas, {autoStart: false});
+    boundAttribs.length = 0;
+    vcView.loadGLBData(vcGlb);
+    const loadedPrim = (vcView as any).meshes?.[0]?.primitives?.[0];
+    assert(
+      boundAttribs.includes(6) &&
+        loadedPrim?.colors instanceof Float32Array &&
+        loadedPrim.colors.length === 9 &&
+        Math.abs(loadedPrim.colors[0] - 1) < 1e-5 &&
+        Math.abs(loadedPrim.colors[4] - 1) < 1e-5 &&
+        Math.abs(loadedPrim.colors[8] - 1) < 1e-5,
+      'ThreeView.loadGLBData binds COLOR_0 at attribute location 6 and populates PrimitiveGpu.colors for WebGPU parity',
+    );
+    genericAttrib4fCalls.length = 0;
+    vcView.render();
+    assert(
+      genericAttrib4fCalls.some(
+        (c) => c[0] === 6 && c[1] === 1 && c[2] === 1 && c[3] === 1 && c[4] === 1,
+      ),
+      'ThreeView.render sets default generic vertexAttrib4f(6, 1, 1, 1, 1) before drawing primitives',
+    );
+  }
+
   console.log(
     `\n🏆 three-view Test Results: ${passed} Passed, ${failed} Failed.`,
   );
