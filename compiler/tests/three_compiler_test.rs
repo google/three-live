@@ -4824,7 +4824,8 @@ fn test_tsl_node_material_glb_roundtrip_diagnostics_and_rasterizer() {
     );
     assert_ne!(f0, f1, "TSL.time scanlines animate across rasterizer frames");
 
-    // USDZ `MaterialX` / `UsdShade` NodeGraph export (`transcode_three_to_usdz` & `transcode_glb_to_usdz`)
+    // USDZ `MaterialX` / `UsdShade` NodeGraph export (`transcode_three_to_usdz` &
+    // `transcode_glb_to_usdz`)
     let usdz = three_live_compiler::transcode_three_to_usdz(script)
         .expect("TSL scene should transcode to 64-byte aligned USDZ");
     let fn_len = u16::from_le_bytes([usdz[26], usdz[27]]) as usize;
@@ -4884,7 +4885,8 @@ fn test_front_side_material_exports_double_sided_false() {
 
 #[test]
 fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
-    // Sub-assembly 1: Drivetrain (SpurGear + Pinion + gearMeshDistance + Rack + Pulley + Shaft + Bearing + HelicalSpring)
+    // Sub-assembly 1: Drivetrain (SpurGear + Pinion + gearMeshDistance + Rack + Pulley + Shaft +
+    // Bearing + HelicalSpring)
     let drivetrain_script = r#"
         const steel = new THREE.MeshStandardMaterial({
             name: "MachinedSteel",
@@ -5502,10 +5504,7 @@ fn test_stage1_vertex_colors_glb_usdz_and_render_parity() {
 
     let glb = transcode_three_to_glb(script).expect("GLB export should succeed");
     let glb_str = String::from_utf8_lossy(&glb);
-    assert!(
-        glb_str.contains("\"COLOR_0\""),
-        "GLB JSON chunk must contain COLOR_0 attribute"
-    );
+    assert!(glb_str.contains("\"COLOR_0\""), "GLB JSON chunk must contain COLOR_0 attribute");
     let parsed_scene = three_live_compiler::glb::read_glb(&glb).expect("read_glb should succeed");
     assert_eq!(
         parsed_scene.meshes[0].colors.len(),
@@ -5513,8 +5512,8 @@ fn test_stage1_vertex_colors_glb_usdz_and_render_parity() {
         "read_glb must round-trip COLOR_0 into Mesh3D.colors"
     );
 
-    let usdz = three_live_compiler::transcode_three_to_usdz(script)
-        .expect("USDZ export should succeed");
+    let usdz =
+        three_live_compiler::transcode_three_to_usdz(script).expect("USDZ export should succeed");
     let usda = String::from_utf8_lossy(&usdz);
     assert!(
         usda.contains("color3f[] primvars:displayColor = [")
@@ -5571,4 +5570,77 @@ fn test_stage1_vertex_colors_glb_usdz_and_render_parity() {
     assert_eq!(sci_scene.meshes.len(), 2);
     assert_eq!(sci_scene.meshes[0].colors.len(), sci_scene.meshes[0].positions.len());
     assert_eq!(sci_scene.meshes[1].colors.len(), sci_scene.meshes[1].positions.len());
+}
+
+#[test]
+fn test_stage2_science_colormaps_isosurface_and_streamlines() {
+    let iso_script = r#"
+        const gyroid = new THREE.Mesh(
+            new THREE.Science.IsoSurfaceGeometry({
+                preset: "gyroid",
+                resolution: 10,
+                shellThickness: 0.3,
+                colormap: "viridis"
+            }),
+            new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.1 })
+        );
+        gyroid.name = "GyroidShell";
+        scene.add(gyroid);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(2, 4, 3);
+        scene.add(sun);
+        camera.position.set(0, 1.5, 4.5);
+        camera.lookAt(0, 0, 0);
+    "#;
+
+    let iso_scene = validate_three_script(iso_script)
+        .expect("IsoSurfaceGeometry script should compile cleanly");
+    assert_eq!(iso_scene.meshes.len(), 1);
+    assert!(
+        iso_scene.meshes[0].positions.len() > 200
+            && iso_scene.meshes[0].colors.len() == iso_scene.meshes[0].positions.len(),
+        "Gyroid IsoSurfaceGeometry must populate vertex positions and viridis colors"
+    );
+
+    let glb =
+        transcode_three_to_glb(iso_script).expect("Stage 2 IsoSurface GLB export should succeed");
+    assert!(glb.len() > 2048);
+
+    let stream_script = r#"
+        const streamlines = new THREE.Mesh(
+            new THREE.Science.StreamlineGeometry({
+                preset: "lorenz",
+                seedCount: 3,
+                steps: 32,
+                arrowsPerLine: 2,
+                colormap: "plasma"
+            }),
+            new THREE.MeshStandardMaterial({ roughness: 0.35 })
+        );
+        streamlines.name = "LorenzAttractor";
+        scene.add(streamlines);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(2, 4, 3);
+        scene.add(sun);
+        camera.position.set(0, 1.5, 4.5);
+        camera.lookAt(0, 0, 0);
+    "#;
+
+    let stream_scene = validate_three_script(stream_script)
+        .expect("StreamlineGeometry script should compile cleanly");
+    assert_eq!(stream_scene.meshes.len(), 1);
+    assert!(
+        stream_scene.meshes[0].positions.len() > 200
+            && stream_scene.meshes[0].colors.len() == stream_scene.meshes[0].positions.len(),
+        "Lorenz StreamlineGeometry must populate vertex positions and plasma speed colors"
+    );
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(stream_script)
+        .expect("Stage 2 Streamline USDZ export should succeed");
+    let usda = String::from_utf8_lossy(&usdz);
+    assert!(usda.contains("color3f[] primvars:displayColor = ["));
 }

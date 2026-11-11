@@ -18,9 +18,12 @@ import {
   MAX_SCI_BASE_PAIRS,
   MAX_SCI_GLYPHS,
   MAX_SCI_GRID,
+  MAX_SCI_ISOSURFACE_RES,
   MAX_SCI_RIBBON_POINTS,
+  MAX_SCI_STREAMLINE_STEPS,
   scienceKitPlugin,
 } from '../src/kit-science';
+import {getSharedRegistry} from '../src/plugin';
 import {
   BufferAttribute,
   BufferGeometry,
@@ -32,7 +35,6 @@ import {
   THREE,
   Vector3,
 } from '../src/three-author';
-import {getSharedRegistry} from '../src/plugin';
 import {parseGLB} from '../src/three-view';
 
 let passed = 0;
@@ -219,7 +221,9 @@ function auditGeometry(
   };
 }
 
-console.log('=== Running kit_science_test.ts (Science / Chemistry / Math Kit Audit) ===');
+console.log(
+  '=== Running kit_science_test.ts (Science / Chemistry / Math Kit Audit) ===',
+);
 
 // 1. Plugin registration & namespace attachment
 scienceKitPlugin.onRegister?.();
@@ -241,13 +245,19 @@ assert(
     MAX_SCI_GLYPHS === 1000 &&
     MAX_SCI_BASE_PAIRS === 256 &&
     MAX_SCI_RIBBON_POINTS === 512 &&
-    Sci.MAX_SCI_RIBBON_POINTS === 512,
+    MAX_SCI_ISOSURFACE_RES === 48 &&
+    MAX_SCI_STREAMLINE_STEPS === 240 &&
+    Sci.MAX_SCI_RIBBON_POINTS === 512 &&
+    Sci.MAX_SCI_ISOSURFACE_RES === 48 &&
+    Sci.MAX_SCI_STREAMLINE_STEPS === 240,
   'exported quota constants match THREE.Science limits',
 );
 assert(
   Object.isFrozen(Sci) &&
     Object.isFrozen(Sci.MoleculeGeometry.prototype) &&
-    Object.isFrozen(Sci.RibbonGeometry.prototype),
+    Object.isFrozen(Sci.RibbonGeometry.prototype) &&
+    Object.isFrozen(Sci.IsoSurfaceGeometry.prototype) &&
+    Object.isFrozen(Sci.StreamlineGeometry.prototype),
   'THREE.Science and geometry prototypes are frozen against sandbox mutation',
 );
 
@@ -293,7 +303,12 @@ for (const preset of [
   auditGeometry(
     new Sci.MoleculeGeometry({
       preset,
-      style: preset === 'water' ? 'space-filling' : preset === 'ethanol' ? 'licorice' : 'ball-and-stick',
+      style:
+        preset === 'water'
+          ? 'space-filling'
+          : preset === 'ethanol'
+            ? 'licorice'
+            : 'ball-and-stick',
     }),
     `MoleculeGeometry (${preset})`,
     {expectWatertight: true},
@@ -480,7 +495,11 @@ assert(
     for (let i = 0; i <= 5; i++) {
       const u = i / 5;
       const y = up ? -0.8 + 1.6 * u : 0.8 - 1.6 * u;
-      barrelPts.push([0.9 * Math.cos(ang + u * 0.2), y, 0.9 * Math.sin(ang + u * 0.2)]);
+      barrelPts.push([
+        0.9 * Math.cos(ang + u * 0.2),
+        y,
+        0.9 * Math.sin(ang + u * 0.2),
+      ]);
     }
     const nextAng = ((s + 1) * Math.PI) / 4;
     const capY = up ? 0.96 : -0.96;
@@ -520,7 +539,9 @@ assert(
       0.16 * Math.sin(a * 2),
       0.75 * Math.sin(a),
     ]);
-    cycKinds.push(i >= 2 && i <= 6 ? 'sheet' : i >= 10 && i <= 14 ? 'sheet' : 'coil');
+    cycKinds.push(
+      i >= 2 && i <= 6 ? 'sheet' : i >= 10 && i <= 14 ? 'sheet' : 'coil',
+    );
   }
   auditGeometry(
     new Sci.RibbonGeometry({
@@ -534,7 +555,15 @@ assert(
   );
 }
 
-for (const scheme of ['spectrum', 'secondary', 'plddt'] as const) {
+for (const scheme of [
+  'spectrum',
+  'secondary',
+  'plddt',
+  'viridis',
+  'plasma',
+  'turbo',
+  'coolwarm',
+] as const) {
   const tex = Sci.ribbonColorMap({
     scheme,
     kinds: ['coil', 'sheet', 'sheet', 'coil', 'helix', 'helix', 'coil'],
@@ -551,6 +580,162 @@ for (const scheme of ['spectrum', 'secondary', 'plddt'] as const) {
   );
 }
 
+// 3b. Stage 2: Quantitative Colormaps (`sampleColormap`, `colormapTexture`, `applyVertexColormap`), `IsoSurfaceGeometry` & `StreamlineGeometry`
+{
+  for (const cmap of [
+    'viridis',
+    'plasma',
+    'turbo',
+    'coolwarm',
+    'plddt',
+    'spectrum',
+  ] as const) {
+    const c0 = Sci.sampleColormap(cmap, 0);
+    const cMid = Sci.sampleColormap(cmap, 0.5);
+    const c1 = Sci.sampleColormap(cmap, 1);
+    assert(
+      c0.length === 3 &&
+        cMid.length === 3 &&
+        c1.length === 3 &&
+        c0.every((v: number) => v >= 0 && v <= 1) &&
+        c1.every((v: number) => v >= 0 && v <= 1) &&
+        Math.hypot(c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]) > 0.1,
+      `sampleColormap("${cmap}") returns valid distinct RGB stops in [0, 1]`,
+    );
+    const tex = Sci.colormapTexture({
+      colormap: cmap,
+      scalars: [10, 25, 60, 95],
+      domain: [0, 100],
+      width: 64,
+    });
+    assert(
+      Boolean(tex && tex.isDataTexture === true && tex.image?.width === 64),
+      `colormapTexture("${cmap}") builds 64x4 sRGB DataTexture from scalar array`,
+    );
+  }
+
+  // Scalar-mapped RibbonGeometry (e.g., AlphaFold pLDDT confidence scores 0..100)
+  const plddtRibbon = new Sci.RibbonGeometry({
+    scalars: [42, 58, 76, 94, 96, 82, 48],
+    colormap: 'plddt',
+  });
+  auditGeometry(plddtRibbon, 'RibbonGeometry (scalar pLDDT colormapped)', {
+    expectWatertight: true,
+  });
+  assert(
+    Boolean(plddtRibbon.getAttribute('color')?.count > 50),
+    'RibbonGeometry with scalars populates per-vertex color attribute',
+  );
+
+  // Colormapped SurfacePlotGeometry + applyVertexColormap
+  const colSurf = new Sci.SurfacePlotGeometry({
+    preset: 'sinc',
+    segmentsX: 20,
+    segmentsZ: 20,
+    colormap: 'plasma',
+  });
+  auditGeometry(colSurf, 'SurfacePlotGeometry (colormap="plasma")', {
+    expectWatertight: true,
+  });
+  assert(
+    colSurf.getAttribute('color')?.count ===
+      colSurf.getAttribute('position')?.count,
+    'SurfacePlotGeometry with colormap attaches matching color attribute',
+  );
+
+  // IsoSurfaceGeometry across all 6 built-in presets + shellThickness + custom field
+  for (const preset of [
+    'gyroid',
+    'schwarz-p',
+    'schwarz-d',
+    'pi-orbital',
+    'sp3-hybrid',
+    'dipole-potential',
+  ] as const) {
+    const isoGeo = new Sci.IsoSurfaceGeometry({
+      preset,
+      resolution: 18,
+      colormap: preset === 'gyroid' ? 'viridis' : undefined,
+    });
+    const st = auditGeometry(
+      isoGeo,
+      `IsoSurfaceGeometry("${preset}", res=18)`,
+      {expectWatertight: true},
+    );
+    assert(
+      st.triangleCount >= 40,
+      `IsoSurfaceGeometry("${preset}") extracts non-trivial manifold (${st.triangleCount} tris)`,
+    );
+  }
+
+  const gyroidShell = new Sci.IsoSurfaceGeometry({
+    preset: 'gyroid',
+    resolution: 16,
+    shellThickness: 0.35,
+    colormap: 'turbo',
+  });
+  auditGeometry(
+    gyroidShell,
+    'IsoSurfaceGeometry("gyroid", shellThickness=0.35)',
+    {expectWatertight: true},
+  );
+  assert(
+    gyroidShell.getAttribute('color')?.count ===
+      gyroidShell.getAttribute('position')?.count,
+    'IsoSurfaceGeometry("gyroid", colormap="turbo") populates vertex colors',
+  );
+
+  const customIso = new Sci.IsoSurfaceGeometry({
+    field: (x: number, y: number, z: number) =>
+      1.0 - (x * x * 1.4 + y * y + z * z * 1.8),
+    isoLevel: 0.25,
+    resolution: 16,
+    colorField: (x: number, _y: number, z: number) => x - z,
+    colormap: 'coolwarm',
+  });
+  auditGeometry(customIso, 'IsoSurfaceGeometry (custom ellipsoid field)', {
+    expectWatertight: true,
+  });
+
+  // StreamlineGeometry across all 5 built-in presets + custom field
+  for (const preset of [
+    'dipole',
+    'helmholtz',
+    'vortex',
+    'lorenz',
+    'rossler',
+  ] as const) {
+    const streamGeo = new Sci.StreamlineGeometry({
+      preset,
+      seedCount: 6,
+      steps: 48,
+      arrowsPerLine: 2,
+      colormap: 'plasma',
+    });
+    const st = auditGeometry(streamGeo, `StreamlineGeometry("${preset}")`, {
+      expectWatertight: true,
+    });
+    assert(
+      st.triangleCount >= 80 &&
+        streamGeo.getAttribute('color')?.count === st.vertexCount,
+      `StreamlineGeometry("${preset}") produces speed-colored watertight tubes (${st.triangleCount} tris)`,
+    );
+  }
+
+  const customStream = new Sci.StreamlineGeometry({
+    field: (x: number, _y: number, z: number) => [-z, 0.35, x] as const,
+    seeds: [
+      [0.5, -0.5, 0],
+      [-0.5, -0.5, 0],
+    ],
+    steps: 40,
+    arrowsPerLine: 1,
+  });
+  auditGeometry(customStream, 'StreamlineGeometry (custom helical field)', {
+    expectWatertight: true,
+  });
+}
+
 // 4. Adversarial / degenerate parameter fuzzing
 for (const [name, fn] of [
   [
@@ -558,7 +743,9 @@ for (const [name, fn] of [
     () =>
       new Sci.SurfacePlotGeometry({
         fn: (x: number, z: number) =>
-          Math.abs(x) < 0.2 ? NaN : ((Math.round(x * 10) + Math.round(z * 10)) % 2) * 50,
+          Math.abs(x) < 0.2
+            ? NaN
+            : ((Math.round(x * 10) + Math.round(z * 10)) % 2) * 50,
         segmentsX: 9999,
         segmentsZ: 12,
         thickness: -5,
@@ -628,6 +815,37 @@ for (const [name, fn] of [
       });
     },
   ],
+  [
+    'IsoSurfaceGeometry checkerboard/NaN/throwing callback & extreme resolution',
+    () =>
+      new Sci.IsoSurfaceGeometry({
+        field: (x: number, y: number, z: number) => {
+          if (x > 0.8) throw new Error('boom');
+          if (y < -0.8) return NaN;
+          const ix = Math.round(x * 7);
+          const iy = Math.round(y * 7);
+          const iz = Math.round(z * 7);
+          return (ix + iy + iz) % 2 === 0 ? 1 : -1;
+        },
+        resolution: 99999,
+        shellThickness: -5,
+      }),
+  ],
+  [
+    'StreamlineGeometry zero/NaN field & 999 seeds',
+    () => {
+      const seeds: Array<[number, number, number]> = [];
+      for (let i = 0; i < 200; i++) {
+        seeds.push([i % 2 === 0 ? NaN : 0.2, 0, 0.2]);
+      }
+      return new Sci.StreamlineGeometry({
+        field: () => [0, NaN, Infinity] as const,
+        seeds,
+        steps: 99999,
+        arrowsPerLine: 99,
+      });
+    },
+  ],
 ] as const) {
   const g = fn();
   const s = auditGeometry(g, `Adversarial fuzz: ${name}`, {
@@ -654,7 +872,8 @@ for (const [name, fn] of [
     Boolean(
       installed?.Science?.MoleculeGeometry &&
         // tslint:disable-next-line:no-any Mock registry inspection.
-        (mockReg as any).authorNamespace?.Science && !((mockReg as any).authorNamespace?.MoleculeGeometry),
+        (mockReg as any).authorNamespace?.Science &&
+        !(mockReg as any).authorNamespace?.MoleculeGeometry,
     ),
     'installScienceKit.toString() executes cleanly in isolated Worker realm with zero outer closures',
   );
@@ -697,7 +916,9 @@ for (const [name, fn] of [
 
   const usdzBytes = scene.toUSDZ();
   assert(
-    usdzBytes[0] === 0x50 && usdzBytes[1] === 0x4b && usdzBytes.byteLength > 1000,
+    usdzBytes[0] === 0x50 &&
+      usdzBytes[1] === 0x4b &&
+      usdzBytes.byteLength > 1000,
     `Scientific assembly exports valid Apple USDZ (${usdzBytes.byteLength} bytes)`,
   );
 
@@ -718,8 +939,10 @@ for (const [name, fn] of [
   cpkScene.add(orbMesh);
 
   const cpkGlb = parseGLB(cpkScene.toGLB());
-  const molColorAccIdx = cpkGlb.gltf.meshes[0]?.primitives?.[0]?.attributes?.COLOR_0;
-  const orbColorAccIdx = cpkGlb.gltf.meshes[1]?.primitives?.[0]?.attributes?.COLOR_0;
+  const molColorAccIdx =
+    cpkGlb.gltf.meshes[0]?.primitives?.[0]?.attributes?.COLOR_0;
+  const orbColorAccIdx =
+    cpkGlb.gltf.meshes[1]?.primitives?.[0]?.attributes?.COLOR_0;
   assert(
     typeof molColorAccIdx === 'number' && typeof orbColorAccIdx === 'number',
     'MoleculeGeometry and AtomicOrbitalGeometry export COLOR_0 accessors in GLB',

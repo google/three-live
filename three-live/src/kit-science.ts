@@ -9,20 +9,25 @@
  * `<three-live>` and `<xr-live>` (`three-live-kit-science.min.js` / `three-live/kits/science`).
  */
 
-import {registerPlugin} from './plugin';
 import {
+  type ApplyVertexColormapOptions,
   type AtomicOrbitalKind,
   type AtomicOrbitalOptions,
   type Axes3DOptions,
+  type ColormapTextureOptions,
   type CrystalLatticeOptions,
   type DoubleHelixOptions,
   type ElementSpec,
   installScienceKit,
+  type IsoSurfaceOptions,
+  type IsoSurfacePreset,
   MAX_SCI_ATOMS,
   MAX_SCI_BASE_PAIRS,
   MAX_SCI_GLYPHS,
   MAX_SCI_GRID,
+  MAX_SCI_ISOSURFACE_RES,
   MAX_SCI_RIBBON_POINTS,
+  MAX_SCI_STREAMLINE_STEPS,
   type MoleculeAtomSpec,
   type MoleculeOptions,
   type OpticalElementKind,
@@ -32,10 +37,14 @@ import {
   type RibbonOptions,
   type RibbonSecondaryKind,
   type RibbonSpanSpec,
+  type ScienceColormapName,
   scienceKitPlugin,
+  type StreamlineOptions,
+  type StreamlinePreset,
   type SurfacePlotOptions,
   type VectorFieldOptions,
 } from './kits/science';
+import {registerPlugin} from './plugin';
 
 registerPlugin(scienceKitPlugin);
 
@@ -45,14 +54,20 @@ export {
   MAX_SCI_BASE_PAIRS,
   MAX_SCI_GLYPHS,
   MAX_SCI_GRID,
+  MAX_SCI_ISOSURFACE_RES,
   MAX_SCI_RIBBON_POINTS,
+  MAX_SCI_STREAMLINE_STEPS,
   scienceKitPlugin,
+  type ApplyVertexColormapOptions,
   type AtomicOrbitalKind,
   type AtomicOrbitalOptions,
   type Axes3DOptions,
+  type ColormapTextureOptions,
   type CrystalLatticeOptions,
   type DoubleHelixOptions,
   type ElementSpec,
+  type IsoSurfaceOptions,
+  type IsoSurfacePreset,
   type MoleculeAtomSpec,
   type MoleculeOptions,
   type OpticalElementKind,
@@ -62,6 +77,9 @@ export {
   type RibbonOptions,
   type RibbonSecondaryKind,
   type RibbonSpanSpec,
+  type ScienceColormapName,
+  type StreamlineOptions,
+  type StreamlinePreset,
   type SurfacePlotOptions,
   type VectorFieldOptions,
 };
