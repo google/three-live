@@ -21,6 +21,7 @@
  * - `VectorFieldGeometry` (3D arrow-glyph fields for `'dipole' | 'vortex' | 'saddle' | 'radial' | 'helical'` or custom `fn`)
  * - `Axes3DGeometry` (solid X/Y/Z arrow triad with tick collars & origin sphere)
  * - `DoubleHelixGeometry` (Watson-Crick B-DNA major/minor groove double helix + base-pair rungs)
+ * - `RibbonGeometry` & `ribbonColorMap` (continuous Richardson protein/biopolymer cartoon ribbon morphing smoothly across `'coil' | 'helix' | 'sheet'` with arrow-tipped $\beta$-strands)
  *
  * NOTE: `installScienceKit` is serialized via `Function.prototype.toString()`
  * into sandboxed Web Workers and embedded in `three-author-engine.js`. Keep its
@@ -41,6 +42,8 @@ export const MAX_SCI_GRID = 128;
 export const MAX_SCI_GLYPHS = 1000;
 /** Maximum base pairs in `DoubleHelixGeometry`. */
 export const MAX_SCI_BASE_PAIRS = 256;
+/** Maximum backbone guide points in `RibbonGeometry`. */
+export const MAX_SCI_RIBBON_POINTS = 512;
 
 /** IUPAC & CPK atomic metadata returned by `THREE.Science.elementSpec`. */
 export interface ElementSpec {
@@ -207,6 +210,50 @@ export interface DoubleHelixOptions {
   origin?: 'center' | 'floor';
 }
 
+/** Secondary-structure regime along a `RibbonGeometry` polypeptide chain. */
+export type RibbonSecondaryKind = 'coil' | 'helix' | 'sheet';
+
+/** Inclusive `[from, to]` guide-point secondary-structure span for `RibbonGeometry`. */
+export interface RibbonSpanSpec {
+  from: number;
+  to: number;
+  kind: RibbonSecondaryKind;
+}
+
+/** Options for `THREE.Science.ribbonColorMap`. */
+export interface RibbonColorMapOptions {
+  scheme?: 'spectrum' | 'secondary' | 'plddt';
+  kinds?: readonly RibbonSecondaryKind[];
+  spans?: readonly RibbonSpanSpec[];
+  pointCount?: number;
+  width?: number;
+}
+
+/** Options for `THREE.Science.RibbonGeometry`. */
+export interface RibbonOptions {
+  points?: ReadonlyArray<
+    readonly [number, number, number] | {x: number; y: number; z: number}
+  >;
+  kinds?: readonly RibbonSecondaryKind[];
+  spans?: readonly RibbonSpanSpec[];
+  normals?: ReadonlyArray<
+    readonly [number, number, number] | {x: number; y: number; z: number}
+  >;
+  faceCenter?: readonly [number, number, number];
+  closed?: boolean;
+  coilRadius?: number;
+  helixWidth?: number;
+  helixThickness?: number;
+  sheetWidth?: number;
+  sheetThickness?: number;
+  arrowHeadWidth?: number;
+  arrowHeadFraction?: number;
+  subdivisions?: number;
+  profileSegments?: number;
+  colorScheme?: 'spectrum' | 'secondary';
+  scale?: number;
+}
+
 /**
  * Self-contained installer attaching `THREE.Science` onto a `THREE` namespace
  * and plugin registry.
@@ -223,11 +270,13 @@ export function installScienceKit(threeNs: any, reg?: any): any {
   const BufferGeometry = threeNs.BufferGeometry;
   const BufferAttribute = threeNs.BufferAttribute;
   const Vector3 = threeNs.Vector3;
+  const DataTexture = threeNs.DataTexture;
 
   const MAX_ATOMS = 512;
   const MAX_GRID = 128;
   const MAX_GLYPHS = 1000;
   const MAX_BP = 256;
+  const MAX_RIBBON_PTS = 512;
   const TAU = Math.PI * 2;
 
   type Vec3 = [number, number, number];
@@ -2720,12 +2769,963 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     }
   }
 
+  function hslToRgb01(h: number, s: number, l: number): Vec3 {
+    const hh = ((h % 1) + 1) % 1;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((hh * 6) % 2) - 1));
+    const m = l - c * 0.5;
+    let r = 0,
+      g = 0,
+      b = 0;
+    const sec = Math.floor(hh * 6);
+    if (sec === 0) {
+      r = c;
+      g = x;
+    } else if (sec === 1) {
+      r = x;
+      g = c;
+    } else if (sec === 2) {
+      g = c;
+      b = x;
+    } else if (sec === 3) {
+      g = x;
+      b = c;
+    } else if (sec === 4) {
+      r = x;
+      b = c;
+    } else {
+      r = c;
+      b = x;
+    }
+    return [r + m, g + m, b + m];
+  }
+
+  function resolvePointKinds(
+    count: number,
+    kinds?: readonly RibbonSecondaryKind[],
+    spans?: readonly RibbonSpanSpec[],
+  ): RibbonSecondaryKind[] {
+    const out = new Array<RibbonSecondaryKind>(count);
+    for (let i = 0; i < count; i++) {
+      const k = kinds?.[i];
+      out[i] = k === 'helix' || k === 'sheet' ? k : 'coil';
+    }
+    if (Array.isArray(spans)) {
+      for (const sp of spans) {
+        if (!sp || (sp.kind !== 'coil' && sp.kind !== 'helix' && sp.kind !== 'sheet')) {
+          continue;
+        }
+        const a = clampInt(sp.from, 0, count - 1, 0);
+        const b = clampInt(sp.to, 0, count - 1, 0);
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        for (let i = lo; i <= hi; i++) out[i] = sp.kind;
+      }
+    }
+    return out;
+  }
+
+  function evalColorScheme(
+    u: number,
+    scheme: 'spectrum' | 'secondary' | 'plddt',
+    ptKinds?: readonly RibbonSecondaryKind[],
+  ): Vec3 {
+    const t = clamp(u, 0, 1);
+    if (scheme === 'secondary' && ptKinds && ptKinds.length > 0) {
+      const fIdx = t * (ptKinds.length - 1);
+      const i0 = clamp(Math.floor(fIdx), 0, ptKinds.length - 1);
+      const i1 = clamp(i0 + 1, 0, ptKinds.length - 1);
+      const frac = fIdx - i0;
+      const colOf = (k: RibbonSecondaryKind): Vec3 =>
+        k === 'helix'
+          ? [0.957, 0.247, 0.369]
+          : k === 'sheet'
+            ? [0.98, 0.8, 0.082]
+            : [0.82, 0.86, 0.91];
+      const c0 = colOf(ptKinds[i0]);
+      const c1 = colOf(ptKinds[i1]);
+      return [
+        c0[0] + (c1[0] - c0[0]) * frac,
+        c0[1] + (c1[1] - c0[1]) * frac,
+        c0[2] + (c1[2] - c0[2]) * frac,
+      ];
+    }
+    if (scheme === 'plddt') {
+      const wave = 0.5 + 0.5 * Math.cos(t * Math.PI * 5);
+      if (wave > 0.65) return [0.11, 0.31, 0.85];
+      if (wave > 0.35) return [0.22, 0.74, 0.97];
+      if (wave > 0.15) return [0.98, 0.8, 0.08];
+      return [0.98, 0.45, 0.09];
+    }
+    // Richardson N->C rainbow spectrum (royal blue -> cyan -> emerald -> gold -> coral)
+    return hslToRgb01(0.63 - t * 0.6, 0.86, 0.54);
+  }
+
+  // tslint:disable-next-line:no-any Returns host THREE.DataTexture or raw pixel descriptor.
+  function ribbonColorMap(options: RibbonColorMapOptions = {}): any {
+    const scheme = options.scheme ?? 'spectrum';
+    const w = clampInt(options.width, 16, 512, 256);
+    const h = 4;
+    const pCount = clampInt(
+      options.pointCount,
+      2,
+      MAX_RIBBON_PTS,
+      options.kinds?.length ?? 64,
+    );
+    const ptKinds =
+      scheme === 'secondary'
+        ? resolvePointKinds(pCount, options.kinds, options.spans)
+        : undefined;
+    const data = new Uint8Array(w * h * 4);
+    for (let x = 0; x < w; x++) {
+      const u = w > 1 ? x / (w - 1) : 0;
+      const [r, g, b] = evalColorScheme(u, scheme, ptKinds);
+      const R = clamp(Math.round(r * 255), 0, 255);
+      const G = clamp(Math.round(g * 255), 0, 255);
+      const B = clamp(Math.round(b * 255), 0, 255);
+      for (let y = 0; y < h; y++) {
+        const off = (y * w + x) * 4;
+        data[off] = R;
+        data[off + 1] = G;
+        data[off + 2] = B;
+        data[off + 3] = 255;
+      }
+    }
+    if (typeof DataTexture === 'function') {
+      const tex = new DataTexture(
+        data,
+        w,
+        h,
+        1023,
+        1009,
+        undefined,
+        1001,
+        1001,
+        1006,
+        1006,
+        1,
+        'srgb',
+      );
+      tex.needsUpdate = true;
+      return tex;
+    }
+    return {data, width: w, height: h};
+  }
+
+  // --- 10. RibbonGeometry (Continuous Richardson Polypeptide / Biopolymer Cartoon) ---
+  class RibbonGeometry extends BufferGeometry {
+    constructor(options: RibbonOptions = {}) {
+      super();
+      const s = clamp(num(options.scale, 1), 0.05, 50);
+      const closedReq = options.closed === true;
+
+      const pts: Vec3[] = [];
+      const rawNormals: Array<Vec3 | null> = [];
+      const keptKinds: Array<RibbonSecondaryKind | undefined> = [];
+      if (Array.isArray(options.points)) {
+        const lim = Math.min(options.points.length, MAX_RIBBON_PTS);
+        for (let i = 0; i < lim; i++) {
+          const p = options.points[i];
+          if (!p) continue;
+          const px = Array.isArray(p) ? num(p[0], NaN) : num((p as {x: number}).x, NaN);
+          const py = Array.isArray(p) ? num(p[1], NaN) : num((p as {y: number}).y, NaN);
+          const pz = Array.isArray(p) ? num(p[2], NaN) : num((p as {z: number}).z, NaN);
+          if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) {
+            continue;
+          }
+          const sp: Vec3 = [px * s, py * s, pz * s];
+          const prev = pts[pts.length - 1];
+          if (
+            prev &&
+            Math.hypot(sp[0] - prev[0], sp[1] - prev[1], sp[2] - prev[2]) <= 1e-5 * s
+          ) {
+            continue;
+          }
+          pts.push(sp);
+          keptKinds.push(options.kinds?.[i]);
+          const rn = options.normals?.[i];
+          if (rn) {
+            const nx = Array.isArray(rn)
+              ? num(rn[0], NaN)
+              : num((rn as {x: number}).x, NaN);
+            const ny = Array.isArray(rn)
+              ? num(rn[1], NaN)
+              : num((rn as {y: number}).y, NaN);
+            const nz = Array.isArray(rn)
+              ? num(rn[2], NaN)
+              : num((rn as {z: number}).z, NaN);
+            const nl = Math.hypot(nx, ny, nz);
+            rawNormals.push(
+              Number.isFinite(nl) && nl > 1e-6 ? [nx / nl, ny / nl, nz / nl] : null,
+            );
+          } else {
+            rawNormals.push(null);
+          }
+        }
+      }
+
+      if (
+        closedReq &&
+        pts.length >= 3 &&
+        Math.hypot(
+          pts[0][0] - pts[pts.length - 1][0],
+          pts[0][1] - pts[pts.length - 1][1],
+          pts[0][2] - pts[pts.length - 1][2],
+        ) <=
+          1e-5 * s
+      ) {
+        pts.pop();
+        rawNormals.pop();
+        keptKinds.pop();
+      }
+
+      let ptKinds: RibbonSecondaryKind[];
+      let closed = closedReq && pts.length >= 3;
+      if (pts.length < (closed ? 3 : 2)) {
+        // Default showcase fold: 2-strand antiparallel beta-hairpin + right-handed alpha-helix
+        pts.length = 0;
+        rawNormals.length = 0;
+        closed = false;
+        const defKinds: RibbonSecondaryKind[] = [];
+        for (let i = 0; i < 10; i++) {
+          const t = i / 9;
+          pts.push([-0.55 * s, (-0.7 + 1.4 * t) * s, 0.025 * Math.sin(t * TAU * 2) * s]);
+          rawNormals.push([0, 0, 1]);
+          defKinds.push(i >= 1 && i <= 8 ? 'sheet' : 'coil');
+        }
+        for (let i = 1; i <= 4; i++) {
+          const a = Math.PI * (1 - i / 5);
+          pts.push([(-0.275 + 0.275 * Math.cos(a)) * s, (0.7 + 0.24 * Math.sin(a)) * s, 0]);
+          rawNormals.push([0, 0, 1]);
+          defKinds.push('coil');
+        }
+        for (let i = 0; i < 10; i++) {
+          const t = i / 9;
+          pts.push([0, (0.7 - 1.4 * t) * s, -0.025 * Math.sin(t * TAU * 2) * s]);
+          rawNormals.push([0, 0, 1]);
+          defKinds.push(i >= 1 && i <= 8 ? 'sheet' : 'coil');
+        }
+        for (let i = 1; i <= 3; i++) {
+          const t = i / 4;
+          pts.push([0.62 * t * s, (-0.7 - 0.16 * Math.sin(t * Math.PI)) * s, 0]);
+          rawNormals.push(null);
+          defKinds.push('coil');
+        }
+        for (let i = 0; i <= 12; i++) {
+          const t = i / 12;
+          const a = t * TAU * 2.6;
+          pts.push([
+            (0.68 + 0.2 * Math.cos(a)) * s,
+            (-0.68 + 1.42 * t) * s,
+            0.2 * Math.sin(a) * s,
+          ]);
+          rawNormals.push(null);
+          defKinds.push(i >= 1 && i <= 11 ? 'helix' : 'coil');
+        }
+        ptKinds = defKinds;
+      } else {
+        ptKinds = resolvePointKinds(
+          pts.length,
+          options.kinds ? (keptKinds as RibbonSecondaryKind[]) : undefined,
+          options.spans,
+        );
+      }
+
+      const N = pts.length;
+      const segCount = closed ? N : N - 1;
+      const maxSub = Math.max(2, Math.floor(1600 / segCount));
+      const subdiv = clampInt(
+        options.subdivisions,
+        2,
+        Math.min(16, maxSub),
+        Math.min(6, maxSub),
+      );
+      const P = clampInt(options.profileSegments, 8, 28, 16);
+      const M = segCount * subdiv;
+
+      const coilR = clamp(num(options.coilRadius, 0.036) * s, 0.003 * s, 0.6 * s);
+      const helixHW = clamp(
+        num(options.helixWidth, 0.17) * s * 0.5,
+        coilR * 1.05,
+        1.0 * s,
+      );
+      const helixHT = clamp(
+        num(options.helixThickness, 0.038) * s * 0.5,
+        0.002 * s,
+        helixHW * 0.9,
+      );
+      const sheetHW = clamp(
+        num(options.sheetWidth, 0.22) * s * 0.5,
+        coilR * 1.1,
+        1.2 * s,
+      );
+      const sheetHT = clamp(
+        num(options.sheetThickness, 0.032) * s * 0.5,
+        0.002 * s,
+        sheetHW * 0.85,
+      );
+      const arrowMax = Math.min(1.8 * s, sheetHW * 2.5);
+      const arrowHW =
+        options.arrowHeadWidth !== undefined
+          ? clamp(num(options.arrowHeadWidth, 0.37) * s * 0.5, sheetHW * 1.15, arrowMax)
+          : clamp(sheetHW * 1.7, sheetHW * 1.15, arrowMax);
+      const arrowFrac = clamp(num(options.arrowHeadFraction, 0.24), 0.12, 0.45);
+      const colorScheme = options.colorScheme ?? 'spectrum';
+
+      const fc = options.faceCenter;
+      const hasFaceCenter =
+        Array.isArray(fc) &&
+        fc.length >= 3 &&
+        Number.isFinite(Number(fc[0])) &&
+        Number.isFinite(Number(fc[1])) &&
+        Number.isFinite(Number(fc[2]));
+      const faceCenterPt: Vec3 = hasFaceCenter
+        ? [Number(fc![0]) * s, Number(fc![1]) * s, Number(fc![2]) * s]
+        : [0, 0, 0];
+
+      // Centripetal Catmull-Rom spline evaluation
+      const getPt = (idx: number): Vec3 => {
+        if (closed) return pts[((idx % N) + N) % N];
+        if (idx < 0) {
+          return [
+            2 * pts[0][0] - pts[1][0],
+            2 * pts[0][1] - pts[1][1],
+            2 * pts[0][2] - pts[1][2],
+          ];
+        }
+        if (idx >= N) {
+          return [
+            2 * pts[N - 1][0] - pts[N - 2][0],
+            2 * pts[N - 1][1] - pts[N - 2][1],
+            2 * pts[N - 1][2] - pts[N - 2][2],
+          ];
+        }
+        return pts[idx];
+      };
+
+      const evalCentripetalCR = (
+        p0: Vec3,
+        p1: Vec3,
+        p2: Vec3,
+        p3: Vec3,
+        u: number,
+      ): Vec3 => {
+        const d01 = Math.max(
+          1e-4,
+          Math.sqrt(Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2])),
+        );
+        const d12 = Math.max(
+          1e-4,
+          Math.sqrt(Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2])),
+        );
+        const d23 = Math.max(
+          1e-4,
+          Math.sqrt(Math.hypot(p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2])),
+        );
+        const t1 = d01;
+        const t2 = t1 + d12;
+        const t3 = t2 + d23;
+        const t = t1 + u * d12;
+        const out: Vec3 = [0, 0, 0];
+        for (let c = 0; c < 3; c++) {
+          const a1 = ((t1 - t) / t1) * p0[c] + (t / t1) * p1[c];
+          const a2 = ((t2 - t) / d12) * p1[c] + ((t - t1) / d12) * p2[c];
+          const a3 = ((t3 - t) / d23) * p2[c] + ((t - t2) / d23) * p3[c];
+          const b1 = ((t2 - t) / t2) * a1 + (t / t2) * a2;
+          const b2 = ((t3 - t) / (t3 - t1)) * a2 + ((t - t1) / (t3 - t1)) * a3;
+          out[c] = ((t2 - t) / d12) * b1 + ((t - t1) / d12) * b2;
+        }
+        return out;
+      };
+
+      const centers = new Array<Vec3>(M + 1);
+      for (let k = 0; k <= M; k++) {
+        if (closed && k === M) {
+          centers[k] = [centers[0][0], centers[0][1], centers[0][2]];
+          continue;
+        }
+        const seg = Math.min(segCount - 1, Math.floor(k / subdiv));
+        const u = (k - seg * subdiv) / subdiv;
+        centers[k] = evalCentripetalCR(
+          getPt(seg - 1),
+          getPt(seg),
+          getPt(seg + 1),
+          getPt(seg + 2),
+          u,
+        );
+      }
+
+      // Tangents T_k and twist-free Bishop frame (T_k, U_k, V_k)
+      const tangs = new Array<Vec3>(M + 1);
+      for (let k = 0; k <= M; k++) {
+        let dx: number, dy: number, dz: number;
+        if (closed) {
+          const prev = centers[(k - 1 + M) % M];
+          const next = centers[(k + 1) % M];
+          dx = next[0] - prev[0];
+          dy = next[1] - prev[1];
+          dz = next[2] - prev[2];
+        } else if (k === 0) {
+          dx = centers[1][0] - centers[0][0];
+          dy = centers[1][1] - centers[0][1];
+          dz = centers[1][2] - centers[0][2];
+        } else if (k === M) {
+          dx = centers[M][0] - centers[M - 1][0];
+          dy = centers[M][1] - centers[M - 1][1];
+          dz = centers[M][2] - centers[M - 1][2];
+        } else {
+          dx = centers[k + 1][0] - centers[k - 1][0];
+          dy = centers[k + 1][1] - centers[k - 1][1];
+          dz = centers[k + 1][2] - centers[k - 1][2];
+        }
+        const l = Math.hypot(dx, dy, dz) || 1;
+        tangs[k] = [dx / l, dy / l, dz / l];
+      }
+
+      const bishopU = new Array<Vec3>(M + 1);
+      const bishopV = new Array<Vec3>(M + 1);
+      {
+        const t0 = tangs[0];
+        let ux = 0,
+          uy = 0,
+          uz = 0;
+        // Prefer normal to initial bend plane when non-collinear
+        for (let k = 1; k <= Math.min(M, subdiv * 3); k++) {
+          const tk = tangs[k];
+          const cx = t0[1] * tk[2] - t0[2] * tk[1];
+          const cy = t0[2] * tk[0] - t0[0] * tk[2];
+          const cz = t0[0] * tk[1] - t0[1] * tk[0];
+          if (Math.hypot(cx, cy, cz) > 1e-3) {
+            ux = cx;
+            uy = cy;
+            uz = cz;
+            break;
+          }
+        }
+        if (Math.hypot(ux, uy, uz) <= 1e-5) {
+          const ref: Vec3 = Math.abs(t0[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+          ux = t0[1] * ref[2] - t0[2] * ref[1];
+          uy = t0[2] * ref[0] - t0[0] * ref[2];
+          uz = t0[0] * ref[1] - t0[1] * ref[0];
+        }
+        const ul = Math.hypot(ux, uy, uz) || 1;
+        bishopU[0] = [ux / ul, uy / ul, uz / ul];
+        bishopV[0] = [
+          t0[1] * bishopU[0][2] - t0[2] * bishopU[0][1],
+          t0[2] * bishopU[0][0] - t0[0] * bishopU[0][2],
+          t0[0] * bishopU[0][1] - t0[1] * bishopU[0][0],
+        ];
+
+        for (let k = 1; k <= M; k++) {
+          const tp = tangs[k - 1];
+          const tc = tangs[k];
+          const up = bishopU[k - 1];
+          // Parallel transport up along tp -> tc
+          const ax = tp[1] * tc[2] - tp[2] * tc[1];
+          const ay = tp[2] * tc[0] - tp[0] * tc[2];
+          const az = tp[0] * tc[1] - tp[1] * tc[0];
+          const sinA = Math.hypot(ax, ay, az);
+          const cosA = clamp(tp[0] * tc[0] + tp[1] * tc[1] + tp[2] * tc[2], -1, 1);
+          let nx = up[0],
+            ny = up[1],
+            nz = up[2];
+          if (sinA > 1e-7) {
+            const kx = ax / sinA,
+              ky = ay / sinA,
+              kz = az / sinA;
+            const kDotU = kx * nx + ky * ny + kz * nz;
+            const kCrossUx = ky * nz - kz * ny;
+            const kCrossUy = kz * nx - kx * nz;
+            const kCrossUz = kx * ny - ky * nx;
+            nx = nx * cosA + kCrossUx * sinA + kx * kDotU * (1 - cosA);
+            ny = ny * cosA + kCrossUy * sinA + ky * kDotU * (1 - cosA);
+            nz = nz * cosA + kCrossUz * sinA + kz * kDotU * (1 - cosA);
+          }
+          // Re-orthogonalize against tc
+          const d = nx * tc[0] + ny * tc[1] + nz * tc[2];
+          nx -= d * tc[0];
+          ny -= d * tc[1];
+          nz -= d * tc[2];
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          bishopU[k] = [nx / nl, ny / nl, nz / nl];
+          bishopV[k] = [
+            tc[1] * bishopU[k][2] - tc[2] * bishopU[k][1],
+            tc[2] * bishopU[k][0] - tc[0] * bishopU[k][2],
+            tc[0] * bishopU[k][1] - tc[1] * bishopU[k][0],
+          ];
+        }
+      }
+
+      // Guide face normals (for barrel sheets & cylindrical alpha-helices) -> smooth unwrapped roll phi_k
+      const anchors: Array<[number, number]> = [];
+      for (let i = 0; i < N; i++) {
+        let gx = 0,
+          gy = 0,
+          gz = 0,
+          hasG = false;
+        const rn = rawNormals[i];
+        if (rn) {
+          gx = rn[0];
+          gy = rn[1];
+          gz = rn[2];
+          hasG = true;
+        } else if (ptKinds[i] === 'sheet' && hasFaceCenter) {
+          gx = pts[i][0] - faceCenterPt[0];
+          gy = pts[i][1] - faceCenterPt[1];
+          gz = pts[i][2] - faceCenterPt[2];
+          hasG = true;
+        } else if (ptKinds[i] === 'helix') {
+          const pPrev = getPt(i - 1);
+          const pNext = getPt(i + 1);
+          gx = pts[i][0] - 0.5 * (pPrev[0] + pNext[0]);
+          gy = pts[i][1] - 0.5 * (pPrev[1] + pNext[1]);
+          gz = pts[i][2] - 0.5 * (pPrev[2] + pNext[2]);
+          hasG = true;
+        }
+        if (hasG) {
+          const ki = Math.min(M, i * subdiv);
+          const uComp =
+            gx * bishopU[ki][0] + gy * bishopU[ki][1] + gz * bishopU[ki][2];
+          const vComp =
+            gx * bishopV[ki][0] + gy * bishopV[ki][1] + gz * bishopV[ki][2];
+          if (Math.hypot(uComp, vComp) > 1e-4) {
+            anchors.push([ki, Math.atan2(vComp, uComp)]);
+          }
+        }
+      }
+
+      const roll = new Float64Array(M + 1);
+      if (anchors.length > 0) {
+        // Unwrap anchor angles continuously
+        for (let a = 1; a < anchors.length; a++) {
+          const prev = anchors[a - 1][1];
+          const diff = Math.atan2(
+            Math.sin(anchors[a][1] - prev),
+            Math.cos(anchors[a][1] - prev),
+          );
+          anchors[a][1] = prev + diff;
+        }
+        for (let k = 0; k <= anchors[0][0]; k++) roll[k] = anchors[0][1];
+        for (let a = 0; a < anchors.length - 1; a++) {
+          const [k0, r0] = anchors[a];
+          const [k1, r1] = anchors[a + 1];
+          const span = Math.max(1, k1 - k0);
+          for (let k = k0; k <= k1; k++) {
+            const u = (k - k0) / span;
+            const sm = u * u * (3 - 2 * u);
+            roll[k] = r0 + (r1 - r0) * sm;
+          }
+        }
+        const lastA = anchors[anchors.length - 1];
+        for (let k = lastA[0]; k <= M; k++) roll[k] = lastA[1];
+      }
+
+      if (closed) {
+        // Close Bishop seam holonomy so frame(M) === frame(0)
+        const uDot =
+          bishopU[M][0] * bishopU[0][0] +
+          bishopU[M][1] * bishopU[0][1] +
+          bishopU[M][2] * bishopU[0][2];
+        const vDot =
+          bishopV[M][0] * bishopU[0][0] +
+          bishopV[M][1] * bishopU[0][1] +
+          bishopV[M][2] * bishopU[0][2];
+        // bishop0 = cos(hol)*bishopU[M] + sin(hol)*bishopV[M] -> roll[M] needs hol + roll[0] mod TAU
+        const hol = Math.atan2(vDot, uDot);
+        const targetEnd =
+          hol + roll[0] + TAU * Math.round((roll[M] - (hol + roll[0])) / TAU);
+        const corr = targetEnd - roll[M];
+        for (let k = 0; k <= M; k++) roll[k] += (corr * k) / M;
+      }
+
+      // Smooth roll slightly to eliminate kinks
+      const tmpRoll = new Float64Array(M + 1);
+      for (let pass = 0; pass < 3; pass++) {
+        tmpRoll[0] = roll[0];
+        tmpRoll[M] = roll[M];
+        for (let k = 1; k < M; k++) {
+          tmpRoll[k] = 0.25 * roll[k - 1] + 0.5 * roll[k] + 0.25 * roll[k + 1];
+        }
+        roll.set(tmpRoll);
+      }
+
+      // Secondary-structure contiguous runs -> width w_k, thickness t_k, squareness q_k
+      const halfW = new Float64Array(M + 1).fill(coilR);
+      const halfT = new Float64Array(M + 1).fill(coilR);
+      const sqness = new Float64Array(M + 1).fill(0);
+      const isCreaseRing = new Uint8Array(M + 1);
+
+      let runStart = 0;
+      while (runStart < N) {
+        const rk = ptKinds[runStart];
+        let runEnd = runStart;
+        while (runEnd + 1 < N && ptKinds[runEnd + 1] === rk) runEnd++;
+        if ((rk === 'sheet' || rk === 'helix') && runEnd > runStart) {
+          const k0 = runStart * subdiv;
+          const k1 = Math.min(M, runEnd * subdiv);
+          const span = Math.max(1, k1 - k0);
+          if (rk === 'helix') {
+            for (let k = k0; k <= k1; k++) {
+              const tau = (k - k0) / span;
+              const rampIn = clamp(tau / 0.12, 0, 1);
+              const rampOut = clamp((1 - tau) / 0.12, 0, 1);
+              const blend = Math.min(rampIn, rampOut);
+              const sm = blend * blend * (3 - 2 * blend);
+              halfW[k] = coilR + (helixHW - coilR) * sm;
+              halfT[k] = coilR + (helixHT - coilR) * sm;
+              sqness[k] = 0.38 * sm;
+            }
+          } else {
+            // 'sheet': ramp in -> flat strap -> crisp arrowhead barb shoulder -> linear triangular taper to coilR!
+            const kNeck = clamp(
+              Math.round(k0 + span * (1 - arrowFrac)),
+              k0 + 1,
+              Math.max(k0 + 1, k1 - 2),
+            );
+            const kShoulder = clamp(
+              Math.max(kNeck + 1, Math.round(k0 + span * (1 - arrowFrac + 0.03))),
+              kNeck + 1,
+              Math.max(kNeck + 1, k1 - 1),
+            );
+            if (kNeck > 0 && kNeck < M) isCreaseRing[kNeck] = 1;
+            if (kShoulder > 0 && kShoulder < M) isCreaseRing[kShoulder] = 1;
+            for (let k = k0; k <= k1; k++) {
+              const tau = (k - k0) / span;
+              const rampIn = clamp(tau / 0.09, 0, 1);
+              const smIn = rampIn * rampIn * (3 - 2 * rampIn);
+              if (k <= kNeck) {
+                halfW[k] = coilR + (sheetHW - coilR) * smIn;
+                halfT[k] = coilR + (sheetHT - coilR) * smIn;
+                sqness[k] = 0.82 * smIn;
+              } else if (k <= kShoulder) {
+                const uFlare = (k - kNeck) / Math.max(1, kShoulder - kNeck);
+                halfW[k] = sheetHW + (arrowHW - sheetHW) * uFlare;
+                halfT[k] = sheetHT;
+                sqness[k] = 0.84;
+              } else {
+                const uTip = (k - kShoulder) / Math.max(1, k1 - kShoulder);
+                halfW[k] = arrowHW + (coilR - arrowHW) * uTip;
+                halfT[k] = sheetHT + (coilR - sheetHT) * (uTip * uTip);
+                sqness[k] = 0.84 * (1 - uTip * uTip);
+              }
+            }
+          }
+        }
+        runStart = runEnd + 1;
+      }
+
+      // Compute oriented local cross-section triad (B_k, N_k) and guard against inner-bend self-folding
+      const frameB = new Array<Vec3>(M + 1);
+      const frameN = new Array<Vec3>(M + 1);
+      for (let k = 0; k <= M; k++) {
+        if (closed && k === M) {
+          frameB[M] = frameB[0];
+          frameN[M] = frameN[0];
+          continue;
+        }
+        const tc = tangs[k];
+        const bu = bishopU[k];
+        const bv = bishopV[k];
+        const cr = Math.cos(roll[k]);
+        const sr = Math.sin(roll[k]);
+        const nx = cr * bu[0] + sr * bv[0];
+        const ny = cr * bu[1] + sr * bv[1];
+        const nz = cr * bu[2] + sr * bv[2];
+        // B = T x N (right-handed triad N x B = T)
+        frameN[k] = [nx, ny, nz];
+        frameB[k] = [
+          tc[1] * nz - tc[2] * ny,
+          tc[2] * nx - tc[0] * nz,
+          tc[0] * ny - tc[1] * nx,
+        ];
+      }
+
+      const shrink = new Float64Array(M + 1).fill(1);
+      const checkStepFold = (kRing: number, kStep: number) => {
+        const cA = centers[kStep];
+        const cB = centers[kStep + 1];
+        const dx = cB[0] - cA[0];
+        const dy = cB[1] - cA[1];
+        const dz = cB[2] - cA[2];
+        const ds = Math.hypot(dx, dy, dz);
+        if (ds <= 1e-8) return;
+        const tx = dx / ds;
+        const ty = dy / ds;
+        const tz = dz / ds;
+        const dBx = frameB[kStep + 1][0] - frameB[kStep][0];
+        const dBy = frameB[kStep + 1][1] - frameB[kStep][1];
+        const dBz = frameB[kStep + 1][2] - frameB[kStep][2];
+        const dNx = frameN[kStep + 1][0] - frameN[kStep][0];
+        const dNy = frameN[kStep + 1][1] - frameN[kStep][1];
+        const dNz = frameN[kStep + 1][2] - frameN[kStep][2];
+        const kb = Math.abs(dBx * tx + dBy * ty + dBz * tz);
+        const kn = Math.abs(dNx * tx + dNy * ty + dNz * tz);
+        const foldMotion = halfW[kRing] * kb + halfT[kRing] * kn;
+        const limit = 0.62 * ds;
+        if (foldMotion > limit && foldMotion > 1e-9) {
+          const f = Math.max(0.08, limit / foldMotion);
+          if (f < shrink[kRing]) shrink[kRing] = f;
+        }
+      };
+      for (let k = 0; k <= M; k++) {
+        if (k < M) checkStepFold(k, k);
+        else if (closed) checkStepFold(k, 0);
+        if (k > 0) checkStepFold(k, k - 1);
+        else if (closed) checkStepFold(k, M - 1);
+      }
+      if (closed) {
+        const s0 = Math.min(shrink[0], shrink[M]);
+        shrink[0] = s0;
+        shrink[M] = s0;
+      }
+      for (let k = 0; k <= M; k++) {
+        halfW[k] *= shrink[k];
+        halfT[k] *= shrink[k];
+      }
+      if (closed) {
+        halfW[M] = halfW[0];
+        halfT[M] = halfT[0];
+        sqness[M] = sqness[0];
+      }
+
+      // Build unique spatial ring positions `(M + 1) x P`
+      const ringXYZ = new Float64Array((M + 1) * P * 3);
+      const sgnPow = (x: number, e: number): number =>
+        x === 0 ? 0 : (x < 0 ? -1 : 1) * Math.pow(Math.abs(x), e);
+
+      for (let k = 0; k <= M; k++) {
+        if (closed && k === M) {
+          for (let j = 0; j < P * 3; j++) ringXYZ[M * P * 3 + j] = ringXYZ[j];
+          continue;
+        }
+        const c = centers[k];
+        const [bx, by, bz] = frameB[k];
+        const [nx, ny, nz] = frameN[k];
+        const wk = halfW[k];
+        const tk = halfT[k];
+        const ek = 1 - 0.65 * sqness[k];
+        for (let j = 0; j < P; j++) {
+          const ang = (j * TAU) / P;
+          const uOff = wk * sgnPow(Math.cos(ang), ek);
+          const vOff = tk * sgnPow(Math.sin(ang), ek);
+          const base = (k * P + j) * 3;
+          ringXYZ[base] = c[0] + uOff * bx + vOff * nx;
+          ringXYZ[base + 1] = c[1] + uOff * by + vOff * ny;
+          ringXYZ[base + 2] = c[2] + uOff * bz + vOff * nz;
+        }
+      }
+
+      // Map each longitudinal strip `k = 0..M-1` to vertex rows (splitting normals at sharp arrowhead creases)
+      const stripRow0 = new Int32Array(M);
+      const stripRow1 = new Int32Array(M);
+      const rowSpatialK: number[] = [0];
+      let curRow = 0;
+      for (let k = 0; k < M; k++) {
+        stripRow0[k] = curRow;
+        curRow++;
+        rowSpatialK.push(k + 1);
+        stripRow1[k] = curRow;
+        if (k + 1 < M && isCreaseRing[k + 1]) {
+          curRow++;
+          rowSpatialK.push(k + 1);
+        }
+      }
+      const sideRows = rowSpatialK.length;
+      const normRowOf = (r: number): number =>
+        closed && r === sideRows - 1 ? 0 : r;
+      const uniqNormRows = closed ? sideRows - 1 : sideRows;
+      const sideNrm = new Float64Array(uniqNormRows * P * 3);
+
+      const addStripFaceNrm = (
+        kA: number,
+        nRowA: number,
+        jA: number,
+        kB: number,
+        nRowB: number,
+        jB: number,
+        kC: number,
+        nRowC: number,
+        jC: number,
+      ) => {
+        const pA = (kA * P + jA) * 3;
+        const pB = (kB * P + jB) * 3;
+        const pC = (kC * P + jC) * 3;
+        const abx = ringXYZ[pB] - ringXYZ[pA];
+        const aby = ringXYZ[pB + 1] - ringXYZ[pA + 1];
+        const abz = ringXYZ[pB + 2] - ringXYZ[pA + 2];
+        const acx = ringXYZ[pC] - ringXYZ[pA];
+        const acy = ringXYZ[pC + 1] - ringXYZ[pA + 1];
+        const acz = ringXYZ[pC + 2] - ringXYZ[pA + 2];
+        const fnx = aby * acz - abz * acy;
+        const fny = abz * acx - abx * acz;
+        const fnz = abx * acy - aby * acx;
+        for (const dst of [
+          (nRowA * P + jA) * 3,
+          (nRowB * P + jB) * 3,
+          (nRowC * P + jC) * 3,
+        ]) {
+          sideNrm[dst] += fnx;
+          sideNrm[dst + 1] += fny;
+          sideNrm[dst + 2] += fnz;
+        }
+      };
+
+      for (let k = 0; k < M; k++) {
+        const nr0 = normRowOf(stripRow0[k]);
+        const nr1 = normRowOf(stripRow1[k]);
+        for (let j = 0; j < P; j++) {
+          const j1 = (j + 1) % P;
+          addStripFaceNrm(k, nr0, j, k + 1, nr1, j, k + 1, nr1, j1);
+          addStripFaceNrm(k, nr0, j, k + 1, nr1, j1, k, nr0, j1);
+        }
+      }
+      for (let i = 0; i < sideNrm.length; i += 3) {
+        const nl = Math.hypot(sideNrm[i], sideNrm[i + 1], sideNrm[i + 2]) || 1;
+        sideNrm[i] /= nl;
+        sideNrm[i + 1] /= nl;
+        sideNrm[i + 2] /= nl;
+      }
+
+      const sideVCount = sideRows * (P + 1);
+      const capVCount = closed ? 0 : 2 * (P + 1);
+      const totalV = sideVCount + capVCount;
+      const pos = new Array<number>(totalV * 3);
+      const nrm = new Array<number>(totalV * 3);
+      const uv = new Array<number>(totalV * 2);
+      const col = new Array<number>(totalV * 3);
+      const idx: number[] = [];
+
+      for (let r = 0; r < sideRows; r++) {
+        const k = rowSpatialK[r];
+        const uChain = k / M;
+        const [cr, cg, cb] = evalColorScheme(uChain, colorScheme, ptKinds);
+        const nr = normRowOf(r);
+        for (let j = 0; j <= P; j++) {
+          const jMod = j === P ? 0 : j;
+          const src = (k * P + jMod) * 3;
+          const nSrc = (nr * P + jMod) * 3;
+          const vIdx = r * (P + 1) + j;
+          const pOff = vIdx * 3;
+          pos[pOff] = ringXYZ[src];
+          pos[pOff + 1] = ringXYZ[src + 1];
+          pos[pOff + 2] = ringXYZ[src + 2];
+          nrm[pOff] = sideNrm[nSrc];
+          nrm[pOff + 1] = sideNrm[nSrc + 1];
+          nrm[pOff + 2] = sideNrm[nSrc + 2];
+          uv[vIdx * 2] = uChain;
+          uv[vIdx * 2 + 1] = j / P;
+          col[pOff] = cr;
+          col[pOff + 1] = cg;
+          col[pOff + 2] = cb;
+        }
+      }
+
+      for (let k = 0; k < M; k++) {
+        const row0 = stripRow0[k] * (P + 1);
+        const row1 = stripRow1[k] * (P + 1);
+        for (let j = 0; j < P; j++) {
+          const a0 = row0 + j;
+          const b0 = row1 + j;
+          const b1 = row1 + j + 1;
+          const a1 = row0 + j + 1;
+          idx.push(a0, b0, b1, a0, b1, a1);
+        }
+      }
+
+      if (!closed) {
+        let vCap = sideVCount;
+        // Start cap at k = 0 (normal = -T_0, winding: center, v0, v1)
+        const c0 = centers[0];
+        const t0 = tangs[0];
+        const [c0r, c0g, c0b] = evalColorScheme(0, colorScheme, ptKinds);
+        const startCenter = vCap++;
+        pos[startCenter * 3] = c0[0];
+        pos[startCenter * 3 + 1] = c0[1];
+        pos[startCenter * 3 + 2] = c0[2];
+        nrm[startCenter * 3] = -t0[0];
+        nrm[startCenter * 3 + 1] = -t0[1];
+        nrm[startCenter * 3 + 2] = -t0[2];
+        uv[startCenter * 2] = 0;
+        uv[startCenter * 2 + 1] = 0.5;
+        col[startCenter * 3] = c0r;
+        col[startCenter * 3 + 1] = c0g;
+        col[startCenter * 3 + 2] = c0b;
+
+        const startRingBase = vCap;
+        for (let j = 0; j < P; j++) {
+          const src = j * 3;
+          const vi = vCap++;
+          pos[vi * 3] = ringXYZ[src];
+          pos[vi * 3 + 1] = ringXYZ[src + 1];
+          pos[vi * 3 + 2] = ringXYZ[src + 2];
+          nrm[vi * 3] = -t0[0];
+          nrm[vi * 3 + 1] = -t0[1];
+          nrm[vi * 3 + 2] = -t0[2];
+          uv[vi * 2] = 0;
+          uv[vi * 2 + 1] = j / P;
+          col[vi * 3] = c0r;
+          col[vi * 3 + 1] = c0g;
+          col[vi * 3 + 2] = c0b;
+        }
+        for (let j = 0; j < P; j++) {
+          idx.push(startCenter, startRingBase + j, startRingBase + ((j + 1) % P));
+        }
+
+        // End cap at k = M (normal = +T_M, winding: center, b1, b0)
+        const cM = centers[M];
+        const tM = tangs[M];
+        const [cMr, cMg, cMb] = evalColorScheme(1, colorScheme, ptKinds);
+        const endCenter = vCap++;
+        pos[endCenter * 3] = cM[0];
+        pos[endCenter * 3 + 1] = cM[1];
+        pos[endCenter * 3 + 2] = cM[2];
+        nrm[endCenter * 3] = tM[0];
+        nrm[endCenter * 3 + 1] = tM[1];
+        nrm[endCenter * 3 + 2] = tM[2];
+        uv[endCenter * 2] = 1;
+        uv[endCenter * 2 + 1] = 0.5;
+        col[endCenter * 3] = cMr;
+        col[endCenter * 3 + 1] = cMg;
+        col[endCenter * 3 + 2] = cMb;
+
+        const endRingBase = vCap;
+        for (let j = 0; j < P; j++) {
+          const src = (M * P + j) * 3;
+          const vi = vCap++;
+          pos[vi * 3] = ringXYZ[src];
+          pos[vi * 3 + 1] = ringXYZ[src + 1];
+          pos[vi * 3 + 2] = ringXYZ[src + 2];
+          nrm[vi * 3] = tM[0];
+          nrm[vi * 3 + 1] = tM[1];
+          nrm[vi * 3 + 2] = tM[2];
+          uv[vi * 2] = 1;
+          uv[vi * 2 + 1] = j / P;
+          col[vi * 3] = cMr;
+          col[vi * 3 + 1] = cMg;
+          col[vi * 3 + 2] = cMb;
+        }
+        for (let j = 0; j < P; j++) {
+          idx.push(endCenter, endRingBase + ((j + 1) % P), endRingBase + j);
+        }
+      }
+
+      applyBuffers(this, {pos, nrm, uv, idx, col}, 'RibbonGeometry', {
+        pointCount: N,
+        sampleRings: M,
+        closed,
+        colorScheme,
+      });
+    }
+  }
+
   const Science = {
     MAX_SCI_ATOMS: MAX_ATOMS,
     MAX_SCI_GRID: MAX_GRID,
     MAX_SCI_GLYPHS: MAX_GLYPHS,
     MAX_SCI_BASE_PAIRS: MAX_BP,
+    MAX_SCI_RIBBON_POINTS: MAX_RIBBON_PTS,
     elementSpec,
+    ribbonColorMap,
     MoleculeGeometry,
     CrystalLatticeGeometry,
     AtomicOrbitalGeometry,
@@ -2735,6 +3735,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     VectorFieldGeometry,
     Axes3DGeometry,
     DoubleHelixGeometry,
+    RibbonGeometry,
   };
 
   for (const Ctor of [
@@ -2747,6 +3748,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     VectorFieldGeometry,
     Axes3DGeometry,
     DoubleHelixGeometry,
+    RibbonGeometry,
   ]) {
     try {
       Object.freeze(Ctor.prototype);

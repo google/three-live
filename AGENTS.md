@@ -35,9 +35,9 @@ Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `Tex
 Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz`
 Domain Kit (a la carte): Parametric `THREE.Architecture` walls, slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways   | `<three-live>` | `three-live-kit-architecture.min.js` | `< 16 KB gz`
 Domain Kit (a la carte): Parametric `THREE.Industrial` process pipes, valves, pumps, pallet racks, conveyors, ladders, catwalks, tanks        | `<three-live>` | `three-live-kit-industrial.min.js` | `< 14 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Science` molecules, crystal lattices, atomic orbitals, optics, 3D surface plots, vector fields, DNA | `<three-live>` | `three-live-kit-science.min.js` | `< 15 KB gz`
+Domain Kit (a la carte): Parametric `THREE.Science` molecules, protein ribbons, crystal lattices, atomic orbitals, optics, 3D plots, DNA     | `<three-live>` | `three-live-kit-science.min.js` | `< 20 KB gz`
 Domain Kit (a la carte): Parametric `THREE.Electronics` PCBs, flanged/cutout enclosures, heatsinks, DIN rails, ICs, connectors, discretes     | `<three-live>` | `three-live-kit-electronics.min.js` | `< 14 KB gz`
-Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 52 geometries)     | `<three-live>` | `three-live-kits.min.js`       | `< 64 KB gz`
+Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 53 geometries)     | `<three-live>` | `three-live-kits.min.js`       | `< 70 KB gz`
 Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers                         | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                                     | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
 Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select                          | `<three-live>` | `three-live-ai.min.js`         | `< 32 KB gz`
@@ -146,12 +146,14 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
             `SafetyBarrierGeometry`, `StorageTankGeometry` (`vertical-legs`,
             `horizontal-saddle`, `skirt`, `flat-api650`),
             `nominalPipeSpec('DN100')`.
-        -   `THREE.Science` (9): `MoleculeGeometry` (44 IUPAC elements, presets
+        -   `THREE.Science` (10): `MoleculeGeometry` (44 IUPAC elements, presets
             incl. `water`, `methane`, `benzene`, `cyclohexane`, `caffeine`, `co2`,
-            `nh3`, `ethanol`), `CrystalLatticeGeometry` (`sc`, `bcc`, `fcc`,
-            `hcp`, `diamond`, `graphene`, `nacl`, `perovskite`),
-            `AtomicOrbitalGeometry` (`1s`..`3dxz` dual-phase lobes),
-            `OpticalElementGeometry` (spherical lenses & prisms),
+            `nh3`, `ethanol`), `RibbonGeometry` (continuous Richardson protein /
+            polypeptide cartoon across `'coil'`, `'helix'`, and arrow-tipped
+            `'sheet'` spans, plus `ribbonColorMap`), `CrystalLatticeGeometry`
+            (`sc`, `bcc`, `fcc`, `hcp`, `diamond`, `graphene`, `nacl`,
+            `perovskite`), `AtomicOrbitalGeometry` (`1s`..`3dxz` dual-phase
+            lobes), `OpticalElementGeometry` (spherical lenses & prisms),
             `SurfacePlotGeometry`, `ParametricSurfaceGeometry`,
             `VectorFieldGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`,
             `elementSpec('C')`.
