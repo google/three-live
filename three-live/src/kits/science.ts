@@ -113,6 +113,24 @@ export interface MoleculeOptions {
   vertexColors?: boolean;
 }
 
+/** Custom fractional basis site descriptor for `CrystalLatticeGeometry`. */
+export interface CrystalBasisAtomSpec {
+  element?: string | number;
+  fractional?: readonly [number, number, number];
+  position?: readonly [number, number, number];
+  radius?: number;
+  color?: number;
+}
+
+/** Crystallographic Miller `(hkl)` plane descriptor for `CrystalLatticeGeometry`. */
+export interface CrystalMillerPlaneSpec {
+  hkl: readonly [number, number, number];
+  intercept?: number;
+  d?: number;
+  thickness?: number;
+  color?: number;
+}
+
 /** Options for `THREE.Science.CrystalLatticeGeometry`. */
 export interface CrystalLatticeOptions {
   lattice?:
@@ -126,6 +144,17 @@ export interface CrystalLatticeOptions {
     | 'perovskite';
   cells?: readonly [number, number, number] | number;
   latticeConstant?: number;
+  vectors?: readonly [
+    readonly [number, number, number],
+    readonly [number, number, number],
+    readonly [number, number, number],
+  ];
+  basis?: readonly CrystalBasisAtomSpec[];
+  vacancies?: ReadonlyArray<
+    | readonly [number, number, number]
+    | readonly [number, number, number, number]
+  >;
+  millerPlanes?: readonly CrystalMillerPlaneSpec[];
   atomRadius?: number;
   bondRadius?: number;
   includeBonds?: boolean;
@@ -353,6 +382,51 @@ export interface StreamlineOptions {
   colormap?: ScienceColormapName;
   vertexColors?: boolean;
   scale?: number;
+}
+
+/** Options for `THREE.Science.DashedLineGeometry`. */
+export interface DashedLineOptions {
+  points?: ReadonlyArray<
+    readonly [number, number, number] | {x: number; y: number; z: number}
+  >;
+  segments?: ReadonlyArray<
+    readonly [
+      readonly [number, number, number] | {x: number; y: number; z: number},
+      readonly [number, number, number] | {x: number; y: number; z: number},
+    ]
+  >;
+  dashLength?: number;
+  dashSize?: number;
+  gapLength?: number;
+  gapSize?: number;
+  radius?: number;
+  radialSegments?: number;
+  capStyle?: 'flat' | 'capsule';
+  color?: number;
+  vertexColors?: boolean;
+}
+
+/** Options for `THREE.Science.AngleArcGeometry`. */
+export interface AngleArcOptions {
+  vertex?:
+    | readonly [number, number, number]
+    | {x: number; y: number; z: number};
+  center?:
+    | readonly [number, number, number]
+    | {x: number; y: number; z: number};
+  armA?: readonly [number, number, number] | {x: number; y: number; z: number};
+  armB?: readonly [number, number, number] | {x: number; y: number; z: number};
+  from?: readonly [number, number, number] | {x: number; y: number; z: number};
+  to?: readonly [number, number, number] | {x: number; y: number; z: number};
+  vectorsAsPositions?: boolean;
+  radius?: number;
+  tubeRadius?: number;
+  segments?: number;
+  radialSegments?: number;
+  arrowEnds?: boolean;
+  rightAngleSquare?: boolean;
+  color?: number;
+  vertexColors?: boolean;
 }
 
 /**
@@ -1582,18 +1656,125 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const segs = clampInt(options.sphereSegments, 8, 32, 14);
       const origin = options.origin ?? 'center';
 
-      const siteMap = new Map<string, {p: Vec3; sp: number}>();
-      const addSite = (px: number, py: number, pz: number, sp: number) => {
+      const siteMap = new Map<string, {p: Vec3; uvw: Vec3; sp: number}>();
+      let vecA1: Vec3 = [a0, 0, 0];
+      let vecA2: Vec3 = [0, a0, 0];
+      let vecA3: Vec3 = [0, 0, a0];
+      let hasCustomVectors = false;
+      if (Array.isArray(options.vectors) && options.vectors.length >= 3) {
+        const v1 = options.vectors[0];
+        const v2 = options.vectors[1];
+        const v3 = options.vectors[2];
+        const c1: Vec3 = [
+          clamp(num(v1?.[0], a0), -10, 10),
+          clamp(num(v1?.[1], 0), -10, 10),
+          clamp(num(v1?.[2], 0), -10, 10),
+        ];
+        const c2: Vec3 = [
+          clamp(num(v2?.[0], 0), -10, 10),
+          clamp(num(v2?.[1], a0), -10, 10),
+          clamp(num(v2?.[2], 0), -10, 10),
+        ];
+        const c3: Vec3 = [
+          clamp(num(v3?.[0], 0), -10, 10),
+          clamp(num(v3?.[1], 0), -10, 10),
+          clamp(num(v3?.[2], a0), -10, 10),
+        ];
+        const det =
+          c1[0] * (c2[1] * c3[2] - c2[2] * c3[1]) -
+          c1[1] * (c2[0] * c3[2] - c2[2] * c3[0]) +
+          c1[2] * (c2[0] * c3[1] - c2[1] * c3[0]);
+        if (Math.abs(det) > 1e-4) {
+          vecA1 = c1;
+          vecA2 = c2;
+          vecA3 = c3;
+          hasCustomVectors = true;
+        }
+      }
+
+      const addSite = (
+        px: number,
+        py: number,
+        pz: number,
+        sp: number,
+        u = px / a0,
+        v = py / a0,
+        w = pz / a0,
+      ) => {
         const key = `${Math.round((px / a0) * 100)},${Math.round((py / a0) * 100)},${Math.round((pz / a0) * 100)}`;
         if (!siteMap.has(key) && siteMap.size < MAX_ATOMS) {
-          siteMap.set(key, {p: [px, py, pz], sp});
+          siteMap.set(key, {p: [px, py, pz], uvw: [u, v, w], sp});
         }
+      };
+
+      const addFractionalSite = (
+        u: number,
+        v: number,
+        w: number,
+        sp: number,
+      ) => {
+        const px = u * vecA1[0] + v * vecA2[0] + w * vecA3[0];
+        const py = u * vecA1[1] + v * vecA2[1] + w * vecA3[1];
+        const pz = u * vecA1[2] + v * vecA2[2] + w * vecA3[2];
+        addSite(px, py, pz, sp, u, v, w);
       };
 
       let nnFactor = 1.05;
       let spanBox: Vec3 = [nx * a0, ny * a0, nz * a0];
+      const hasCustomBasis =
+        Array.isArray(options.basis) && options.basis.length > 0;
+      const customSpeciesMeta: Array<{rad: number; col: Vec3}> = [];
 
-      if (lattice === 'hcp') {
+      if (hasCustomBasis) {
+        const cappedBasis = options.basis!.slice(0, 32);
+        const expandedBasis: Array<[number, number, number, number]> = [];
+        for (let bIdx = 0; bIdx < cappedBasis.length; bIdx++) {
+          const item = cappedBasis[bIdx];
+          const el = elementSpec(item?.element ?? 'C');
+          const rad = clamp(
+            num(
+              item?.radius,
+              atomR * clamp(el.covalentRadius / 0.77, 0.65, 1.35),
+            ),
+            a0 * 0.04,
+            a0 * 0.42,
+          );
+          const colHex =
+            typeof item?.color === 'number' && Number.isFinite(item.color)
+              ? item.color
+              : el.cpkColor;
+          customSpeciesMeta.push({rad, col: hexToRgb(colHex)});
+          const rawF = item?.fractional ?? item?.position ?? [0, 0, 0];
+          const fx = clamp(num(rawF?.[0], 0), 0, 1);
+          const fy = clamp(num(rawF?.[1], 0), 0, 1);
+          const fz = clamp(num(rawF?.[2], 0), 0, 1);
+          const xs = fx < 1e-4 ? [0, 1] : [fx];
+          const ys = fy < 1e-4 ? [0, 1] : [fy];
+          const zs = fz < 1e-4 ? [0, 1] : [fz];
+          for (const xVal of xs) {
+            for (const yVal of ys) {
+              for (const zVal of zs) {
+                expandedBasis.push([xVal, yVal, zVal, bIdx]);
+              }
+            }
+          }
+        }
+        nnFactor = 0.95;
+        for (let cx = 0; cx < nx; cx++) {
+          for (let cy = 0; cy < ny; cy++) {
+            for (let cz = 0; cz < nz; cz++) {
+              for (const [fx, fy, fz, sp] of expandedBasis) {
+                addFractionalSite(cx + fx, cy + fy, cz + fz, sp);
+              }
+            }
+          }
+        }
+        spanBox = [
+          nx * (vecA1[0] + vecA2[0] + vecA3[0]),
+          ny * (vecA1[1] + vecA2[1] + vecA3[1]),
+          nz * (vecA1[2] + vecA2[2] + vecA3[2]),
+        ];
+      } else if (lattice === 'hcp' && !hasCustomVectors) {
         const s3 = Math.sqrt(3) * 0.5;
         const c0 = Math.sqrt(8 / 3) * a0;
         nnFactor = 1.05;
@@ -1605,18 +1786,34 @@ export function installScienceKit(threeNs: any, reg?: any): any {
                   for (let iz = 0; iz <= 1; iz++) {
                     const u = cx + ix;
                     const w = cz + iz;
-                    addSite((u + 0.5 * w) * a0, (cy + iy) * c0, w * s3 * a0, 0);
+                    addSite(
+                      (u + 0.5 * w) * a0,
+                      (cy + iy) * c0,
+                      w * s3 * a0,
+                      0,
+                      u,
+                      cy + iy,
+                      w,
+                    );
                   }
                 }
               }
               const uB = cx + 1 / 3;
               const wB = cz + 1 / 3;
-              addSite((uB + 0.5 * wB) * a0, (cy + 0.5) * c0, wB * s3 * a0, 1);
+              addSite(
+                (uB + 0.5 * wB) * a0,
+                (cy + 0.5) * c0,
+                wB * s3 * a0,
+                1,
+                uB,
+                cy + 0.5,
+                wB,
+              );
             }
           }
         }
         spanBox = [(nx + 0.5 * nz) * a0, ny * c0, nz * s3 * a0];
-      } else if (lattice === 'graphene') {
+      } else if (lattice === 'graphene' && !hasCustomVectors) {
         // 2D honeycomb sp2 sheet in XZ (with AB Bernal stacking along Y when ny > 1)
         const s3 = Math.sqrt(3) * 0.5;
         const layerGap = a0 * 1.36;
@@ -1628,11 +1825,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
             for (let cz = 0; cz <= nz; cz++) {
               const u0 = cx + shift;
               const w0 = cz + shift;
-              addSite((u0 + 0.5 * w0) * a0, py, w0 * s3 * a0, 0);
+              addSite((u0 + 0.5 * w0) * a0, py, w0 * s3 * a0, 0, u0, cy, w0);
               if (cx < nx && cz < nz) {
                 const u1 = cx + 1 / 3 + shift;
                 const w1 = cz + 1 / 3 + shift;
-                addSite((u1 + 0.5 * w1) * a0, py, w1 * s3 * a0, 0);
+                addSite((u1 + 0.5 * w1) * a0, py, w1 * s3 * a0, 0, u1, cy, w1);
               }
             }
           }
@@ -1643,7 +1840,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           nz * s3 * a0,
         ];
       } else {
-        // Cubic Bravais / compound lattices
+        // Cubic Bravais / compound lattices (supports custom Bravais vectors!)
         const cornerAndFaces = (
           includeFace: boolean,
         ): Array<[number, number, number, number]> => {
@@ -1716,19 +1913,69 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           for (let cy = 0; cy < ny; cy++) {
             for (let cz = 0; cz < nz; cz++) {
               for (const [fx, fy, fz, sp] of basis) {
-                addSite((cx + fx) * a0, (cy + fy) * a0, (cz + fz) * a0, sp);
+                addFractionalSite(cx + fx, cy + fy, cz + fz, sp);
               }
             }
           }
         }
+        spanBox = [
+          nx * (vecA1[0] + vecA2[0] + vecA3[0]),
+          ny * (vecA1[1] + vecA2[1] + vecA3[1]),
+          nz * (vecA1[2] + vecA2[2] + vecA3[2]),
+        ];
       }
 
-      const sites = Array.from(siteMap.values());
+      // Apply crystallographic point-defect vacancies (Schottky / Frenkel defects)
+      let sites = Array.from(siteMap.values());
+      if (
+        Array.isArray(options.vacancies) &&
+        options.vacancies.length > 0 &&
+        sites.length > 1
+      ) {
+        const filtered = sites.filter((s) => {
+          for (const vac of options.vacancies!) {
+            if (!Array.isArray(vac) || vac.length < 3) continue;
+            const vu = num(vac[0], NaN);
+            const vv = num(vac[1], NaN);
+            const vw = num(vac[2], NaN);
+            if (
+              !Number.isFinite(vu) ||
+              !Number.isFinite(vv) ||
+              !Number.isFinite(vw)
+            ) {
+              continue;
+            }
+            if (vac.length >= 4 && Number.isFinite(Number(vac[3]))) {
+              if (
+                s.sp === Math.round(Number(vac[3])) &&
+                Math.hypot(s.uvw[0] - vu, s.uvw[1] - vv, s.uvw[2] - vw) < 0.12
+              ) {
+                return false;
+              }
+            } else if (
+              Math.hypot(s.uvw[0] - vu, s.uvw[1] - vv, s.uvw[2] - vw) < 0.09 ||
+              Math.hypot(
+                s.uvw[0] / nx - vu,
+                s.uvw[1] / ny - vv,
+                s.uvw[2] / nz - vw,
+              ) < 0.06
+            ) {
+              return false;
+            }
+          }
+          return true;
+        });
+        if (filtered.length > 0) sites = filtered;
+      }
+
       const parts: RawBufs[] = [];
       for (const s of sites) {
         let rad = atomR;
         let col = hexToRgb(0xd97706);
-        if (lattice === 'nacl') {
+        if (hasCustomBasis && customSpeciesMeta[s.sp]) {
+          rad = customSpeciesMeta[s.sp].rad;
+          col = customSpeciesMeta[s.sp].col;
+        } else if (lattice === 'nacl') {
           rad = s.sp === 1 ? atomR * 1.22 : atomR * 0.85;
           col = hexToRgb(s.sp === 0 ? 0x8b5cf6 : 0x22c55e);
         } else if (lattice === 'perovskite') {
@@ -1753,13 +2000,20 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         );
       }
 
+      const cellLenMax = Math.max(
+        a0,
+        Math.hypot(vecA1[0], vecA1[1], vecA1[2]),
+        Math.hypot(vecA2[0], vecA2[1], vecA2[2]),
+        Math.hypot(vecA3[0], vecA3[1], vecA3[2]),
+      );
       if (includeBonds) {
-        const maxBond = a0 * nnFactor;
+        const maxBond = cellLenMax * nnFactor;
         const bondCol = hexToRgb(0x94a3b8);
         let bCount = 0;
         for (let i = 0; i < sites.length; i++) {
           for (let j = i + 1; j < sites.length; j++) {
             if (
+              !hasCustomBasis &&
               lattice === 'perovskite' &&
               !(
                 (sites[i].sp === 1 && sites[j].sp === 2) ||
@@ -1799,17 +2053,309 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         }
       }
 
-      if (showBox && spanBox[1] > 1e-3) {
-        const [sx, sy, sz] = spanBox;
+      // Supercell span basis vectors A1, A2, A3 for unit-cell box and (hkl) Miller planes
+      const supA1: Vec3 = hasCustomVectors
+        ? [nx * vecA1[0], nx * vecA1[1], nx * vecA1[2]]
+        : [spanBox[0], 0, 0];
+      const supA2: Vec3 = hasCustomVectors
+        ? [ny * vecA2[0], ny * vecA2[1], ny * vecA2[2]]
+        : [0, Math.max(a0 * 0.5, spanBox[1]), 0];
+      const supA3: Vec3 = hasCustomVectors
+        ? [nz * vecA3[0], nz * vecA3[1], nz * vecA3[2]]
+        : [0, 0, spanBox[2]];
+      const mapSupercellFrac = (u: number, v: number, w: number): Vec3 => [
+        u * supA1[0] + v * supA2[0] + w * supA3[0],
+        u * supA1[1] + v * supA2[1] + w * supA3[1],
+        u * supA1[2] + v * supA2[2] + w * supA3[2],
+      ];
+
+      // Watertight extruded (hkl) Miller plane slabs via Sutherland-Hodgman unit-cube clipping
+      let millerPlaneCount = 0;
+      if (
+        Array.isArray(options.millerPlanes) &&
+        options.millerPlanes.length > 0
+      ) {
+        const planeColors = [0x38bdf8, 0xf43f5e, 0xa855f7, 0x22c55e];
+        const cappedPlanes = options.millerPlanes.slice(0, 8);
+        for (let pIdx = 0; pIdx < cappedPlanes.length; pIdx++) {
+          const spec = cappedPlanes[pIdx];
+          let h = num(spec?.hkl?.[0], 0);
+          let k = num(spec?.hkl?.[1], 0);
+          let l = num(spec?.hkl?.[2], 0);
+          if (Math.hypot(h, k, l) < 1e-6) {
+            h = 1;
+            k = 1;
+            l = 1;
+          }
+          let fMin = Infinity;
+          let fMax = -Infinity;
+          for (let cu = 0; cu <= 1; cu++) {
+            for (let cv = 0; cv <= 1; cv++) {
+              for (let cw = 0; cw <= 1; cw++) {
+                const f = h * cu + k * cv + l * cw;
+                if (f < fMin) fMin = f;
+                if (f > fMax) fMax = f;
+              }
+            }
+          }
+          const fSpan = Math.max(1e-6, fMax - fMin);
+          const rawD = spec?.intercept ?? spec?.d;
+          let dVal =
+            rawD !== undefined && Number.isFinite(Number(rawD))
+              ? Number(rawD)
+              : fMin + fSpan * 0.5;
+          const loLim = fMin + fSpan * 0.12;
+          const hiLim = fMax - fSpan * 0.12;
+          if (dVal < loLim || dVal > hiLim) {
+            // Preserve exact d=1 when it lies well inside (fMin, fMax), e.g. (111) where fMin=0, fMax=3
+            dVal = clamp(dVal, loLim, hiLim);
+          }
+
+          // Build large initial quad on h*u + k*v + l*w = dVal in fractional (u, v, w) space
+          const nLen2 = h * h + k * k + l * l;
+          const nLen = Math.sqrt(nLen2);
+          const nxF = h / nLen,
+            nyF = k / nLen,
+            nzF = l / nLen;
+          const distFromMid = (dVal - (h * 0.5 + k * 0.5 + l * 0.5)) / nLen2;
+          const p0: Vec3 = [
+            0.5 + h * distFromMid,
+            0.5 + k * distFromMid,
+            0.5 + l * distFromMid,
+          ];
+          const ref: Vec3 = Math.abs(nyF) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+          let t1x = ref[1] * nzF - ref[2] * nyF;
+          let t1y = ref[2] * nxF - ref[0] * nzF;
+          let t1z = ref[0] * nyF - ref[1] * nxF;
+          const t1l = Math.hypot(t1x, t1y, t1z) || 1;
+          t1x /= t1l;
+          t1y /= t1l;
+          t1z /= t1l;
+          const t2x = nyF * t1z - nzF * t1y;
+          const t2y = nzF * t1x - nxF * t1z;
+          const t2z = nxF * t1y - nyF * t1x;
+          const R = 4.0;
+          let poly: Vec3[] = [
+            [
+              p0[0] + R * (-t1x - t2x),
+              p0[1] + R * (-t1y - t2y),
+              p0[2] + R * (-t1z - t2z),
+            ],
+            [
+              p0[0] + R * (t1x - t2x),
+              p0[1] + R * (t1y - t2y),
+              p0[2] + R * (t1z - t2z),
+            ],
+            [
+              p0[0] + R * (t1x + t2x),
+              p0[1] + R * (t1y + t2y),
+              p0[2] + R * (t1z + t2z),
+            ],
+            [
+              p0[0] + R * (-t1x + t2x),
+              p0[1] + R * (-t1y + t2y),
+              p0[2] + R * (-t1z + t2z),
+            ],
+          ];
+
+          // Clip against the 6 half-spaces of [0, 1]^3: coord[axis] >= 0 and coord[axis] <= 1
+          const clipHalfSpace = (
+            pts: Vec3[],
+            axis: 0 | 1 | 2,
+            sign: 1 | -1,
+            bound: number,
+          ): Vec3[] => {
+            const out: Vec3[] = [];
+            const m = pts.length;
+            if (m === 0) return out;
+            for (let i = 0; i < m; i++) {
+              const cur = pts[i];
+              const nxt = pts[(i + 1) % m];
+              const dCur = (cur[axis] - bound) * sign;
+              const dNxt = (nxt[axis] - bound) * sign;
+              const inCur = dCur >= -1e-7;
+              const inNxt = dNxt >= -1e-7;
+              if (inCur && inNxt) {
+                out.push(nxt);
+              } else if (inCur && !inNxt) {
+                const t = dCur / (dCur - dNxt);
+                out.push([
+                  cur[0] + (nxt[0] - cur[0]) * t,
+                  cur[1] + (nxt[1] - cur[1]) * t,
+                  cur[2] + (nxt[2] - cur[2]) * t,
+                ]);
+              } else if (!inCur && inNxt) {
+                const t = dCur / (dCur - dNxt);
+                out.push(
+                  [
+                    cur[0] + (nxt[0] - cur[0]) * t,
+                    cur[1] + (nxt[1] - cur[1]) * t,
+                    cur[2] + (nxt[2] - cur[2]) * t,
+                  ],
+                  nxt,
+                );
+              }
+            }
+            return out;
+          };
+
+          for (const axis of [0, 1, 2] as const) {
+            poly = clipHalfSpace(poly, axis, 1, 0);
+            poly = clipHalfSpace(poly, axis, -1, 1);
+          }
+
+          // Deduplicate consecutive clipped vertices
+          const cleanPoly: Vec3[] = [];
+          for (const pt of poly) {
+            const prev = cleanPoly[cleanPoly.length - 1];
+            if (
+              !prev ||
+              Math.hypot(pt[0] - prev[0], pt[1] - prev[1], pt[2] - prev[2]) >
+                1e-4
+            ) {
+              cleanPoly.push(pt);
+            }
+          }
+          if (
+            cleanPoly.length > 2 &&
+            Math.hypot(
+              cleanPoly[0][0] - cleanPoly[cleanPoly.length - 1][0],
+              cleanPoly[0][1] - cleanPoly[cleanPoly.length - 1][1],
+              cleanPoly[0][2] - cleanPoly[cleanPoly.length - 1][2],
+            ) < 1e-4
+          ) {
+            cleanPoly.pop();
+          }
+          if (cleanPoly.length < 3) continue;
+
+          const worldPoly = cleanPoly.map((p) =>
+            mapSupercellFrac(p[0], p[1], p[2]),
+          );
+          const e1x = worldPoly[1][0] - worldPoly[0][0];
+          const e1y = worldPoly[1][1] - worldPoly[0][1];
+          const e1z = worldPoly[1][2] - worldPoly[0][2];
+          const e2x = worldPoly[2][0] - worldPoly[0][0];
+          const e2y = worldPoly[2][1] - worldPoly[0][1];
+          const e2z = worldPoly[2][2] - worldPoly[0][2];
+          let pnx = e1y * e2z - e1z * e2y;
+          let pny = e1z * e2x - e1x * e2z;
+          let pnz = e1x * e2y - e1y * e2x;
+          const pnl = Math.hypot(pnx, pny, pnz);
+          if (pnl < 1e-6) continue;
+          pnx /= pnl;
+          pny /= pnl;
+          pnz /= pnl;
+
+          const halfT =
+            clamp(num(spec?.thickness, a0 * 0.045), a0 * 0.008, a0 * 0.3) * 0.5;
+          const m = worldPoly.length;
+          const sPos: number[] = [];
+          const sNrm: number[] = [];
+          const sUv: number[] = [];
+          const sIdx: number[] = [];
+
+          // Front cap (+pn)
+          for (let i = 0; i < m; i++) {
+            const wp = worldPoly[i];
+            sPos.push(
+              wp[0] + pnx * halfT,
+              wp[1] + pny * halfT,
+              wp[2] + pnz * halfT,
+            );
+            sNrm.push(pnx, pny, pnz);
+            sUv.push(cleanPoly[i][0], cleanPoly[i][2]);
+          }
+          for (let i = 1; i < m - 1; i++) {
+            sIdx.push(0, i, i + 1);
+          }
+
+          // Back cap (-pn)
+          for (let i = 0; i < m; i++) {
+            const wp = worldPoly[i];
+            sPos.push(
+              wp[0] - pnx * halfT,
+              wp[1] - pny * halfT,
+              wp[2] - pnz * halfT,
+            );
+            sNrm.push(-pnx, -pny, -pnz);
+            sUv.push(cleanPoly[i][0], cleanPoly[i][2]);
+          }
+          for (let i = 1; i < m - 1; i++) {
+            sIdx.push(m, m + i + 1, m + i);
+          }
+
+          // Perimeter side walls
+          let vOff = m * 2;
+          for (let i = 0; i < m; i++) {
+            const pA = worldPoly[i];
+            const pB = worldPoly[(i + 1) % m];
+            const edx = pB[0] - pA[0];
+            const edy = pB[1] - pA[1];
+            const edz = pB[2] - pA[2];
+            let snx = edy * pnz - edz * pny;
+            let sny = edz * pnx - edx * pnz;
+            let snz = edx * pny - edy * pnx;
+            const snl = Math.hypot(snx, sny, snz) || 1;
+            snx /= snl;
+            sny /= snl;
+            snz /= snl;
+            sPos.push(
+              pA[0] - pnx * halfT,
+              pA[1] - pny * halfT,
+              pA[2] - pnz * halfT,
+              pB[0] - pnx * halfT,
+              pB[1] - pny * halfT,
+              pB[2] - pnz * halfT,
+              pB[0] + pnx * halfT,
+              pB[1] + pny * halfT,
+              pB[2] + pnz * halfT,
+              pA[0] + pnx * halfT,
+              pA[1] + pny * halfT,
+              pA[2] + pnz * halfT,
+            );
+            sNrm.push(
+              snx,
+              sny,
+              snz,
+              snx,
+              sny,
+              snz,
+              snx,
+              sny,
+              snz,
+              snx,
+              sny,
+              snz,
+            );
+            sUv.push(0, 0, 1, 0, 1, 1, 0, 1);
+            sIdx.push(vOff, vOff + 1, vOff + 2, vOff, vOff + 2, vOff + 3);
+            vOff += 4;
+          }
+
+          const pColHex =
+            typeof spec?.color === 'number' && Number.isFinite(spec.color)
+              ? spec.color
+              : planeColors[pIdx % planeColors.length];
+          parts.push(
+            paintRaw(
+              {pos: sPos, nrm: sNrm, uv: sUv, idx: sIdx},
+              hexToRgb(pColHex),
+            ),
+          );
+          millerPlaneCount++;
+        }
+      }
+
+      if (showBox) {
         const corners: Vec3[] = [
-          [0, 0, 0],
-          [sx, 0, 0],
-          [sx, sy, 0],
-          [0, sy, 0],
-          [0, 0, sz],
-          [sx, 0, sz],
-          [sx, sy, sz],
-          [0, sy, sz],
+          mapSupercellFrac(0, 0, 0),
+          mapSupercellFrac(1, 0, 0),
+          mapSupercellFrac(1, 1, 0),
+          mapSupercellFrac(0, 1, 0),
+          mapSupercellFrac(0, 0, 1),
+          mapSupercellFrac(1, 0, 1),
+          mapSupercellFrac(1, 1, 1),
+          mapSupercellFrac(0, 1, 1),
         ];
         const edges: Array<[number, number]> = [
           [0, 1],
@@ -1857,11 +2403,12 @@ export function installScienceKit(threeNs: any, reg?: any): any {
 
       const merged = mergeRaw(parts, true);
       if (origin === 'center') {
+        const mid = mapSupercellFrac(0.5, 0.5, 0.5);
         xformRaw(
           merged,
-          -spanBox[0] * 0.5,
-          -spanBox[1] * 0.5,
-          -spanBox[2] * 0.5,
+          -mid[0],
+          hasCustomVectors ? -mid[1] : -spanBox[1] * 0.5,
+          -mid[2],
         );
       }
 
@@ -1869,6 +2416,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         lattice,
         cells: [nx, ny, nz],
         atomCount: sites.length,
+        millerPlaneCount,
       });
     }
   }
@@ -5532,6 +6080,503 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     }
   }
 
+  function toVec3Safe(
+    v:
+      | readonly [number, number, number]
+      | {x: number; y: number; z: number}
+      | undefined,
+    fallback: Vec3,
+  ): Vec3 {
+    if (!v) return [fallback[0], fallback[1], fallback[2]];
+    if (Array.isArray(v)) {
+      return [
+        clamp(num(v[0], fallback[0]), -500, 500),
+        clamp(num(v[1], fallback[1]), -500, 500),
+        clamp(num(v[2], fallback[2]), -500, 500),
+      ];
+    }
+    const obj = v as {x?: number; y?: number; z?: number};
+    return [
+      clamp(num(obj.x, fallback[0]), -500, 500),
+      clamp(num(obj.y, fallback[1]), -500, 500),
+      clamp(num(obj.z, fallback[2]), -500, 500),
+    ];
+  }
+
+  function buildCapsuleBetween(
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    radius: number,
+    segs: number,
+  ): RawBufs {
+    const dx = bx - ax,
+      dy = by - ay,
+      dz = bz - az;
+    const len = Math.hypot(dx, dy, dz);
+    if (len <= 1e-6 || radius <= 1e-6)
+      return {pos: [], nrm: [], uv: [], idx: []};
+    const hL = len * 0.5;
+    const rCap = Math.min(radius, hL * 0.85);
+    const yStraight = hL - rCap;
+    const capSteps = 4;
+    const prof: Pt2[] = [[0, -hL]];
+    for (let i = 1; i <= capSteps; i++) {
+      const a = (i * Math.PI * 0.5) / capSteps;
+      prof.push([radius * Math.sin(a), -yStraight - rCap * Math.cos(a)]);
+    }
+    if (yStraight > 1e-5) {
+      prof.push([radius, yStraight]);
+    }
+    for (let i = 1; i < capSteps; i++) {
+      const a = (i * Math.PI * 0.5) / capSteps;
+      prof.push([radius * Math.cos(a), yStraight + rCap * Math.sin(a)]);
+    }
+    prof.push([0, hL]);
+    return xformRaw(
+      revolveClosedProfile(prof, segs),
+      (ax + bx) * 0.5,
+      (ay + by) * 0.5,
+      (az + bz) * 0.5,
+      basisFromY(dx, dy, dz),
+    );
+  }
+
+  // --- 13. DashedLineGeometry (AR-Safe 3D Dashed Rods / Capsules for H-Bonds & Optical Rays) ---
+  class DashedLineGeometry extends BufferGeometry {
+    constructor(options: DashedLineOptions = {}) {
+      super();
+      const dashLen = clamp(
+        num(options.dashLength ?? options.dashSize, 0.08),
+        0.004,
+        10,
+      );
+      const gapLen = clamp(
+        num(options.gapLength ?? options.gapSize, 0.05),
+        0.002,
+        10,
+      );
+      const radius = clamp(num(options.radius, 0.014), 0.001, 1.0);
+      const segs = clampInt(options.radialSegments, 6, 32, 10);
+      const capStyle = options.capStyle === 'flat' ? 'flat' : 'capsule';
+      const useVCol =
+        options.vertexColors === true || options.color !== undefined;
+      const colRgb = hexToRgb(
+        typeof options.color === 'number' && Number.isFinite(options.color)
+          ? options.color
+          : 0x94a3b8,
+      );
+
+      const segList: Array<[Vec3, Vec3]> = [];
+      if (Array.isArray(options.segments) && options.segments.length > 0) {
+        const capped = options.segments.slice(0, MAX_GLYPHS);
+        for (const pair of capped) {
+          if (!Array.isArray(pair) || pair.length < 2) continue;
+          const a = toVec3Safe(pair[0], [0, 0, 0]);
+          const b = toVec3Safe(pair[1], [0, 0, 0]);
+          if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > 1e-4) {
+            segList.push([a, b]);
+          }
+        }
+      }
+      if (Array.isArray(options.points) && options.points.length >= 2) {
+        const cappedPts = options.points.slice(0, MAX_GLYPHS);
+        for (let i = 0; i < cappedPts.length - 1; i++) {
+          const a = toVec3Safe(cappedPts[i], [0, 0, 0]);
+          const b = toVec3Safe(cappedPts[i + 1], [0, 0, 0]);
+          if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > 1e-4) {
+            segList.push([a, b]);
+          }
+        }
+      }
+      if (segList.length === 0) {
+        segList.push([
+          [-0.5, 0, 0],
+          [0.5, 0, 0],
+        ]);
+      }
+
+      const parts: RawBufs[] = [];
+      let dashCount = 0;
+      const buildDash =
+        capStyle === 'flat' ? buildCylBetween : buildCapsuleBetween;
+
+      for (const [a, b] of segList) {
+        if (dashCount >= MAX_GLYPHS) break;
+        const dx = b[0] - a[0],
+          dy = b[1] - a[1],
+          dz = b[2] - a[2];
+        const totalLen = Math.hypot(dx, dy, dz);
+        if (totalLen <= 1e-4) continue;
+        const ux = dx / totalLen,
+          uy = dy / totalLen,
+          uz = dz / totalLen;
+
+        let s = 0;
+        let segDashes = 0;
+        while (s < totalLen - 1e-4 && dashCount < MAX_GLYPHS) {
+          const sEnd = Math.min(totalLen, s + dashLen);
+          const dSpan = sEnd - s;
+          if (
+            dSpan > Math.min(1e-3, totalLen * 0.2) &&
+            (segDashes === 0 || dSpan >= dashLen * 0.25)
+          ) {
+            const raw = buildDash(
+              a[0] + ux * s,
+              a[1] + uy * s,
+              a[2] + uz * s,
+              a[0] + ux * sEnd,
+              a[1] + uy * sEnd,
+              a[2] + uz * sEnd,
+              radius,
+              segs,
+            );
+            if (useVCol) paintRaw(raw, colRgb);
+            parts.push(raw);
+            dashCount++;
+            segDashes++;
+          }
+          s += dashLen + gapLen;
+        }
+      }
+
+      if (parts.length === 0) {
+        const fb = buildDash(-0.2, 0, 0, 0.2, 0, 0, radius, segs);
+        if (useVCol) paintRaw(fb, colRgb);
+        parts.push(fb);
+        dashCount = 1;
+      }
+
+      applyBuffers(this, mergeRaw(parts, useVCol), 'DashedLineGeometry', {
+        dashCount,
+        dashLength: dashLen,
+        gapLength: gapLen,
+        capStyle,
+      });
+    }
+  }
+
+  // --- 14. AngleArcGeometry (Watertight 3D Bond-Angle & Optical-Incidence Arc / Right-Angle Elbow) ---
+  class AngleArcGeometry extends BufferGeometry {
+    constructor(options: AngleArcOptions = {}) {
+      super();
+      const vertex = toVec3Safe(options.vertex ?? options.center, [0, 0, 0]);
+      const rawA = options.armA ?? options.from;
+      const rawB = options.armB ?? options.to;
+      const treatAsPos =
+        options.vectorsAsPositions === true ||
+        (options.armA === undefined && options.from !== undefined) ||
+        (options.armB === undefined && options.to !== undefined);
+
+      let aVec = toVec3Safe(rawA, [1, 0, 0]);
+      let bVec = toVec3Safe(rawB, [-0.25, 0.968, 0]);
+      if (treatAsPos) {
+        aVec = [aVec[0] - vertex[0], aVec[1] - vertex[1], aVec[2] - vertex[2]];
+        bVec = [bVec[0] - vertex[0], bVec[1] - vertex[1], bVec[2] - vertex[2]];
+      }
+
+      let aLen = Math.hypot(aVec[0], aVec[1], aVec[2]);
+      if (aLen < 1e-5) {
+        aVec = [1, 0, 0];
+        aLen = 1;
+      }
+      const uAx = aVec[0] / aLen,
+        uAy = aVec[1] / aLen,
+        uAz = aVec[2] / aLen;
+
+      let bLen = Math.hypot(bVec[0], bVec[1], bVec[2]);
+      if (bLen < 1e-5) {
+        bVec = [-0.25, 0.968, 0];
+        bLen = Math.hypot(bVec[0], bVec[1], bVec[2]);
+      }
+      let uBx = bVec[0] / bLen,
+        uBy = bVec[1] / bLen,
+        uBz = bVec[2] / bLen;
+
+      let dotAB = clamp(uAx * uBx + uAy * uBy + uAz * uBz, -1, 1);
+      let theta = Math.acos(dotAB);
+
+      // Construct orthogonal in-plane unit vector v perpendicular to uA
+      let vx = uBx - dotAB * uAx;
+      let vy = uBy - dotAB * uAy;
+      let vz = uBz - dotAB * uAz;
+      let vLen = Math.hypot(vx, vy, vz);
+      if (vLen < 1e-5) {
+        // Collinear arms (0° or 180°): choose a deterministic perpendicular axis
+        const ref: Vec3 = Math.abs(uAy) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+        vx = ref[1] * uAz - ref[2] * uAy;
+        vy = ref[2] * uAx - ref[0] * uAz;
+        vz = ref[0] * uAy - ref[1] * uAx;
+        vLen = Math.hypot(vx, vy, vz) || 1;
+        if (theta < 0.08) theta = 0.25;
+      }
+      vx /= vLen;
+      vy /= vLen;
+      vz /= vLen;
+      uBx = Math.cos(theta) * uAx + Math.sin(theta) * vx;
+      uBy = Math.cos(theta) * uAy + Math.sin(theta) * vy;
+      uBz = Math.cos(theta) * uAz + Math.sin(theta) * vz;
+      dotAB = Math.cos(theta);
+
+      const R = clamp(num(options.radius, 0.35), 0.03, 25);
+      const rTube = clamp(num(options.tubeRadius, R * 0.048), 0.001, R * 0.28);
+      const arcSegs = clampInt(options.segments, 8, 96, 28);
+      const P = clampInt(options.radialSegments, 6, 32, 12);
+      const arrowEnds = options.arrowEnds === true;
+      const isRightAngle =
+        options.rightAngleSquare === true ||
+        (options.rightAngleSquare !== false &&
+          Math.abs(theta - Math.PI * 0.5) <= 0.035);
+
+      const spine: Vec3[] = [];
+      if (isRightAngle && theta > 0.35 && theta < 2.8) {
+        // Classic perpendicular square elbow from V + R*uA -> V + R*(uA + uB) -> V + R*uB with smooth corner fillet
+        const legSteps = 8;
+        const cornerSteps = 6;
+        const fFrac = clamp((rTube * 1.5) / R, 0.25, 0.45);
+        for (let i = 0; i <= legSteps; i++) {
+          const u = (i / legSteps) * (1 - fFrac);
+          spine.push([
+            vertex[0] + R * (uAx + u * uBx),
+            vertex[1] + R * (uAy + u * uBy),
+            vertex[2] + R * (uAz + u * uBz),
+          ]);
+        }
+        for (let i = 1; i < cornerSteps; i++) {
+          const a = (i * Math.PI * 0.5) / cornerSteps;
+          const cA = 1 - fFrac + fFrac * Math.cos(a);
+          const cB = 1 - fFrac + fFrac * Math.sin(a);
+          spine.push([
+            vertex[0] + R * (cA * uAx + cB * uBx),
+            vertex[1] + R * (cA * uAy + cB * uBy),
+            vertex[2] + R * (cA * uAz + cB * uBz),
+          ]);
+        }
+        for (let i = 0; i <= legSteps; i++) {
+          const u = (1 - fFrac) * (1 - i / legSteps);
+          spine.push([
+            vertex[0] + R * (u * uAx + uBx),
+            vertex[1] + R * (u * uAy + uBy),
+            vertex[2] + R * (u * uAz + uBz),
+          ]);
+        }
+      } else {
+        for (let i = 0; i <= arcSegs; i++) {
+          const a = (i / arcSegs) * theta;
+          const ca = Math.cos(a);
+          const sa = Math.sin(a);
+          spine.push([
+            vertex[0] + R * (ca * uAx + sa * vx),
+            vertex[1] + R * (ca * uAy + sa * vy),
+            vertex[2] + R * (ca * uAz + sa * vz),
+          ]);
+        }
+      }
+
+      let raw: RawBufs;
+      if (!arrowEnds || spine.length < 10) {
+        raw = sweepTube(spine, rTube, P, false);
+      } else {
+        // Sweep arc with conical flared arrowheads at both ends as a single watertight 2-manifold
+        const m = spine.length;
+        const tangs: Vec3[] = new Array(m);
+        for (let i = 0; i < m; i++) {
+          const i0 = Math.max(0, i - 1);
+          const i1 = Math.min(m - 1, i + 1);
+          const tx = spine[i1][0] - spine[i0][0];
+          const ty = spine[i1][1] - spine[i0][1];
+          const tz = spine[i1][2] - spine[i0][2];
+          const tl = Math.hypot(tx, ty, tz) || 1;
+          tangs[i] = [tx / tl, ty / tl, tz / tl];
+        }
+        const frameN: Vec3[] = new Array(m);
+        const frameB: Vec3[] = new Array(m);
+        const t0 = tangs[0];
+        const ref: Vec3 = Math.abs(t0[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+        let nx0 = ref[1] * t0[2] - ref[2] * t0[1];
+        let ny0 = ref[2] * t0[0] - ref[0] * t0[2];
+        let nz0 = ref[0] * t0[1] - ref[1] * t0[0];
+        const nl0 = Math.hypot(nx0, ny0, nz0) || 1;
+        nx0 /= nl0;
+        ny0 /= nl0;
+        nz0 /= nl0;
+        frameN[0] = [nx0, ny0, nz0];
+        frameB[0] = [
+          t0[1] * nz0 - t0[2] * ny0,
+          t0[2] * nx0 - t0[0] * nz0,
+          t0[0] * ny0 - t0[1] * nx0,
+        ];
+        for (let i = 1; i < m; i++) {
+          const tp = tangs[i - 1];
+          const tc = tangs[i];
+          const np = frameN[i - 1];
+          let ax = tp[1] * tc[2] - tp[2] * tc[1];
+          let ay = tp[2] * tc[0] - tp[0] * tc[2];
+          let az = tp[0] * tc[1] - tp[1] * tc[0];
+          const sinA = Math.hypot(ax, ay, az);
+          const cosA = clamp(
+            tp[0] * tc[0] + tp[1] * tc[1] + tp[2] * tc[2],
+            -1,
+            1,
+          );
+          let cnx = np[0],
+            cny = np[1],
+            cnz = np[2];
+          if (sinA > 1e-7) {
+            ax /= sinA;
+            ay /= sinA;
+            az /= sinA;
+            const dot = ax * cnx + ay * cny + az * cnz;
+            const crx = ay * cnz - az * cny;
+            const cry = az * cnx - ax * cnz;
+            const crz = ax * cny - ay * cnx;
+            cnx = cnx * cosA + crx * sinA + ax * dot * (1 - cosA);
+            cny = cny * cosA + cry * sinA + ay * dot * (1 - cosA);
+            cnz = cnz * cosA + crz * sinA + az * dot * (1 - cosA);
+          }
+          const d = cnx * tc[0] + cny * tc[1] + cnz * tc[2];
+          cnx -= d * tc[0];
+          cny -= d * tc[1];
+          cnz -= d * tc[2];
+          const cl = Math.hypot(cnx, cny, cnz) || 1;
+          cnx /= cl;
+          cny /= cl;
+          cnz /= cl;
+          frameN[i] = [cnx, cny, cnz];
+          frameB[i] = [
+            tc[1] * cnz - tc[2] * cny,
+            tc[2] * cnx - tc[0] * cnz,
+            tc[0] * cny - tc[1] * cnx,
+          ];
+        }
+
+        const rad: number[] = new Array(m).fill(rTube);
+        rad[0] = rTube * 0.22;
+        rad[1] = rTube * 1.15;
+        rad[2] = rTube * 2.05;
+        rad[m - 3] = rTube * 2.05;
+        rad[m - 2] = rTube * 1.15;
+        rad[m - 1] = rTube * 0.22;
+
+        const cosTab: number[] = new Array(P);
+        const sinTab: number[] = new Array(P);
+        for (let j = 0; j < P; j++) {
+          const a = (j * TAU) / P;
+          cosTab[j] = Math.cos(a);
+          sinTab[j] = Math.sin(a);
+        }
+
+        const pos: number[] = [];
+        const nrm: number[] = new Array(m * P * 3).fill(0);
+        const uv: number[] = [];
+        const idx: number[] = [];
+        for (let i = 0; i < m; i++) {
+          const c = spine[i];
+          const N = frameN[i];
+          const B = frameB[i];
+          const rCur = rad[i];
+          for (let j = 0; j < P; j++) {
+            const rx = cosTab[j] * N[0] + sinTab[j] * B[0];
+            const ry = cosTab[j] * N[1] + sinTab[j] * B[1];
+            const rz = cosTab[j] * N[2] + sinTab[j] * B[2];
+            pos.push(c[0] + rCur * rx, c[1] + rCur * ry, c[2] + rCur * rz);
+            uv.push(j / P, i / (m - 1));
+          }
+        }
+        for (let i = 0; i < m - 1; i++) {
+          const r0 = i * P;
+          const r1 = (i + 1) * P;
+          for (let j = 0; j < P; j++) {
+            const j1 = (j + 1) % P;
+            idx.push(r0 + j, r0 + j1, r1 + j1, r0 + j, r1 + j1, r1 + j);
+          }
+        }
+        for (let t = 0; t < idx.length; t += 3) {
+          const ia = idx[t] * 3;
+          const ib = idx[t + 1] * 3;
+          const ic = idx[t + 2] * 3;
+          const abx = pos[ib] - pos[ia];
+          const aby = pos[ib + 1] - pos[ia + 1];
+          const abz = pos[ib + 2] - pos[ia + 2];
+          const acx = pos[ic] - pos[ia];
+          const acy = pos[ic + 1] - pos[ia + 1];
+          const acz = pos[ic + 2] - pos[ia + 2];
+          const fnx = aby * acz - abz * acy;
+          const fny = abz * acx - abx * acz;
+          const fnz = abx * acy - aby * acx;
+          nrm[ia] += fnx;
+          nrm[ia + 1] += fny;
+          nrm[ia + 2] += fnz;
+          nrm[ib] += fnx;
+          nrm[ib + 1] += fny;
+          nrm[ib + 2] += fnz;
+          nrm[ic] += fnx;
+          nrm[ic + 1] += fny;
+          nrm[ic + 2] += fnz;
+        }
+        for (let k = 0; k < nrm.length; k += 3) {
+          const nl = Math.hypot(nrm[k], nrm[k + 1], nrm[k + 2]) || 1;
+          nrm[k] /= nl;
+          nrm[k + 1] /= nl;
+          nrm[k + 2] /= nl;
+        }
+        // Start & end caps
+        let vOff = m * P;
+        const ts = tangs[0];
+        pos.push(spine[0][0], spine[0][1], spine[0][2]);
+        nrm.push(-ts[0], -ts[1], -ts[2]);
+        uv.push(0.5, 0.5);
+        const cStart = vOff++;
+        const sRing = vOff;
+        for (let j = 0; j < P; j++) {
+          pos.push(pos[j * 3], pos[j * 3 + 1], pos[j * 3 + 2]);
+          nrm.push(-ts[0], -ts[1], -ts[2]);
+          uv.push(0.5 + 0.5 * cosTab[j], 0.5 + 0.5 * sinTab[j]);
+        }
+        vOff += P;
+        for (let j = 0; j < P; j++) {
+          idx.push(cStart, sRing + ((j + 1) % P), sRing + j);
+        }
+        const te = tangs[m - 1];
+        pos.push(spine[m - 1][0], spine[m - 1][1], spine[m - 1][2]);
+        nrm.push(te[0], te[1], te[2]);
+        uv.push(0.5, 0.5);
+        const cEnd = vOff++;
+        const eRing = vOff;
+        const lastBase = (m - 1) * P;
+        for (let j = 0; j < P; j++) {
+          const k = (lastBase + j) * 3;
+          pos.push(pos[k], pos[k + 1], pos[k + 2]);
+          nrm.push(te[0], te[1], te[2]);
+          uv.push(0.5 + 0.5 * cosTab[j], 0.5 + 0.5 * sinTab[j]);
+        }
+        for (let j = 0; j < P; j++) {
+          idx.push(cEnd, eRing + j, eRing + ((j + 1) % P));
+        }
+        raw = {pos, nrm, uv, idx};
+      }
+
+      if (options.vertexColors === true || options.color !== undefined) {
+        const colHex =
+          typeof options.color === 'number' && Number.isFinite(options.color)
+            ? options.color
+            : 0xfacc15;
+        paintRaw(raw, hexToRgb(colHex));
+      }
+
+      applyBuffers(this, raw, 'AngleArcGeometry', {
+        angleRadians: theta,
+        angleDegrees: (theta * 180) / Math.PI,
+        radius: R,
+        rightAngleSquare: isRightAngle,
+        arrowEnds,
+      });
+    }
+  }
+
   const Science = {
     MAX_SCI_ATOMS: MAX_ATOMS,
     MAX_SCI_GRID: MAX_GRID,
@@ -5557,6 +6602,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     RibbonGeometry,
     IsoSurfaceGeometry,
     StreamlineGeometry,
+    DashedLineGeometry,
+    AngleArcGeometry,
   };
 
   for (const Ctor of [
@@ -5572,6 +6619,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     RibbonGeometry,
     IsoSurfaceGeometry,
     StreamlineGeometry,
+    DashedLineGeometry,
+    AngleArcGeometry,
   ]) {
     try {
       Object.freeze(Ctor.prototype);

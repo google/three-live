@@ -25,31 +25,59 @@ This file provides high-signal context, architectural invariants, and authoring 
 
 ## 1. Component & Bundle Selection
 
-Goal                                                                                                                          | Element        | Recommended Bundle             | Enforced Budget
-:---------------------------------------------------------------------------------------------------------------------------- | :------------- | :----------------------------- | :-------------:
-`.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting)                                                                  | `<three-live>` | `three-live-viewer.min.js`     | `< 31 KB gz`
+Goal                                                         | Element        | Recommended Bundle         | Enforced Budget
+:----------------------------------------------------------- | :------------- | :------------------------- | :-------------:
+`.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 31 KB gz`
 
-Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                                          | `<three-live>` | `three-live.min.js`            | `< 78 KB gz`
-Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js`     | `< 36 KB gz`
-Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                                    | `<three-live>` | `three-live-cad.min.js`        | `< 10 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Architecture` walls, slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways   | `<three-live>` | `three-live-kit-architecture.min.js` | `< 16 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Industrial` process pipes, valves, pumps, pallet racks, conveyors, ladders, catwalks, tanks        | `<three-live>` | `three-live-kit-industrial.min.js` | `< 14 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Science` molecules, protein ribbons, crystal lattices, atomic orbitals, optics, 3D plots, DNA     | `<three-live>` | `three-live-kit-science.min.js` | `< 27 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Electronics` PCBs, flanged/cutout enclosures, heatsinks, DIN rails, ICs, connectors, discretes     | `<three-live>` | `three-live-kit-electronics.min.js` | `< 14 KB gz`
-Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 53 geometries)     | `<three-live>` | `three-live-kits.min.js`       | `< 77 KB gz`
-Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers                         | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz`
-Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                                     | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
-Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select                          | `<three-live>` | `three-live-ai.min.js`         | `< 32 KB gz`
-Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`)                                 | `<three-live>` | `three-live-webgpu.min.js`     | `< 23 KB gz`
-Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ)                   | `<three-live>` | `three-live-tsl.min.js`        | `< 19 KB gz`
-Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded)               | `<three-live>` | `three-live-full.min.js`       | `< 223 KB gz`
-6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`                                 | `<xr-live>`    | `xr-live.min.js`               | `< 90 KB gz`
-Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP                                   | `<xr-live>`    | `xr-live-sensors.min.js`       | `< 10 KB gz`
-Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                                    | `<xr-live>`    | `xr-live-spatial.min.js`       | `< 63 KB gz`
-Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio)              | `<xr-live>`    | `xr-live-sim.min.js`           | `< 30 KB gz`
-Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator                                          | `<xr-live>`    | `xr-live-webgpu.min.js`        | `< 12 KB gz`
-Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins                       | `<xr-live>`    | `xr-live-full.min.js`          | `< 332 KB gz`
+Procedural `<script type="text/three">` + `InstancedMesh` +
+`KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 78 KB gz`
+Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`,
+`KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` |
+`three-live-studio.min.js` | `< 36 KB gz` Add-on: 2D `Shape`/`ExtrudeGeometry`,
+3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` |
+`three-live-cad.min.js` | `< 10 KB gz` Domain Kit (a la carte): Parametric
+`THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow
+blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js`
+| `< 18 KB gz` Domain Kit (a la carte): Parametric `THREE.Architecture` walls,
+slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways |
+`<three-live>` | `three-live-kit-architecture.min.js` | `< 16 KB gz` Domain Kit
+(a la carte): Parametric `THREE.Industrial` process pipes, valves, pumps, pallet
+racks, conveyors, ladders, catwalks, tanks | `<three-live>` |
+`three-live-kit-industrial.min.js` | `< 14 KB gz` Domain Kit (a la carte):
+Parametric `THREE.Science` molecules, protein ribbons, crystal lattices,
+isosurfaces, streamlines, callouts | `<three-live>` |
+`three-live-kit-science.min.js` | `< 31 KB gz` Domain Kit (a la carte):
+Parametric `THREE.Electronics` PCBs, flanged/cutout enclosures, heatsinks, DIN
+rails, ICs, connectors, discretes | `<three-live>` |
+`three-live-kit-electronics.min.js` | `< 14 KB gz` Domain Kits Roll-Up (a la
+carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`,
+`Science`, `Electronics`; 57 geometries) | `<three-live>` |
+`three-live-kits.min.js` | `< 82 KB gz` Add-on: `Box3`/`Sphere`,
+`CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers |
+`<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz` Add-on: 64-joint
+skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` |
+`<three-live>` | `three-live-animation.min.js` | `< 11 KB gz` Add-on:
+bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak &
+Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 32 KB gz` Add-on:
+opt-in WebGPU `GPURenderBundle` scene accelerator
+(`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` |
+`three-live-webgpu.min.js` | `< 23 KB gz` Add-on: opt-in Loop-Free `THREE.TSL` &
+`MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) |
+`<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` Full 3D viewer +
+studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain
+kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 223 KB gz` 6DoF
+WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) +
+`<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 90 KB gz` Add-on:
+hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator,
+WebMCP | `<xr-live>` | `xr-live-sensors.min.js` | `< 10 KB gz` Add-on bundle
+with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins |
+`<xr-live>` | `xr-live-spatial.min.js` | `< 63 KB gz` Add-on bundle with the 6
+simulation plugins (character, agents, rigid-body/joints, hit zones, objectives,
+audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` Add-on: opt-in WebGPU
+Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` |
+`xr-live-webgpu.min.js` | `< 12 KB gz` Full Spatial Computing + Depth Physics +
+25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` |
+`xr-live-full.min.js` | `< 332 KB gz`
 
 ---
 
@@ -114,7 +142,7 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
         font).
     -   **A La Carte Parametric Domain Kits (`three-live-kits.min.js` or
         `three-live-kit-<domain>.min.js`, built into CLI/MCP; excluded from
-        `*-full.min.js`):** 52 watertight 2-manifold geometries across 5
+        `*-full.min.js`):** 57 watertight 2-manifold geometries across 5
         canonical industry namespaces (zero aliases, zero root `THREE.*` leaks):
         -   `THREE.Mechanical` (15): `SpurGearGeometry`, `BevelGearGeometry`,
             `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`
@@ -132,10 +160,10 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
             `turn`), `RoofGeometry` (`gable`, `hip`, `shed`, `mansard`,
             `gambrel`, `flat-parapet`), `DoorGeometry` (10 leaf styles, 5
             operations `swing` / `slider` / `barn` / `pocket` / `bifold`,
-            handing & hardware), `WindowGeometry` (10 styles incl. `single-hung`,
-            `double-hung`, `slider` `OX`/`XO`/`XOX`/`OXXO`, `casement`, `awning`,
-            `hopper`), `RailingGeometry`, `ColumnGeometry`, `ArchwayGeometry`,
-            `codeStairSpec(rise)`.
+            handing & hardware), `WindowGeometry` (10 styles incl.
+            `single-hung`, `double-hung`, `slider` `OX`/`XO`/`XOX`/`OXXO`,
+            `casement`, `awning`, `hopper`), `RailingGeometry`,
+            `ColumnGeometry`, `ArchwayGeometry`, `codeStairSpec(rise)`.
         -   `THREE.Industrial` (10): `PipeRunGeometry` (3D `waypoints` + bent
             elbows + flanges), `PipeFittingGeometry` (`elbow90`, `elbow45`,
             `tee`, `cross`, `reducer`, `eccentric-reducer`, `cap`),
@@ -146,24 +174,32 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
             `SafetyBarrierGeometry`, `StorageTankGeometry` (`vertical-legs`,
             `horizontal-saddle`, `skirt`, `flat-api650`),
             `nominalPipeSpec('DN100')`.
-        -   `THREE.Science` (10): `MoleculeGeometry` (44 IUPAC elements, presets
-            incl. `water`, `methane`, `benzene`, `cyclohexane`, `caffeine`, `co2`,
-            `nh3`, `ethanol`), `RibbonGeometry` (continuous Richardson protein /
-            polypeptide cartoon across `'coil'`, `'helix'`, and arrow-tipped
-            `'sheet'` spans, plus `ribbonColorMap`), `CrystalLatticeGeometry`
-            (`sc`, `bcc`, `fcc`, `hcp`, `diamond`, `graphene`, `nacl`,
-            `perovskite`), `AtomicOrbitalGeometry` (`1s`..`3dxz` dual-phase
-            lobes), `OpticalElementGeometry` (spherical lenses & prisms),
+        -   `THREE.Science` (14): `MoleculeGeometry` (44 IUPAC elements, presets
+            incl. `water`, `methane`, `benzene`, `cyclohexane`, `caffeine`,
+            `co2`, `nh3`, `ethanol`), `RibbonGeometry` (continuous Richardson
+            protein / polypeptide cartoon across `'coil'`, `'helix'`, and
+            arrow-tipped `'sheet'` spans, plus `ribbonColorMap`),
+            `CrystalLatticeGeometry` (`sc`, `bcc`, `fcc`, `hcp`, `diamond`,
+            `graphene`, `nacl`, `perovskite` + custom Bravais `vectors`,
+            `basis`, `vacancies`, and extruded `(hkl)` `millerPlanes`),
+            `AtomicOrbitalGeometry` (`1s`..`3dxz` dual-phase lobes),
+            `OpticalElementGeometry` (spherical lenses & prisms),
             `SurfacePlotGeometry`, `ParametricSurfaceGeometry`,
-            `VectorFieldGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`,
+            `VectorFieldGeometry`, `IsoSurfaceGeometry` (Marching Tetrahedra 3D
+            scalar fields & presets `gyroid`, `schwarz-p`, `schwarz-d`,
+            `hydrogen-2p`, `hydrogen-3dz2`, `metaballs`), `StreamlineGeometry`
+            (RK4 vector-field streamlines & presets `dipole`, `helmholtz`,
+            `vortex-ring`, `lorenz`, `saddle`), `Axes3DGeometry`,
+            `DoubleHelixGeometry`, `DashedLineGeometry`, `AngleArcGeometry`,
+            `sampleColormap`, `colormapTexture`, `applyVertexColormap`,
             `elementSpec('C')`.
         -   `THREE.Electronics` (9): `PcbBoardGeometry`, `EnclosureGeometry`
             (`base`, `lid`, `closed` with vents, wall-mount `flanges`, and I/O
             `panelCutouts`), `HeatsinkGeometry`, `DinRailGeometry`,
             `IcPackageGeometry` (`dip`, `soic`, `qfp`, `qfn`, `bga`, `to220`,
-            `sot23`, `d2pak`), `PinHeaderGeometry`, `ConnectorGeometry` (`usb-c`,
-            `usb-a`, `rj45`, `barrel-jack`, `sma`, `terminal-block`, `hdmi`,
-            `microsd`, `jst-xh`), `StandoffSpacerGeometry`,
+            `sot23`, `d2pak`), `PinHeaderGeometry`, `ConnectorGeometry`
+            (`usb-c`, `usb-a`, `rj45`, `barrel-jack`, `sma`, `terminal-block`,
+            `hdmi`, `microsd`, `jst-xh`), `StandoffSpacerGeometry`,
             `DiscreteComponentGeometry` (`smd-chip` `0402`..`2512`,
             `electrolytic-cap`, `tactile-switch`, `led-domed`, `crystal-hc49`),
             `jedecPackageSpec('TQFP-32')`.
@@ -214,10 +250,9 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         (`three-live/src/plugins/postprocessing.ts`), analytical 2-bone & FABRIK
         IK (`three-live/src/plugins/ik.ts`), loop-free `THREE.TSL` &
         `MeshStandardNodeMaterial` (`three-live/src/tsl/` +
-        `three-live/src/plugins/tsl.ts` compiling `extras.tsl` to
-        WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and USDZ
-        `UsdShade` / MaterialX), Worker/iframe sandboxing, and plugin hooks
-        (`three-live/src/plugin.ts`).
+        `three-live/src/plugins/tsl.ts` compiling `extras.tsl` to WebGL2 GLSL ES
+        300, WebGPU WGSL `GPURenderBundle`s, and USDZ `UsdShade` / MaterialX),
+        Worker/iframe sandboxing, and plugin hooks (`three-live/src/plugin.ts`).
     -   `<xr-live>` (`xr-live/src/xr-live-element.ts`), the 15 spatial plugins
         (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`,
         `world-understanding`, `gemini-live`, `spatial-paint`,
@@ -251,15 +286,16 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         (`ThreeLiveFilamentRenderer.kt`, `TslFilamatBridge.kt`).
     -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):**
         `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`,
-        `XRTslMaterialValidator.swift`, `XRSpatialRealityKitFeatures.swift` + modular feature controllers
-        (`SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
-        `ExplodedView.swift`, `PersistentAnchors.swift`,
-        `SpatialLocomotion.swift`, `SharedRoom.swift`, `SpatialAudio.swift`,
-        `IKSolver.swift`, `LodController.swift`), `XRSimWorld.swift` +
-        simulation controllers (`CharacterController.swift`,
-        `SteeringAgents.swift`, `RigidBodyPhysics.swift`, `HitZones.swift`,
-        `Objectives.swift`, `SynthAudio.swift`, `XRSimRealityKitBridge.swift`),
-        and `XRLiveRealityKit.swift`.
+        `XRTslMaterialValidator.swift`, `XRSpatialRealityKitFeatures.swift` +
+        modular feature controllers (`SpatialMeasure.swift`,
+        `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`,
+        `PersistentAnchors.swift`, `SpatialLocomotion.swift`,
+        `SharedRoom.swift`, `SpatialAudio.swift`, `IKSolver.swift`,
+        `LodController.swift`), `XRSimWorld.swift` + simulation controllers
+        (`CharacterController.swift`, `SteeringAgents.swift`,
+        `RigidBodyPhysics.swift`, `HitZones.swift`, `Objectives.swift`,
+        `SynthAudio.swift`, `XRSimRealityKitBridge.swift`), and
+        `XRLiveRealityKit.swift`.
 
 **Parity Rule:** Whenever you add or modify a trait in `three-live/src/xr-trait-schema.ts`, you must update its handling in Web (`xr-live/src/plugins/`), Android (`mobile/android/`), and iOS/visionOS (`mobile/ios/`) and keep `XRLiveSwiftSourceParityTest.kt` green.
 

@@ -86,7 +86,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ### 3. Allowed `THREE.*` Constructors inside `<script type="text/three">`
 - Math & IK: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`, `IKSolver` (`solveTwoBone`, `solveFABRIK`)
-- Geometries, CAD & Domain Kits: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `LatheGeometry`, `TubeGeometry`, `Shape`, `Path`, `ShapeGeometry`, `ExtrudeGeometry`, `TextGeometry`, `CSG` (`union`, `subtract`, `intersect`), `BufferGeometry`, `BufferAttribute`, plus 5 a la carte domain kits (`three-live-kits.min.js` or `three-live-kit-<domain>.min.js` on Web, built into CLI/MCP): `THREE.Mechanical` (`SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`, `BoltGeometry`, `NutGeometry`, `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`, `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`, `FlangePlateGeometry`, `ProfileExtrusionGeometry`, `metricFastener`, `gearMeshDistance`), `THREE.Architecture` (`WallGeometry`, `SlabGeometry`, `StaircaseGeometry`, `RoofGeometry`, `DoorGeometry`, `WindowGeometry`, `RailingGeometry`, `ColumnGeometry`, `ArchwayGeometry`, `codeStairSpec`), `THREE.Industrial` (`PipeRunGeometry`, `PipeFittingGeometry`, `ValveGeometry`, `CentrifugalPumpGeometry`, `PalletRackGeometry`, `ConveyorGeometry`, `IndustrialLadderGeometry`, `CatwalkPlatformGeometry`, `SafetyBarrierGeometry`, `StorageTankGeometry`, `nominalPipeSpec`), `THREE.Science` (`MoleculeGeometry`, `RibbonGeometry`, `CrystalLatticeGeometry`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `SurfacePlotGeometry`, `ParametricSurfaceGeometry`, `VectorFieldGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`, `ribbonColorMap`, `elementSpec`), and `THREE.Electronics` (`PcbBoardGeometry`, `EnclosureGeometry`, `HeatsinkGeometry`, `DinRailGeometry`, `IcPackageGeometry`, `PinHeaderGeometry`, `ConnectorGeometry`, `StandoffSpacerGeometry`, `DiscreteComponentGeometry`, `jedecPackageSpec`)
+- Geometries, CAD & Domain Kits: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `LatheGeometry`, `TubeGeometry`, `Shape`, `Path`, `ShapeGeometry`, `ExtrudeGeometry`, `TextGeometry`, `CSG` (`union`, `subtract`, `intersect`), `BufferGeometry`, `BufferAttribute`, plus 5 a la carte domain kits (`three-live-kits.min.js` or `three-live-kit-<domain>.min.js` on Web, built into CLI/MCP): `THREE.Mechanical` (`SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`, `BoltGeometry`, `NutGeometry`, `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`, `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`, `FlangePlateGeometry`, `ProfileExtrusionGeometry`, `metricFastener`, `gearMeshDistance`), `THREE.Architecture` (`WallGeometry`, `SlabGeometry`, `StaircaseGeometry`, `RoofGeometry`, `DoorGeometry`, `WindowGeometry`, `RailingGeometry`, `ColumnGeometry`, `ArchwayGeometry`, `codeStairSpec`), `THREE.Industrial` (`PipeRunGeometry`, `PipeFittingGeometry`, `ValveGeometry`, `CentrifugalPumpGeometry`, `PalletRackGeometry`, `ConveyorGeometry`, `IndustrialLadderGeometry`, `CatwalkPlatformGeometry`, `SafetyBarrierGeometry`, `StorageTankGeometry`, `nominalPipeSpec`), `THREE.Science` (`MoleculeGeometry`, `RibbonGeometry`, `CrystalLatticeGeometry`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `SurfacePlotGeometry`, `ParametricSurfaceGeometry`, `VectorFieldGeometry`, `IsoSurfaceGeometry`, `StreamlineGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`, `DashedLineGeometry`, `AngleArcGeometry`, `sampleColormap`, `colormapTexture`, `applyVertexColormap`, `ribbonColorMap`, `elementSpec`), and `THREE.Electronics` (`PcbBoardGeometry`, `EnclosureGeometry`, `HeatsinkGeometry`, `DinRailGeometry`, `IcPackageGeometry`, `PinHeaderGeometry`, `ConnectorGeometry`, `StandoffSpacerGeometry`, `DiscreteComponentGeometry`, `jedecPackageSpec`)
 - Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial`, and loop-free `MeshStandardNodeMaterial` / `MeshPhysicalNodeMaterial` (`three-live-tsl` / `three-live-full` / `xr-live-full`; sockets `colorNode`, `opacityNode`, `emissiveNode`, `roughnessNode`, `metalnessNode`, `normalScaleNode`, `bumpNode`, `positionNode` using `THREE.TSL` built-ins `uv`, `time`, `positionLocal`, `positionWorld`, `normalLocal`, `normalWorld`, `viewDirection`, `uniform(val, name)`, math/vector ops, and procedural `fresnel`, `simplexNoise2D`, `simplexNoise3D`, `voronoi2D`, `checker`, `triplanar`, `hueShift`, `bumpFromHeight`, `remap`; max 128 nodes, max 16 uniforms, never `TSL.Loop` or `ShaderMaterial`; plus `mesh.userData.variants` for `KHR_materials_variants`)
 - Material presets (`procedural` plugin; built into the CLI/MCP compiler): spread `THREE.ProceduralTexture.wood({ color: 0x8b5a2b, scale: 10, seed: 3 })` (also `marble`, `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`) into `MeshStandardMaterial` for seamless, deterministic `map` + `normalMap` + roughness/metalness textures, or set `mesh.userData.xr = { material: 'marble' }` to bake a preset tinted by the material color (when non-white). Each preset adds up to 3 textures against the 16-texture scene quota: identical options return shared textures, and `normalStrength: 0` skips the normal map. Optional AI texture: add `prompt` (and `size: 256 | 512 | 1024`, `seed`) to the object form, e.g. `mesh.userData.xr = { material: { preset: 'brick', prompt: 'weathered temple stone with moss' } }`. The compiler never generates images: the albedo comes from a texture pack the host supplies, and until an entry exists the preset is shown. Always keep a `preset` as the fallback.
 - Scene Graph, LOD & Instancing: `Scene`, `Group`, `Mesh`, `LOD` (`addLevel`, `getObjectForDistance`), `InstancedMesh` (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`), `Object3D` (`position`, `rotation`, `scale`, `matrix`, `castShadow`, `receiveShadow`, `add`, `remove`, `traverse`)
@@ -97,13 +97,27 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ## DO vs. DO NOT Cheat Sheet
 
-| DO (Supported & Fast) | DO NOT (Unsupported / Anti-Pattern) |
-| :------------------------------------------------------------------------------ | :------------------------------------------------------------------ |
-| Use `new THREE.MeshStandardMaterial({ color, metalness, roughness })` or loop-free `new THREE.MeshStandardNodeMaterial()` + `THREE.TSL` | Do NOT use `THREE.ShaderMaterial`, `TSL.Loop`, or raw GLSL/WGSL strings in scripts |
-| Add objects to the global `scene` (`scene.add(mesh)`) | Do NOT instantiate `new THREE.WebGLRenderer()` or call `renderer.render()` |
-| Set `mesh.userData.xr = { grab: '2-hand', handles: { rotateAxis: 'y' } }` | Do NOT write manual WebXR session setup (`navigator.xr.requestSession`) |
-| Set `mesh.userData.interactivity = { onSelect: [{ action: 'toggleTransform', ... }] }` | Do NOT try to access `window` or `document` inside sandboxed `<script type="text/three">` |
-| Use `<div slot="spatial" data-position="x y z" data-xr-traits="grab billboard">` for spatial HTML UI | Do NOT use `new THREE.GLTFLoader().load(...)` inside procedural scripts (use `src="..."` or `<xr-anchor src="...">`) |
+| DO (Supported & Fast)                | DO NOT (Unsupported / Anti-Pattern)   |
+| :----------------------------------- | :------------------------------------ |
+| Use `new                             | Do NOT use `THREE.ShaderMaterial`,    |
+: THREE.MeshStandardMaterial({ color,  : `TSL.Loop`, or raw GLSL/WGSL strings  :
+: metalness, roughness })` or          : in scripts                            :
+: loop-free `new                       :                                       :
+: THREE.MeshStandardNodeMaterial()` +  :                                       :
+: `THREE.TSL`                          :                                       :
+| Add objects to the global `scene`    | Do NOT instantiate `new               |
+: (`scene.add(mesh)`)                  : THREE.WebGLRenderer()` or call        :
+:                                      : `renderer.render()`                   :
+| Set `mesh.userData.xr = { grab:      | Do NOT write manual WebXR session     |
+: '2-hand', handles\: { rotateAxis\:   : setup (`navigator.xr.requestSession`) :
+: 'y' } }`                             :                                       :
+| Set `mesh.userData.interactivity = { | Do NOT try to access `window` or      |
+: onSelect\: [{ action\:               : `document` inside sandboxed `<script  :
+: 'toggleTransform', ... }] }`         : type="text/three">`                   :
+| Use `<div slot="spatial"             | Do NOT use `new                       |
+: data-position="x y z"                : THREE.GLTFLoader().load(...)` inside  :
+: data-xr-traits="grab billboard">`    : procedural scripts (use `src="..."`   :
+: for spatial HTML UI                  : or `<xr-anchor src="...">`)           :
 
 ### Permissive Fallback Shims & Diagnostic Warnings (JS & Rust Compiler)
 
@@ -398,11 +412,11 @@ a scene instead: act, look at the result, and decide the next action. Use it to
 check that a level is winnable, tune enemy speed or jump heights, or test
 interactive scenes end to end.
 
-"Gym" is the reinforcement-learning name for this kind of playable
-environment, after OpenAI Gym (now Gymnasium): `reset` starts an episode, and
-each `step` takes actions and returns an observation, a reward, and whether
-the episode is done. No machine learning is involved; any agent (or script)
-that can call a tool in a loop can use it.
+"Gym" is the reinforcement-learning name for this kind of playable environment,
+after OpenAI Gym (now Gymnasium): `reset` starts an episode, and each `step`
+takes actions and returns an observation, a reward, and whether the episode is
+done. No machine learning is involved; any agent (or script) that can call a
+tool in a loop can use it.
 
 ```json
 { "name": "three_live_gym_reset",
@@ -418,25 +432,24 @@ that can call a tool in a loop can use it.
 
 -   Each step applies `actions` (same shapes as `three_live_sim`; `at` is a
     delay in seconds from the start of the step) and advances `ticks` 60 Hz
-    ticks (default 30, max 600). `moveCharacter` lasts the whole step unless
-    you pass `duration`.
+    ticks (default 30, max 600). `moveCharacter` lasts the whole step unless you
+    pass `duration`.
 -   Every observation lists `bodies` (position, rotation, scale, visible,
     grounded, health, destroyed; at most 64, use `watch` to choose), `score`,
     `reward` (score gained this step), and the `events`, `audioCues`, and
     `newObjectives` fired during the step.
--   `done` turns true on `victory` (all `required: true` objectives done),
-    on `defeat` (the character is destroyed), or at the 120 s / 240-step limit.
+-   `done` turns true on `victory` (all `required: true` objectives done), on
+    `defeat` (the character is destroyed), or at the 120 s / 240-step limit.
     Further steps fail; call `three_live_gym_reset` again.
 -   Pass `includeFrame: true` (with `view`, `width`, `height`) to get a PNG of
     the state after the step.
 -   The reset observation lists the `events` and `audioCues` fired at `t = 0`
     (`onSpawn`, `onStart`, trait registrations).
 -   Episodes are deterministic: the same actions always give the same
-    observations. Steps on static scenes take well under a millisecond;
-    scenes with `animate(t)` or `requestAnimationFrame` re-run their script
-    once per step (tens of milliseconds for typical scenes). Close sessions you
-    are done with (`three_live_gym_close`); beyond 16 the least recently used
-    is evicted.
+    observations. Steps on static scenes take well under a millisecond; scenes
+    with `animate(t)` or `requestAnimationFrame` re-run their script once per
+    step (tens of milliseconds for typical scenes). Close sessions you are done
+    with (`three_live_gym_close`); beyond 16 the least recently used is evicted.
 
 Without MCP, use `three-live-cli gym`. One command per step suits shell-tool
 agents; the session file holds the scene and every step, and each call replays
@@ -450,8 +463,8 @@ three-live-cli gym step --session ep.json --ticks 30 \
 
 For scripts and RL harnesses, `three-live-cli gym play level.js` prints the
 `t = 0` observation, then reads one JSON step per stdin line
-(`{"actions": [...], "ticks": 30, "frame": "f.png"}`) and prints one
-observation (or `{"error": ...}`) per line, keeping state in memory.
+(`{"actions": [...], "ticks": 30, "frame": "f.png"}`) and prints one observation
+(or `{"error": ...}`) per line, keeping state in memory.
 
 ### Diagnostic Code Summary (`TL100–TL402`)
 

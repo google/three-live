@@ -257,7 +257,9 @@ assert(
     Object.isFrozen(Sci.MoleculeGeometry.prototype) &&
     Object.isFrozen(Sci.RibbonGeometry.prototype) &&
     Object.isFrozen(Sci.IsoSurfaceGeometry.prototype) &&
-    Object.isFrozen(Sci.StreamlineGeometry.prototype),
+    Object.isFrozen(Sci.StreamlineGeometry.prototype) &&
+    Object.isFrozen(Sci.DashedLineGeometry.prototype) &&
+    Object.isFrozen(Sci.AngleArcGeometry.prototype),
   'THREE.Science and geometry prototypes are frozen against sandbox mutation',
 );
 
@@ -846,6 +848,61 @@ for (const [name, fn] of [
       });
     },
   ],
+  [
+    'CrystalLatticeGeometry singular vectors, wildcard vacancies & degenerate Miller planes',
+    () =>
+      new Sci.CrystalLatticeGeometry({
+        vectors: [
+          [0, 0, 0],
+          [NaN, 1, 0],
+          [0, 0, Infinity],
+        ],
+        basis: [{element: 'Cs', fractional: [-5, 99, NaN]}],
+        vacancies: [
+          [0, 0, 0],
+          [0.5, 0.5, 0.5],
+          [1, 1, 1],
+        ],
+        millerPlanes: [
+          {hkl: [0, 0, 0], intercept: -999, thickness: -5},
+          {hkl: [NaN, 1, 1], intercept: 999, thickness: 999},
+        ],
+        cells: [2, 2, 2],
+      }),
+  ],
+  [
+    'DashedLineGeometry zero-length/NaN points & hostile dash/gap sizes',
+    () =>
+      new Sci.DashedLineGeometry({
+        points: [
+          [NaN, 0, 0],
+          [0, 0, 0],
+          [0, 0, 0],
+        ],
+        segments: [
+          [
+            [1, 1, 1],
+            [1, 1, 1],
+          ],
+        ],
+        dashLength: -5,
+        gapLength: -10,
+        radius: 999,
+      }),
+  ],
+  [
+    'AngleArcGeometry zero-length/collinear/antiparallel arms & hostile radius',
+    () =>
+      new Sci.AngleArcGeometry({
+        vertex: [NaN, Infinity, 0],
+        armA: [0, 0, 0],
+        armB: [-1, 0, 0],
+        radius: -10,
+        tubeRadius: 999,
+        arrowEnds: true,
+        rightAngleSquare: true,
+      }),
+  ],
 ] as const) {
   const g = fn();
   const s = auditGeometry(g, `Adversarial fuzz: ${name}`, {
@@ -855,6 +912,130 @@ for (const [name, fn] of [
   assert(
     s.vertexCount < 90000,
     `${name} stays bounded (< 90k verts, got ${s.vertexCount})`,
+  );
+}
+
+// 4b. Stage 3: CrystalLatticeGeometry custom Bravais vectors, basis, vacancies & Miller (hkl) planes + DashedLineGeometry + AngleArcGeometry
+{
+  const fullPerovskite = new Sci.CrystalLatticeGeometry({
+    lattice: 'perovskite',
+    cells: [1, 1, 1],
+  });
+  const defectPerovskite = new Sci.CrystalLatticeGeometry({
+    lattice: 'perovskite',
+    cells: [1, 1, 1],
+    vacancies: [[0.5, 0.5, 0.5]],
+    millerPlanes: [
+      {hkl: [1, 1, 1], intercept: 1, thickness: 0.025, color: 0x38bdf8},
+      {hkl: [1, 1, 0], intercept: 1, thickness: 0.02, color: 0xf43f5e},
+    ],
+    showUnitCell: true,
+  });
+  auditGeometry(
+    defectPerovskite,
+    'CrystalLatticeGeometry (perovskite + central B-site vacancy + (111) & (110) Miller planes)',
+    {expectWatertight: true},
+  );
+  assert(
+    defectPerovskite.userData.atomCount ===
+      fullPerovskite.userData.atomCount - 1 &&
+      defectPerovskite.userData.millerPlaneCount === 2,
+    `CrystalLatticeGeometry vacancy removes central B-site atom (${fullPerovskite.userData.atomCount} -> ${defectPerovskite.userData.atomCount}) and extrudes 2 Miller planes`,
+  );
+
+  const customTriclinic = new Sci.CrystalLatticeGeometry({
+    vectors: [
+      [0.48, 0.04, 0],
+      [0.06, 0.5, 0.03],
+      [0.02, 0.05, 0.52],
+    ],
+    basis: [
+      {element: 'Ti', fractional: [0, 0, 0]},
+      {element: 'O', fractional: [0.5, 0.5, 0.5]},
+    ],
+    millerPlanes: [{hkl: [1, 0, 0]}],
+    cells: [1, 1, 1],
+    showUnitCell: true,
+  });
+  auditGeometry(
+    customTriclinic,
+    'CrystalLatticeGeometry (custom non-orthogonal Bravais vectors + custom Ti/O basis + (100) Miller plane)',
+    {expectWatertight: true},
+  );
+
+  const dashedCapsule = new Sci.DashedLineGeometry({
+    points: [
+      [-0.6, 0, 0],
+      [0, 0.4, 0.2],
+      [0.6, 0, -0.2],
+    ],
+    segments: [
+      [
+        [-0.4, -0.3, 0],
+        [0.4, -0.3, 0],
+      ],
+    ],
+    dashLength: 0.09,
+    gapLength: 0.05,
+    radius: 0.016,
+    capStyle: 'capsule',
+    color: 0x38bdf8,
+  });
+  auditGeometry(
+    dashedCapsule,
+    'DashedLineGeometry (multi-segment H-bond & optical path with capsule caps)',
+    {expectWatertight: true},
+  );
+  const dashedFlat = new Sci.DashedLineGeometry({
+    points: [
+      [0, 0, 0],
+      [0.8, 0, 0],
+    ],
+    capStyle: 'flat',
+  });
+  auditGeometry(dashedFlat, 'DashedLineGeometry (flat cylinder caps)', {
+    expectWatertight: true,
+  });
+  assert(
+    dashedCapsule.userData.dashCount >= 6 &&
+      Boolean(dashedCapsule.getAttribute('color')),
+    `DashedLineGeometry emits ${dashedCapsule.userData.dashCount} watertight dashes with vertex colors`,
+  );
+
+  const waterAngleArc = new Sci.AngleArcGeometry({
+    vertex: [0, 0.065, 0],
+    from: [-0.757, -0.52, 0],
+    to: [0.757, -0.52, 0],
+    radius: 0.32,
+    arrowEnds: true,
+    color: 0xfacc15,
+  });
+  auditGeometry(
+    waterAngleArc,
+    'AngleArcGeometry (104.5° H-O-H bond angle arc with conical arrowEnds)',
+    {expectWatertight: true},
+  );
+  assert(
+    Math.abs(waterAngleArc.userData.angleDegrees - 104.48) < 1.0 &&
+      waterAngleArc.userData.rightAngleSquare === false,
+    `AngleArcGeometry computes H-O-H bond angle ~104.5° (got ${waterAngleArc.userData.angleDegrees.toFixed(2)}°)`,
+  );
+
+  const rightAngleElbow = new Sci.AngleArcGeometry({
+    vertex: [0, 0, 0],
+    armA: [1, 0, 0],
+    armB: [0, 1, 0],
+    radius: 0.28,
+  });
+  auditGeometry(
+    rightAngleElbow,
+    'AngleArcGeometry (automatic 90° perpendicular square elbow)',
+    {expectWatertight: true},
+  );
+  assert(
+    rightAngleElbow.userData.rightAngleSquare === true &&
+      Math.abs(rightAngleElbow.userData.angleDegrees - 90) < 0.01,
+    'AngleArcGeometry automatically renders perpendicular square elbow at 90°',
   );
 }
 
