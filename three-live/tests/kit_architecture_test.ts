@@ -20,6 +20,7 @@ import {
   MAX_ARCH_SEGMENTS,
   MAX_ARCH_STEPS,
 } from '../src/kit-architecture';
+import {getSharedRegistry} from '../src/plugin';
 import {
   BufferAttribute,
   BufferGeometry,
@@ -31,7 +32,6 @@ import {
   THREE,
   Vector3,
 } from '../src/three-author';
-import {getSharedRegistry} from '../src/plugin';
 import {parseGLB} from '../src/three-view';
 
 let passed = 0;
@@ -225,7 +225,9 @@ function auditGeometry(
   };
 }
 
-console.log('=== Running kit_architecture_test.ts (Architecture / AEC Kit Audit) ===');
+console.log(
+  '=== Running kit_architecture_test.ts (Architecture / AEC Kit Audit) ===',
+);
 
 // 1. Plugin registration & namespace attachment
 architectureKitPlugin.onRegister?.();
@@ -272,7 +274,9 @@ const plainWall = new Arch.WallGeometry({
   height: 2.8,
   thickness: 0.2,
 });
-auditGeometry(plainWall, 'WallGeometry (plain 4x2.8m)', {expectWatertight: true});
+auditGeometry(plainWall, 'WallGeometry (plain 4x2.8m)', {
+  expectWatertight: true,
+});
 
 const facadeWall = new Arch.WallGeometry({
   length: 6.0,
@@ -309,39 +313,77 @@ auditGeometry(
 
 // 3b. StaircaseGeometry (straight solid, straight open-stringer, l-shape R/L, u-shape R/L, spiral R/L)
 auditGeometry(
-  new Arch.StaircaseGeometry({mode: 'straight', rise: 2.8, width: 1.1, solid: true}),
+  new Arch.StaircaseGeometry({
+    mode: 'straight',
+    rise: 2.8,
+    width: 1.1,
+    solid: true,
+  }),
   'StaircaseGeometry (straight solid)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.StaircaseGeometry({mode: 'straight', rise: 2.8, width: 1.1, solid: false}),
+  new Arch.StaircaseGeometry({
+    mode: 'straight',
+    rise: 2.8,
+    width: 1.1,
+    solid: false,
+  }),
   'StaircaseGeometry (straight open stringers)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.StaircaseGeometry({mode: 'l-shape', turn: 'left', rise: 3.0, width: 1.05}),
+  new Arch.StaircaseGeometry({
+    mode: 'l-shape',
+    turn: 'left',
+    rise: 3.0,
+    width: 1.05,
+  }),
   'StaircaseGeometry (l-shape left-turn with landing)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.StaircaseGeometry({mode: 'u-shape', turn: 'left', rise: 3.0, width: 1.05}),
+  new Arch.StaircaseGeometry({
+    mode: 'u-shape',
+    turn: 'left',
+    rise: 3.0,
+    width: 1.05,
+  }),
   'StaircaseGeometry (u-shape left switchback)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.StaircaseGeometry({mode: 'spiral', turn: 'left', rise: 3.0, width: 0.9, turns: 1.25}),
+  new Arch.StaircaseGeometry({
+    mode: 'spiral',
+    turn: 'left',
+    rise: 3.0,
+    width: 0.9,
+    turns: 1.25,
+  }),
   'StaircaseGeometry (spiral 1.25 turns left)',
   {expectWatertight: true},
 );
 
 // 3c. RoofGeometry (gable solid & vaulted, hip rectangular & square pyramid, shed, mansard, gambrel, flat-parapet)
 auditGeometry(
-  new Arch.RoofGeometry({style: 'gable', width: 6, depth: 8, pitchDeg: 32, solid: true}),
+  new Arch.RoofGeometry({
+    style: 'gable',
+    width: 6,
+    depth: 8,
+    pitchDeg: 32,
+    solid: true,
+  }),
   'RoofGeometry (gable solid)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.RoofGeometry({style: 'gable', width: 6, depth: 8, pitchDeg: 32, solid: false}),
+  new Arch.RoofGeometry({
+    style: 'gable',
+    width: 6,
+    depth: 8,
+    pitchDeg: 32,
+    solid: false,
+  }),
   'RoofGeometry (gable vaulted shell)',
   {expectWatertight: true},
 );
@@ -366,12 +408,23 @@ auditGeometry(
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.RoofGeometry({style: 'gambrel', width: 6, depth: 8, height: 2.6, solid: false}),
+  new Arch.RoofGeometry({
+    style: 'gambrel',
+    width: 6,
+    depth: 8,
+    height: 2.6,
+    solid: false,
+  }),
   'RoofGeometry (gambrel vaulted barn roof)',
   {expectWatertight: true},
 );
 auditGeometry(
-  new Arch.RoofGeometry({style: 'flat-parapet', width: 7, depth: 9, height: 0.85}),
+  new Arch.RoofGeometry({
+    style: 'flat-parapet',
+    width: 7,
+    depth: 9,
+    height: 0.85,
+  }),
   'RoofGeometry (flat-parapet commercial roof)',
   {expectWatertight: true},
 );
@@ -394,7 +447,12 @@ for (const style of [
       style,
       width: 0.95,
       height: 2.1,
-      handle: style === 'vision-lite' ? 'push-bar' : style === 'panel-6' ? 'knob' : 'lever',
+      handle:
+        style === 'vision-lite'
+          ? 'push-bar'
+          : style === 'panel-6'
+            ? 'knob'
+            : 'lever',
       openAngleDeg: style === 'panel-4' ? 45 : 0,
     }),
     `DoorGeometry (swing ${style})`,
@@ -617,6 +675,50 @@ for (const [name, fn] of [
         rows: 999,
       }),
   ],
+  [
+    'Wide short arched Door & double split-arch leaves',
+    () =>
+      new Arch.DoorGeometry({
+        style: 'arched',
+        operation: 'swing',
+        width: 3.0,
+        height: 1.2,
+        openFraction: 0.35,
+      }),
+  ],
+  [
+    'Narrow 6-panel OOOOOO half-lite & louvered slider Door',
+    () =>
+      new Arch.DoorGeometry({
+        style: 'half-lite',
+        operation: 'slider',
+        trackPattern: 'OOOOOO',
+        width: 0.4,
+        height: 1.0,
+      }),
+  ],
+  [
+    'Compact 0.4x0.4m Window with 16x16 mullion grid (fixed & arched)',
+    () =>
+      new Arch.WindowGeometry({
+        style: 'arched',
+        width: 0.4,
+        height: 0.4,
+        cols: 16,
+        rows: 16,
+      }),
+  ],
+  [
+    'Short Railing with oversized postSize & railHeight',
+    () =>
+      new Arch.RailingGeometry({
+        style: 'baluster',
+        length: 0.3,
+        height: 0.4,
+        postSize: 0.3,
+        railHeight: 0.2,
+      }),
+  ],
 ] as const) {
   const g = fn();
   const s = auditGeometry(g, `Adversarial fuzz: ${name}`, {
@@ -626,6 +728,98 @@ for (const [name, fn] of [
   assert(
     s.vertexCount < 60000,
     `${name} stays bounded (< 60k verts, got ${s.vertexCount})`,
+  );
+}
+
+// 4b. Edge-case geometry & symmetry invariants
+{
+  const dblArchDoor = new Arch.DoorGeometry({
+    style: 'arched',
+    operation: 'swing',
+    leaves: 2,
+    width: 1.6,
+    height: 2.2,
+    openFraction: 0.4,
+  });
+  auditGeometry(
+    dblArchDoor,
+    'DoorGeometry (double arched swing doors with split half-arch leaves, 40% open)',
+    {expectWatertight: true},
+  );
+
+  for (const style of ['gable', 'gambrel'] as const) {
+    const gVault = new Arch.RoofGeometry({
+      style,
+      width: 0.4,
+      depth: 1.0,
+      height: 1.2,
+      thickness: 0.5,
+      fasciaHeight: 0.04,
+      overhang: 0,
+      solid: false,
+    });
+    auditGeometry(
+      gVault,
+      `RoofGeometry (${style} vaulted shell with narrow span & thick shell)`,
+      {expectWatertight: true},
+    );
+    const vp = gVault.getAttribute('position').array as Float32Array;
+    // Inner left soffit foot (`vp[3]`) must stay strictly negative (< 0) without bowtie crossing.
+    assert(
+      vp[3] < -0.01 && vp[3] > -0.2,
+      `RoofGeometry (${style} solid=false) clamps inner eave foot without self-intersection (x=${vp[3].toFixed(3)})`,
+    );
+  }
+
+  for (const mode of ['straight', 'l-shape', 'u-shape', 'spiral'] as const) {
+    const gStair = new Arch.StaircaseGeometry({
+      mode,
+      rise: 3.0,
+      width: 1.0,
+      origin: 'center',
+    });
+    const bb = gStair.boundingBox!;
+    const mx = (bb.min.x + bb.max.x) * 0.5;
+    const my = (bb.min.y + bb.max.y) * 0.5;
+    const mz = (bb.min.z + bb.max.z) * 0.5;
+    assert(
+      Math.hypot(mx, my, mz) < 1e-4,
+      `StaircaseGeometry (${mode}, origin="center") centers bounding box at origin`,
+    );
+  }
+
+  const tuscanCol = new Arch.ColumnGeometry({
+    style: 'tuscan',
+    height: 3.0,
+    radius: 0.22,
+  });
+  const tArr = tuscanCol.getAttribute('position').array as Float32Array;
+  const dArr = new Arch.ColumnGeometry({
+    style: 'doric',
+    height: 3.0,
+    radius: 0.22,
+  }).getAttribute('position').array as Float32Array;
+  let maxColDiff = Math.abs(tArr.length - dArr.length);
+  if (maxColDiff === 0) {
+    for (let i = 0; i < tArr.length; i++) {
+      maxColDiff = Math.max(maxColDiff, Math.abs(tArr[i] - dArr[i]));
+    }
+  }
+  assert(
+    maxColDiff > 0.005,
+    'ColumnGeometry tuscan and doric produce distinct classical molding profiles',
+  );
+
+  const wFalse = new Arch.WallGeometry({
+    openings: [{x: 0, y: 0.8, width: 1.0, height: 1.2, arch: false}],
+  });
+  const wNone = new Arch.WallGeometry({
+    openings: [{x: 0, y: 0.8, width: 1.0, height: 1.2, arch: 'none'}],
+  });
+  assert(
+    wFalse.getAttribute('position').count ===
+      wNone.getAttribute('position').count,
+    'WallGeometry treats arch="none" identically to rectangular arch=false',
   );
 }
 
@@ -643,7 +837,9 @@ for (const [name, fn] of [
     Boolean(
       installed?.Architecture?.WallGeometry &&
         // tslint:disable-next-line:no-any Mock registry inspection.
-        (mockReg as any).authorNamespace?.Architecture && !((mockReg as any).authorNamespace?.Arch) && !((mockReg as any).authorNamespace?.WallGeometry),
+        (mockReg as any).authorNamespace?.Architecture &&
+        !(mockReg as any).authorNamespace?.Arch &&
+        !(mockReg as any).authorNamespace?.WallGeometry,
     ),
     'installArchitectureKit.toString() executes cleanly in isolated Worker realm with zero outer closures',
   );
@@ -672,7 +868,9 @@ for (const [name, fn] of [
 
   const usdzBytes = scene.toUSDZ();
   assert(
-    usdzBytes[0] === 0x50 && usdzBytes[1] === 0x4b && usdzBytes.byteLength > 1000,
+    usdzBytes[0] === 0x50 &&
+      usdzBytes[1] === 0x4b &&
+      usdzBytes.byteLength > 1000,
     `Architectural assembly exports valid Apple USDZ (${usdzBytes.byteLength} bytes)`,
   );
 }
