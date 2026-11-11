@@ -22,8 +22,10 @@ description: >-
         replacement) with built-in `EXT_meshopt_compression` decoding and
         `KHR_materials_variants` (`variant-name`)
     -   A procedural Three.js scene (including 2D `Shape`/`ExtrudeGeometry`,
-        `THREE.CSG` Booleans, 3D `TextGeometry`, and `THREE.InstancedMesh` GPU
-        instancing) with orbit controls and 1-tap mobile AR handoff (`ar`)
+        `THREE.CSG` Booleans, 3D `TextGeometry`, optional a la carte domain kits
+        such as `THREE.Mechanical` via `three-live-kit-mechanical.min.js` /
+        `three-live-kits.min.js`, and `THREE.InstancedMesh` GPU instancing) with
+        orbit controls and 1-tap mobile AR handoff (`ar`)
     -   PBR Next materials (clearcoat, transmission, dispersion, iridescence,
         sheen, volume), 5 filmic/commerce tone-mapping modes
         (`tone-mapping="neutral|aces|agx|reinhard|none"`), HDR emissive `bloom`,

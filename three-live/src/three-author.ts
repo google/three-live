@@ -32,6 +32,7 @@ import {
   CLIENT_SCRIPTS_DISABLED_ERROR,
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
+import {installMechanicalKit} from './kits/mechanical';
 import {getSharedRegistry} from './plugin';
 import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
@@ -5258,6 +5259,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   registerXRTraitSerializer();
   registerSimTraitSchema();
   installCadExtension(THREE, getSharedRegistry());
+  installMechanicalKit(THREE, getSharedRegistry());
   installIKExtension(THREE, getSharedRegistry());
   installLodExtension(THREE, getSharedRegistry());
   installProceduralExtension(THREE, getSharedRegistry());

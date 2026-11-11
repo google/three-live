@@ -637,6 +637,28 @@ function buildThreeLive() {
     });
   }
 
+  // 11d. Domain Kits (a la carte, NOT included in three-live-full / xr-live-full):
+  // - three-live-kit-mechanical (ESM, CJS, IIFE min)
+  // - three-live-kits roll-up bundle (ESM, CJS, IIFE min)
+  for (const [entry, outBase, globalName] of [
+           ['src/kit-mechanical.ts', 'three-live-kit-mechanical', 'ThreeLiveKitMechanical'],
+           ['src/kits.ts', 'three-live-kits', 'ThreeLiveKits'],
+  ]) {
+    for (const [format, ext] of [
+             ['esm', 'js'], ['cjs', 'cjs'], ['iife', 'min.js']]) {
+      buildTarget({
+        entryPoints: [path.join(THREE_LIVE_DIR, entry)],
+        bundle: true,
+        format,
+        ...(format === 'iife' ? {globalName} : {}),
+        minify: true,
+        target: 'es2020',
+        define: {'IS_DEV': 'false'},
+        outfile: path.join(tlDist, `${outBase}.${ext}`),
+      });
+    }
+  }
+
   // Generate type definition stubs in dist
   const rootDts = fs.readFileSync(path.join(ROOT_DIR, 'three-live.d.ts'), 'utf8');
   fs.writeFileSync(path.join(tlDist, 'index.d.ts'), rootDts);
@@ -648,6 +670,8 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-live-viewer.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-studio.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-cad.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-kit-mechanical.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-kits.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-procedural.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-animation.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-ai.d.ts'), rootDts);
@@ -685,6 +709,12 @@ function buildThreeLive() {
       path.join(tlDist, 'three-live-cad.min.js'),
       path.join(DIST_DIR, 'three-live-cad.min.js'));
   fs.copyFileSync(
+      path.join(tlDist, 'three-live-kit-mechanical.min.js'),
+      path.join(DIST_DIR, 'three-live-kit-mechanical.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-kits.min.js'),
+      path.join(DIST_DIR, 'three-live-kits.min.js'));
+  fs.copyFileSync(
       path.join(tlDist, 'three-live-procedural.min.js'),
       path.join(DIST_DIR, 'three-live-procedural.min.js'));
   fs.copyFileSync(
@@ -712,6 +742,12 @@ function buildThreeLive() {
       path.join(tlDist, 'three-live-cad.min.js'),
       path.join(THREE_LIVE_DIR, 'examples/three-live-cad.min.js'));
   fs.copyFileSync(
+      path.join(tlDist, 'three-live-kit-mechanical.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-kit-mechanical.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-kits.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-kits.min.js'));
+  fs.copyFileSync(
       path.join(tlDist, 'three-live-procedural.min.js'),
       path.join(THREE_LIVE_DIR, 'examples/three-live-procedural.min.js'));
   fs.copyFileSync(
@@ -735,6 +771,12 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-cad.min.js'),
       path.join(ROOT_DIR, 'examples/three/three-live-cad.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-kit-mechanical.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-kit-mechanical.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-kits.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-kits.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-procedural.min.js'),
       path.join(ROOT_DIR, 'examples/three/three-live-procedural.min.js'));
@@ -996,6 +1038,12 @@ function buildXRLive() {
         path.join(DIST_DIR, 'three-live-cad.min.js'),
         path.join(xrExampleDir, 'three-live-cad.min.js'));
     fs.copyFileSync(
+        path.join(DIST_DIR, 'three-live-kit-mechanical.min.js'),
+        path.join(xrExampleDir, 'three-live-kit-mechanical.min.js'));
+    fs.copyFileSync(
+        path.join(DIST_DIR, 'three-live-kits.min.js'),
+        path.join(xrExampleDir, 'three-live-kits.min.js'));
+    fs.copyFileSync(
         path.join(DIST_DIR, 'three-live-animation.min.js'),
         path.join(xrExampleDir, 'three-live-animation.min.js'));
     fs.copyFileSync(
@@ -1044,6 +1092,8 @@ function reportSizes() {
     {name: 'three-live.min.js', budgetKb: '77'},
     {name: 'three-live-studio.min.js', budgetKb: '35'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
+    {name: 'three-live-kit-mechanical.min.js', budgetKb: '18'},
+    {name: 'three-live-kits.min.js', budgetKb: '18'},
     {name: 'three-live-procedural.min.js', budgetKb: '30'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-ai.min.js', budgetKb: '32'},
@@ -1125,6 +1175,24 @@ function reportSizes() {
         fs.readFileSync(filePath, 'utf8')
             .includes('isMeshStandardNodeMaterial')) {
       failures.push(`dist/${name} unexpectedly bundles three-live-tsl`);
+    }
+  }
+  // Domain kits are strictly a la carte: core, studio, CAD, AND full bundles
+  // must NOT bundle domain kit classes unless three-live-kits / three-live-kit-* is loaded.
+  for (const name
+           of ['three-live-viewer.min.js',
+               'three-live.min.js',
+               'three-live-studio.min.js',
+               'three-live-cad.min.js',
+               'three-live-full.min.js',
+               'xr-live-viewer.min.js',
+               'xr-live.min.js',
+               'xr-live-full.min.js',
+  ]) {
+    const filePath = path.join(DIST_DIR, name);
+    if (fs.existsSync(filePath) &&
+        fs.readFileSync(filePath, 'utf8').includes('MAX_PART_TEETH')) {
+      failures.push(`dist/${name} unexpectedly bundles domain kit classes (MAX_PART_TEETH)`);
     }
   }
   if (failures.length > 0) {

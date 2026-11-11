@@ -448,7 +448,7 @@ live Three.js scenes:
     Three.js compiler in `three-live.min.js`), and the WebXR viewer
     (`xr-live-viewer.min.js`) is `< 56 KB gz` (`< 89 KB gz` with the live
     Three.js compiler in `xr-live.min.js`).
-*   **Core 3D, CAD, procedural, animation, and WebGPU plugins (`three-live`, 19
+*   **Core 3D, CAD, procedural, animation, and WebGPU plugins (`three-live`, 20
     plugins):** Optional domain bundles (`three-live-studio.min.js` at
     `< 35 KB gz`, `three-live-cad.min.js` at `< 10 KB gz`,
     `three-live-procedural.min.js` at `< 31 KB gz`,
@@ -461,11 +461,14 @@ live Three.js scenes:
     (`shadow-maps` / `shadowMapsPlugin`), 3D hotspots, post-processing (`bloom`
     and `outline`), automatic multi-tier Level-of-Detail (`lod` / `THREE.LOD` /
     `MSFT_lod`), 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` Booleans, 3D vector
-    `TextGeometry`, 64-joint GPU skeletal skinning, morph targets, keyframe
-    cross-fading, two-bone / FABRIK inverse kinematics (`ik`), loop-free
-    `THREE.TSL` procedural node materials (`tslPlugin` / `extras.tsl`),
+    `TextGeometry`, 64-joint GPU skeletal skinning, morph targets,
+    keyframe cross-fading, two-bone / FABRIK inverse kinematics (`ik`),
+    loop-free `THREE.TSL` procedural node materials (`tslPlugin` / `extras.tsl`),
     LLM scene editing, and `GPURenderBundle` WebGPU scene acceleration
-    (`renderer="auto | webgpu | webgl2"`).
+    (`renderer="auto | webgpu | webgl2"`). Optional a la carte **domain kits**
+    (`three-live-kit-mechanical.min.js` / `three-live-kits.min.js`, `< 18 KB gz`,
+    intentionally excluded from `three-live-full.min.js`) add watertight
+    parametric `THREE.Mechanical` machine parts.
 *   **Hardware XR sensors (`xr-live-sensors.min.js`, `< 10 KB gz`):** Adds
     hardware XR depth occlusion (`XRDepthManager`), analytical heightfield
     physics (`XRHeightfieldPhysics`), 25-joint hand gesture classification
@@ -511,6 +514,7 @@ plugins:
 | **`postprocessing`** | `bloom`, `outline`, `tone-mapping`, `xr.bloom`, `xr.outline` | Dual-Kawase mipmap bloom, selection/hover silhouette outlines, and `neutral`, `aces`, `agx`, `reinhard`, and `none` tone mapping. |
 | **`lod`** | `THREE.LOD`, `xr.lod`, `MSFT_lod` | Distance-based multi-tier Level-of-Detail switching with hysteresis, far-distance culling, automatic vertex-clustering mesh decimation (`decimateGeometry`), and `MSFT_lod` / `KHR_node_visibility` export. |
 | **`cad`** | `THREE.Shape`, `THREE.ExtrudeGeometry`, `THREE.CSG`, `THREE.TextGeometry` | 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D BSP `CSG` Booleans (`union`, `subtract`, `intersect`), and stroke-font `TextGeometry`. |
+| **`kit-mechanical`** | `THREE.Mechanical.*`, `SpurGearGeometry`, `BevelGearGeometry`, `BoltGeometry`, `PillowBlockGeometry`, `metricFastener` | A la carte domain kit (`three-live-kit-mechanical.min.js` / `three-live-kits.min.js`): 15 watertight 2-manifold parametric mechanical CAD parts (`SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry` (`v-belt`/`flat`/`timing`), ISO metric `BoltGeometry`, `NutGeometry`, `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`, `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`, `FlangePlateGeometry`, `ProfileExtrusionGeometry`, `metricFastener('M8x25')`, `gearMeshDistance(g1, g2)`). |
 | **`procedural`** | `THREE.Box3`, `THREE.Sphere`, `THREE.CanvasTexture`, `THREE.ProceduralTexture`, `THREE.SimplexNoise`, `THREE.ImprovedNoise`, `THREE.Sprite`, `THREE.SplineCurve`, `THREE.GridHelper` | Extended 3D bounding-volume helpers (`Box3`, `Sphere`, `setFromObject`, `expandByObject`, `InstancedMesh` bounds), `CanvasTexture` with a zero-DOM headless 2D `<canvas>` rasterizer (`document.createElement('canvas').getContext('2d')`), deterministic `ImprovedNoise` and `SimplexNoise` heightmap/field generators, camera-facing `Sprite` / `SpriteMaterial` billboards, 2D curves (`LineCurve`, `QuadraticBezierCurve`, `CubicBezierCurve`, `SplineCurve`, `EllipseCurve`, `ArcCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
 | **`skinning`** | `animation-name`, `autoplay` | 64-joint GPU vertex skinning and skeletal hierarchy evaluation. |
 | **`morph`** | `morphTargetInfluences` | GPU morph-target vertex displacement and weight blending. |
@@ -584,12 +588,14 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live.min.js`** | **`< 77 KB gz`** | Standard `<three-live>` + **`three-author`** (live Three.js compiler, `InstancedMesh` GPU instancing, `KHR_interactivity` compiler, 5 tone-mapping modes, contact shadows) + AR packager. |
 |  | **`three-live-studio.min.js`** | **`< 35 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, multi-light depth shadow maps (`shadow-maps` / `shadowMapsPlugin`), `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
+|  | **`three-live-kit-mechanical.min.js`** | **`< 18 KB gz`** | A la carte domain kit (`THREE.Mechanical`, NOT included in `three-live-full`): 15 watertight 2-manifold parametric mechanical machine parts (`SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`, `BoltGeometry`, `NutGeometry`, `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`, `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`, `FlangePlateGeometry`, `ProfileExtrusionGeometry`) plus `metricFastener` and `gearMeshDistance`. |
+|  | **`three-live-kits.min.js`** | **`< 18 KB gz`** | All-in-one domain kits roll-up bundle (a la carte, NOT included in `three-live-full`). |
 |  | **`three-live-procedural.min.js`** | **`< 31 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
 |  | **`three-live-ai.min.js`** | **`< 32 KB gz`** | Opt-in bring-your-own-LLM scene editing & image-to-scene synthesis: `el.editScene(instruction)` and `el.compileFromImage(image, {prompt, priors})` with sandbox validation, spatial lint checks, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak and Talk-to-Select voice editing: tap/voice selection, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. AI textures (`userData.xr.material.prompt`) from texture packs or an OpenAI-compatible Images endpoint. Also included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-webgpu.min.js`** | **`< 23 KB gz`** | Opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`): compiles multi-thousand-part CAD and glTF assemblies into pre-recorded render bundles backed by storage buffers, with `depth24plus` 2D-array shadow depth passes + 16-tap Vogel-disk PCF, 1×1-scissor `pickMeshGPU`, Loop-Free TSL `GPURenderBundle` WGSL compilation, and automatic WebGL2 fallback for WebXR, `bloom`/`outline`, transmission, and custom shaders. |
 |  | **`three-live-tsl.min.js`** | **`< 19 KB gz`** | Opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` shader graph compiler (`extras.tsl`): compiles bounded 45-op node materials across WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and `.usdz` `MaterialX` / `UsdShade` with 60 Hz `setMaterialUniform` updates and `TSL.time` animation. |
-|  | **`three-live-full.min.js`** | **`< 221 KB gz`** | All-in-one 3D bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai` + `webgpu` + `tsl`, all 20 plugins auto-registered). |
+|  | **`three-live-full.min.js`** | **`< 221 KB gz`** | All-in-one 3D engine bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai` + `webgpu` + `tsl`, all 20 engine plugins auto-registered; domain kits are loaded separately via `three-live-kits.min.js`). |
 | **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 56 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
 |  | **`xr-live.min.js`** | **`< 89 KB gz`** | Standard `<xr-live>` + **`three-author`** (live Three.js compiler) + runtime USDZ and GLB compiler. |
 |  | **`xr-live-sensors.min.js`** | **`< 10 KB gz`** | Add-on plugin: Hardware XR sensors (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
