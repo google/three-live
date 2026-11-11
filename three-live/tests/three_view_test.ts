@@ -2818,10 +2818,7 @@ async function runThreeViewTests() {
       'default Material keeps doubleSided === true',
     );
 
-    const ceiling = new THREE.Mesh(
-      new THREE.PlaneGeometry(5, 5),
-      ceilingMat,
-    );
+    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), ceilingMat);
     ceiling.name = 'Bedroom_Ceiling';
     ceiling.rotation.x = Math.PI / 2;
     ceiling.position.set(0, 2.68, 0);
@@ -2910,7 +2907,9 @@ async function runThreeViewTests() {
   // Stage 1: ThreeView COLOR_0 per-vertex color attribute binding (location 6, VEC3/VEC4/Uint8Array) and generic default.
   {
     const boundAttribs: number[] = [];
-    const genericAttrib4fCalls: Array<[number, number, number, number, number]> = [];
+    const genericAttrib4fCalls: Array<
+      [number, number, number, number, number]
+    > = [];
     const vcGl: any = new Proxy(
       {
         canvas: {width: 400, height: 400},
@@ -2989,7 +2988,8 @@ async function runThreeViewTests() {
     vcView.render();
     assert(
       genericAttrib4fCalls.some(
-        (c) => c[0] === 6 && c[1] === 1 && c[2] === 1 && c[3] === 1 && c[4] === 1,
+        (c) =>
+          c[0] === 6 && c[1] === 1 && c[2] === 1 && c[3] === 1 && c[4] === 1,
       ),
       'ThreeView.render sets default generic vertexAttrib4f(6, 1, 1, 1, 1) before drawing primitives',
     );

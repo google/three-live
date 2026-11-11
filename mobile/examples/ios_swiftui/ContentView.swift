@@ -52,6 +52,31 @@
     @State private var arAutoRotate: Bool = false
     @State private var arScalePreset: Float = 1.0
 
+    // Bring-Your-Own-Account (BYOA) Live AI Editing & Evergreen Model Discovery state
+    @State private var aiEditor: AIEditor? = nil
+    @State private var aiProviderKind: String =
+      UserDefaults.standard.string(forKey: "three_live_byoa_provider") ?? "gemini"
+    @State private var aiApiKey: String =
+      UserDefaults.standard.string(forKey: "three_live_byoa_key") ?? ""
+    @State private var aiModelId: String =
+      UserDefaults.standard.string(forKey: "three_live_byoa_model") ?? "gemini-flash-latest"
+    @State private var aiCustomBaseUrl: String =
+      UserDefaults.standard.string(forKey: "three_live_byoa_base_url")
+      ?? "http://localhost:11434/v1"
+    @State private var aiRememberKey: Bool =
+      UserDefaults.standard.bool(forKey: "three_live_byoa_remember")
+    @State private var showAiConnectSheet: Bool = false
+    @State private var liveAiPrompt: String = ""
+    @State private var isAiEditing: Bool = false
+    @State private var canUndoAiEdit: Bool = false
+    @State private var selectedTargetMesh: String? = nil
+    @State private var aiStatusMessage: String? = nil
+    @State private var discoveredModels: [String] = ["gemini-flash-latest", "gemini-pro-latest"]
+
+    private var isAiConnected: Bool {
+      aiProviderKind == "custom" || !aiApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var activePresets: [ScenePreset] {
       SampleScenes.presets(for: selectedMode)
     }
@@ -90,6 +115,7 @@
                 runtimeFeatures: runtimeFeatures,
                 onTapNode: { nodeLabel in
                   lastEventMessage = "Tapped \(nodeLabel)"
+                  selectedTargetMesh = aiEditor?.toggleSelection(nodeLabel) ?? nodeLabel
                 }
               )
 
@@ -349,7 +375,7 @@
                   }
                 }
 
-                // Instant Sample AI Edits Row (pre-baked edits; live edits use Firebase AI / API key)
+                // Instant Sample AI Edits Row (pre-baked edits; live edits use BYOA bar below)
                 if selectedPresetIndex < activePresets.count,
                   !activePresets[selectedPresetIndex].sampleEdits.isEmpty
                 {
@@ -397,6 +423,69 @@
                       }
                     }
                   }
+                }
+
+                // Live BYOA AI Prompt Bar (Evergreen Model Aliases + Rust Sandbox Auto-Repair)
+                HStack(spacing: 6) {
+                  TextField(
+                    selectedTargetMesh != nil
+                      ? "Edit \(selectedTargetMesh ?? "")…"
+                      : "Ask AI to edit scene…",
+                    text: $liveAiPrompt
+                  )
+                  .font(.system(size: 12))
+                  .textFieldStyle(.roundedBorder)
+
+                  Button(action: {
+                    Task { await runLiveAiEdit() }
+                  }) {
+                    Text(isAiEditing ? "…" : "Apply")
+                      .font(.system(size: 11, weight: .semibold))
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 6)
+                      .background(Color.purple.opacity(0.2))
+                      .foregroundColor(.purple)
+                      .cornerRadius(8)
+                  }
+                  .disabled(isAiEditing || isCompiling)
+
+                  Button(action: {
+                    Task {
+                      if let editor = aiEditor, (try? await editor.undo()) == true {
+                        aiStatusMessage = "Reverted last AI edit"
+                      } else {
+                        canUndoAiEdit = false
+                      }
+                    }
+                  }) {
+                    Text("↶")
+                      .font(.system(size: 12, weight: .bold))
+                      .padding(.horizontal, 8)
+                      .padding(.vertical, 6)
+                      .background(Color(UIColor.secondarySystemBackground))
+                      .foregroundColor(.primary)
+                      .cornerRadius(8)
+                  }
+                  .disabled(!canUndoAiEdit || isAiEditing)
+
+                  Button(action: {
+                    showAiConnectSheet = true
+                  }) {
+                    Text(isAiConnected ? "🟢 AI" : "🔑 AI")
+                      .font(.system(size: 11, weight: .semibold))
+                      .padding(.horizontal, 8)
+                      .padding(.vertical, 6)
+                      .background(Color(UIColor.secondarySystemBackground))
+                      .foregroundColor(.primary)
+                      .cornerRadius(8)
+                  }
+                }
+
+                if let statusMsg = aiStatusMessage {
+                  Text(statusMsg)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.purple)
+                    .lineLimit(1)
                 }
 
                 // Three.js Code Editor Header Row + Camera Distance Mode Toggle
@@ -508,9 +597,256 @@
         .navigationBarHidden(isArPreviewMode)
       }
       .navigationViewStyle(.stack)
+      .sheet(isPresented: $showAiConnectSheet) {
+        NavigationView {
+          Form {
+            Section(header: Text("AI Provider (Bring Your Own Account)")) {
+              Picker("Provider", selection: $aiProviderKind) {
+                Text("Gemini").tag("gemini")
+                Text("OpenRouter").tag("openrouter")
+                Text("Local / Custom").tag("custom")
+              }
+              .pickerStyle(.segmented)
+              .onChange(of: aiProviderKind) { newKind in
+                switch newKind {
+                case "gemini":
+                  aiModelId = "gemini-flash-latest"
+                  discoveredModels = ["gemini-flash-latest", "gemini-pro-latest"]
+                case "openrouter":
+                  aiModelId = "openrouter/auto"
+                  discoveredModels = ["openrouter/auto"]
+                default:
+                  aiModelId = ""
+                  discoveredModels = []
+                }
+              }
+
+              if aiProviderKind == "custom" {
+                TextField("Base URL (e.g. http://localhost:11434/v1)", text: $aiCustomBaseUrl)
+                  .font(.system(.caption, design: .monospaced))
+                  .autocapitalization(.none)
+                  .disableAutocorrection(true)
+              }
+
+              SecureField(
+                aiProviderKind == "custom" ? "API Key (Optional)" : "Bearer API Key",
+                text: $aiApiKey
+              )
+              .font(.system(.caption, design: .monospaced))
+              .autocapitalization(.none)
+              .disableAutocorrection(true)
+            }
+
+            Section(
+              header: Text("Model (Evergreen Alias or Live ID)"),
+              footer: Text(
+                "Gemini defaults to gemini-flash-latest (rolling alias for the newest Gemini Flash, or pick gemini-pro-latest). OpenRouter defaults to openrouter/auto. Local servers use their loaded model when left blank."
+              )
+            ) {
+              HStack {
+                TextField("Server default", text: $aiModelId)
+                  .font(.system(.caption, design: .monospaced))
+                  .autocapitalization(.none)
+                  .disableAutocorrection(true)
+                Button("↻ Models") {
+                  Task { await fetchLiveModels() }
+                }
+                .font(.system(size: 12, weight: .semibold))
+              }
+
+              if !discoveredModels.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                  HStack(spacing: 6) {
+                    ForEach(discoveredModels.prefix(12), id: \.self) { m in
+                      Button(action: { aiModelId = m }) {
+                        Text(m)
+                          .font(.system(size: 10, weight: .medium, design: .monospaced))
+                          .padding(.horizontal, 8)
+                          .padding(.vertical, 4)
+                          .background(
+                            aiModelId == m
+                              ? Color.purple.opacity(0.22)
+                              : Color(UIColor.secondarySystemBackground)
+                          )
+                          .cornerRadius(6)
+                      }
+                    }
+                  }
+                }
+              }
+
+              Toggle("Remember on this device", isOn: $aiRememberKey)
+                .font(.caption)
+            }
+          }
+          .navigationTitle("Connect AI Provider")
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Disconnect") {
+                aiApiKey = ""
+                persistByoaSettings(clear: true)
+                showAiConnectSheet = false
+              }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+              Button("Save & Connect") {
+                persistByoaSettings(clear: !aiRememberKey)
+                showAiConnectSheet = false
+              }
+            }
+          }
+        }
+      }
       .task {
         // Initial compilation on startup
         await compileAndRender()
+      }
+    }
+
+    @MainActor
+    private func persistByoaSettings(clear: Bool) {
+      let defaults = UserDefaults.standard
+      if clear {
+        defaults.removeObject(forKey: "three_live_byoa_provider")
+        defaults.removeObject(forKey: "three_live_byoa_key")
+        defaults.removeObject(forKey: "three_live_byoa_model")
+        defaults.removeObject(forKey: "three_live_byoa_base_url")
+        defaults.removeObject(forKey: "three_live_byoa_remember")
+      } else {
+        defaults.set(aiProviderKind, forKey: "three_live_byoa_provider")
+        defaults.set(aiApiKey, forKey: "three_live_byoa_key")
+        defaults.set(aiModelId, forKey: "three_live_byoa_model")
+        defaults.set(aiCustomBaseUrl, forKey: "three_live_byoa_base_url")
+        defaults.set(aiRememberKey, forKey: "three_live_byoa_remember")
+      }
+    }
+
+    private func buildActiveAiProvider() -> AIChatProvider? {
+      let baseUrl: String
+      switch aiProviderKind {
+      case "openrouter":
+        baseUrl = "https://openrouter.ai/api/v1"
+      case "custom":
+        baseUrl = aiCustomBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+          .replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+      default:
+        baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai"
+      }
+      let trimmedKey = aiApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+      if aiProviderKind != "custom" && trimmedKey.isEmpty {
+        return nil
+      }
+      var headers: [String: String] = [:]
+      if !trimmedKey.isEmpty {
+        headers["Authorization"] = "Bearer \(trimmedKey)"
+      }
+      let trimmedModel = aiModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+      return AIChatProvider(
+        endpoint: "\(baseUrl)/chat/completions",
+        model: trimmedModel.isEmpty ? nil : trimmedModel,
+        headers: headers
+      )
+    }
+
+    @MainActor
+    private func ensureAiEditor(provider: AIProvider) -> AIEditor {
+      if let existing = aiEditor {
+        existing.provider = provider
+        return existing
+      }
+      let created = AIEditor(
+        source: jsScriptText,
+        provider: provider,
+        applyScene: { code in
+          await MainActor.run {
+            jsScriptText = code
+          }
+          await compileAndRender()
+        }
+      )
+      aiEditor = created
+      return created
+    }
+
+    @MainActor
+    private func runLiveAiEdit() async {
+      let prompt = liveAiPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !prompt.isEmpty else { return }
+      guard let provider = buildActiveAiProvider() else {
+        showAiConnectSheet = true
+        return
+      }
+      let editor = ensureAiEditor(provider: provider)
+      if editor.source != jsScriptText {
+        editor.resetSource(jsScriptText)
+      }
+      editor.selection = selectedTargetMesh
+      isAiEditing = true
+      aiStatusMessage = "Generating & validating edit in Rust sandbox…"
+      let res = await editor.editScene(prompt)
+      if res.applied {
+        selectedAiEditIndex = -1
+        canUndoAiEdit = true
+        liveAiPrompt = ""
+        aiStatusMessage =
+          res.repairs > 0
+          ? "Applied live edit (\(res.repairs) auto-repair)"
+          : "Applied live AI edit"
+      } else {
+        aiStatusMessage = "Sandbox rejected edit: \(res.error ?? "Failed")"
+      }
+      isAiEditing = false
+    }
+
+    @MainActor
+    private func fetchLiveModels() async {
+      let baseUrl: String
+      switch aiProviderKind {
+      case "openrouter":
+        baseUrl = "https://openrouter.ai/api/v1"
+      case "custom":
+        baseUrl = aiCustomBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+          .replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+      default:
+        baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai"
+      }
+      guard let url = URL(string: "\(baseUrl)/models") else { return }
+      var req = URLRequest(url: url)
+      req.httpMethod = "GET"
+      req.timeoutInterval = 10
+      let trimmedKey = aiApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmedKey.isEmpty {
+        req.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
+      }
+      do {
+        let (data, _) = try await URLSession.shared.data(for: req)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+          return
+        }
+        let items =
+          (root["data"] as? [[String: Any]]) ?? (root["models"] as? [[String: Any]]) ?? []
+        var out: [String] = []
+        if aiProviderKind == "gemini" {
+          out.append(contentsOf: ["gemini-flash-latest", "gemini-pro-latest"])
+        } else if aiProviderKind == "openrouter" {
+          out.append("openrouter/auto")
+        }
+        let skipPattern = "embedding|imagen|veo|aqa|tts|whisper|moderation|audio|robotics"
+        for item in items {
+          let raw = (item["id"] as? String) ?? (item["name"] as? String) ?? ""
+          let clean = raw.hasPrefix("models/") ? String(raw.dropFirst("models/".count)) : raw
+          if !clean.isEmpty,
+            clean.range(of: skipPattern, options: [.regularExpression, .caseInsensitive]) == nil,
+            !out.contains(clean)
+          {
+            out.append(clean)
+          }
+        }
+        discoveredModels = out
+        aiStatusMessage = "Loaded \(out.count) live models"
+      } catch {
+        aiStatusMessage = "Models fetch: \(error.localizedDescription)"
       }
     }
 

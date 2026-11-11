@@ -59,6 +59,7 @@ constructor(
   private val openConnection: (URL) -> HttpURLConnection = {
     it.openConnection() as HttpURLConnection
   },
+  private val reasoningEffort: String? = null,
 ) : AIProvider {
 
   init {
@@ -87,25 +88,43 @@ constructor(
           "stream" to false,
         )
       if (!model.isNullOrEmpty()) body["model"] = model
-      val conn = openConnection(URL(endpoint))
-      try {
-        conn.requestMethod = "POST"
-        conn.connectTimeout = timeoutMs
-        conn.readTimeout = timeoutMs
-        conn.doOutput = true
-        conn.setRequestProperty("Content-Type", "application/json")
-        for ((k, v) in headers) conn.setRequestProperty(k, v)
-        conn.outputStream.use { it.write(MiniJson.stringify(body).toByteArray(Charsets.UTF_8)) }
-        val code = conn.responseCode
-        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
-        if (code !in 200..299) {
-          throw AIEditException("ai-chat: HTTP $code from endpoint: ${text.take(300)}")
+      if (!reasoningEffort.isNullOrEmpty()) body["reasoning_effort"] = reasoningEffort
+      fun postOnce(payload: Map<String, Any?>): Pair<Int, String> {
+        val conn = openConnection(URL(endpoint))
+        try {
+          conn.requestMethod = "POST"
+          conn.connectTimeout = timeoutMs
+          conn.readTimeout = timeoutMs
+          conn.doOutput = true
+          conn.setRequestProperty("Content-Type", "application/json")
+          for ((k, v) in headers) conn.setRequestProperty(k, v)
+          conn.outputStream.use {
+            it.write(MiniJson.stringify(payload).toByteArray(Charsets.UTF_8))
+          }
+          val code = conn.responseCode
+          val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+          val text = stream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
+          return code to text
+        } finally {
+          conn.disconnect()
         }
-        parseContent(text)
-      } finally {
-        conn.disconnect()
       }
+      var (code, text) = postOnce(body)
+      if (
+        code == 400 &&
+          body.containsKey("reasoning_effort") &&
+          (text.contains("reasoning_effort", ignoreCase = true) ||
+            text.contains("thinking", ignoreCase = true))
+      ) {
+        body.remove("reasoning_effort")
+        val retry = postOnce(body)
+        code = retry.first
+        text = retry.second
+      }
+      if (code !in 200..299) {
+        throw AIEditException("ai-chat: HTTP $code from endpoint: ${text.take(300)}")
+      }
+      parseContent(text)
     }
 
   companion object {
@@ -294,11 +313,12 @@ constructor(
         objects = mappedObjects,
       )
     }
+
     /**
      * Builds metric priors from a room scan: walls, floors, doors, windows, and openings become
-     * labeled planes; furniture becomes objects with size and yaw. `floorY` is the lowest floor,
-     * or without one the lowest wall or object bottom. Floors come first, then walls, doors,
-     * windows, and openings (at most 32 planes and 32 objects). Feed it Android XR labeled planes
+     * labeled planes; furniture becomes objects with size and yaw. `floorY` is the lowest floor, or
+     * without one the lowest wall or object bottom. Floors come first, then walls, doors, windows,
+     * and openings (at most 32 planes and 32 objects). Feed it Android XR labeled planes
      * (`androidx.xr.arcore` `Plane.Label`), a Meta MRUK room, or your own scanner. Mirrors
      * `AISpatialPriors.fromRoomScan` on iOS, which `fromCapturedRoom` (RoomPlan) uses.
      */

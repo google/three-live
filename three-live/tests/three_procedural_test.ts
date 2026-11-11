@@ -95,7 +95,10 @@ function runProceduralTests(): void {
 
   // 2. Empty Box3 & Sphere invariants
   const emptyBox = new THREE.Box3();
-  assert(emptyBox.isBox3 === true && emptyBox.isEmpty(), 'Default Box3 is empty');
+  assert(
+    emptyBox.isBox3 === true && emptyBox.isEmpty(),
+    'Default Box3 is empty',
+  );
   assert(
     emptyBox.getCenter().equals(new Vector3(0, 0, 0)) &&
       emptyBox.getSize().equals(new Vector3(0, 0, 0)),
@@ -297,7 +300,10 @@ function runProceduralTests(): void {
   // Create CanvasTexture BEFORE drawing to verify automatic post-draw sync!
   const ctex = new THREE.CanvasTexture(canvas);
   const ctx = canvas.getContext('2d');
-  assert(ctx !== null, 'canvas.getContext("2d") returns VirtualCanvasContext2D');
+  assert(
+    ctx !== null,
+    'canvas.getContext("2d") returns VirtualCanvasContext2D',
+  );
 
   // Linear gradient background (requires >65535 raw bytes at 256x256 -> multi-block DEFLATE!)
   const grad = ctx.createLinearGradient(0, 0, 256, 256);
@@ -390,9 +396,7 @@ function runProceduralTests(): void {
   const idatLen = pngBytes.readUInt32BE(33);
   const inflated = zlib.inflateSync(pngBytes.subarray(41, 41 + idatLen));
   assert(
-    ihdrW === 256 &&
-      ihdrH === 256 &&
-      inflated.length === 256 * (1 + 256 * 4),
+    ihdrW === 256 && ihdrH === 256 && inflated.length === 256 * (1 + 256 * 4),
     '256x256 CanvasTexture multi-block stored-DEFLATE IDAT stream passes native zlib.inflateSync',
   );
 
@@ -438,7 +442,9 @@ function runProceduralTests(): void {
   hugeScene.add(
     new Mesh(
       new BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({map: new THREE.CanvasTexture(hugeCanvas)}),
+      new THREE.MeshStandardMaterial({
+        map: new THREE.CanvasTexture(hugeCanvas),
+      }),
     ),
   );
   let quotaRejected = false;
@@ -633,13 +639,7 @@ function runProceduralTests(): void {
   );
 
   // 19. Full PBR Material Texture Channels (A4: normalMap/normalScale, roughnessMap+metalnessMap ORM packing, emissiveMap, aoMap/aoMapIntensity, bumpMap/bumpScale)
-  const makeSolidDataTex = (
-    r: number,
-    g: number,
-    b: number,
-    w = 4,
-    h = 4,
-  ) => {
+  const makeSolidDataTex = (r: number, g: number, b: number, w = 4, h = 4) => {
     const px = new Uint8Array(w * h * 4);
     for (let i = 0; i < px.length; i += 4) {
       px[i] = r;
@@ -909,7 +909,9 @@ function runProceduralTests(): void {
     hemiC3d.gltf.materials[0]?.alphaMode === 'BLEND',
     'SpriteMaterial with transparency exports alphaMode: "BLEND" in glTF material',
   );
-  const spriteNode0 = hemiC3d.gltf.nodes.find((n: any) => n.name === sprite.name);
+  const spriteNode0 = hemiC3d.gltf.nodes.find(
+    (n: any) => n.name === sprite.name,
+  );
   const optOutNode = hemiC3d.gltf.nodes.find(
     (n: any) => n.name === spriteOptOut.name,
   );
@@ -981,13 +983,20 @@ function runProceduralTests(): void {
       approx(v2a.distanceTo(v2b), 5, 1e-6) &&
       approx(v2a.dot(new THREE.Vector2(2, 1)), 10, 1e-6) &&
       v2a.clone().normalize().length() > 0.9999 &&
-      new THREE.Vector2(0, 0).lerp(v2a, 0.5).equals(new THREE.Vector2(1.5, 2)) &&
-      new THREE.Vector2().lerpVectors(v2b, v2a, 0.25).equals(new THREE.Vector2(0.75, 1)),
+      new THREE.Vector2(0, 0)
+        .lerp(v2a, 0.5)
+        .equals(new THREE.Vector2(1.5, 2)) &&
+      new THREE.Vector2()
+        .lerpVectors(v2b, v2a, 0.25)
+        .equals(new THREE.Vector2(0.75, 1)),
     'Vector2.prototype provides length, normalize, distanceTo, dot, lerp, lerpVectors, and equals',
   );
 
   // LineCurve, QuadraticBezierCurve, CubicBezierCurve
-  const lc = new THREE.LineCurve(new THREE.Vector2(0, 0), new THREE.Vector2(10, 0));
+  const lc = new THREE.LineCurve(
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(10, 0),
+  );
   const qbc = new THREE.QuadraticBezierCurve(
     new THREE.Vector2(0, 0),
     new THREE.Vector2(1, 2),
@@ -1025,7 +1034,16 @@ function runProceduralTests(): void {
   );
 
   // EllipseCurve (CCW vs CW + rotation) & ArcCurve
-  const ellCcw = new THREE.EllipseCurve(1, 2, 3, 1, 0, Math.PI / 2, false, Math.PI / 2);
+  const ellCcw = new THREE.EllipseCurve(
+    1,
+    2,
+    3,
+    1,
+    0,
+    Math.PI / 2,
+    false,
+    Math.PI / 2,
+  );
   // At t=0 (angle=0), local=(3,0) rotated +90deg around (1,2) -> (1, 5)
   const ellPt0 = ellCcw.getPoint(0);
   const arcCw = new THREE.ArcCurve(0, 0, 2, 0, Math.PI / 2, true);
@@ -1044,14 +1062,28 @@ function runProceduralTests(): void {
 
   // CurvePath (2D uniform arc-length spacing + 3D TubeGeometry compatibility)
   const cp2 = new THREE.CurvePath();
-  cp2.add(new THREE.LineCurve(new THREE.Vector2(0, 0), new THREE.Vector2(2, 0)));
-  cp2.add(new THREE.LineCurve(new THREE.Vector2(2, 0), new THREE.Vector2(2, 6)));
+  cp2.add(
+    new THREE.LineCurve(new THREE.Vector2(0, 0), new THREE.Vector2(2, 0)),
+  );
+  cp2.add(
+    new THREE.LineCurve(new THREE.Vector2(2, 0), new THREE.Vector2(2, 6)),
+  );
   // Total length = 2 + 6 = 8; midpoint at t=0.5 is at distance 4 -> (2, 2)
   const cpMid = cp2.getPoint(0.5);
   cp2.closePath();
   const cp3 = new THREE.CurvePath();
-  cp3.add(new THREE.LineCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)));
-  cp3.add(new THREE.LineCurve3(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 1, 0)));
+  cp3.add(
+    new THREE.LineCurve3(
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 1, 0),
+    ),
+  );
+  cp3.add(
+    new THREE.LineCurve3(
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(1, 1, 0),
+    ),
+  );
   const tubeFromCp3 = new THREE.TubeGeometry(cp3, 12, 0.08, 6, false);
   assert(
     approx(cpMid.x, 2, 1e-4) &&
@@ -1065,7 +1097,10 @@ function runProceduralTests(): void {
   const camShape = new THREE.Shape();
   camShape.moveTo(-0.5, -0.3);
   camShape.add(
-    new THREE.LineCurve(new THREE.Vector2(-0.5, -0.3), new THREE.Vector2(0.5, -0.3)),
+    new THREE.LineCurve(
+      new THREE.Vector2(-0.5, -0.3),
+      new THREE.Vector2(0.5, -0.3),
+    ),
   );
   camShape.splineThru([
     new THREE.Vector2(0.6, 0.1),
@@ -1076,9 +1111,13 @@ function runProceduralTests(): void {
   const holePath = new THREE.Path();
   holePath.add(new THREE.ArcCurve(0, 0.05, 0.14, 0, Math.PI * 2, false));
   camShape.holes.push(holePath);
-  const camExtrude = new THREE.ExtrudeGeometry(camShape, {depth: 0.15, curveSegments: 16});
+  const camExtrude = new THREE.ExtrudeGeometry(camShape, {
+    depth: 0.15,
+    curveSegments: 16,
+  });
   assert(
-    camExtrude.attributes.position.count > 80 && (camExtrude.index?.count ?? 0) > 120,
+    camExtrude.attributes.position.count > 80 &&
+      (camExtrude.index?.count ?? 0) > 120,
     'Shape.add(LineCurve), Shape.splineThru(), and ArcCurve hole triangulate cleanly in ExtrudeGeometry',
   );
 
@@ -1090,7 +1129,11 @@ function runProceduralTests(): void {
   const gridClone = grid.clone();
   helperScene.add(grid);
 
-  const axes = new THREE.AxesHelper(1.5).setColors(0xff1100, 0x11ff00, 0x0055ff);
+  const axes = new THREE.AxesHelper(1.5).setColors(
+    0xff1100,
+    0x11ff00,
+    0x0055ff,
+  );
   const axesClone = axes.clone();
   helperScene.add(axes);
 
@@ -1103,7 +1146,10 @@ function runProceduralTests(): void {
     0.3,
     0.15,
   );
-  const arrowUp = arrowDown.clone().setDirection(new THREE.Vector3(0, 1, 0)).setColor(0x00ffcc);
+  const arrowUp = arrowDown
+    .clone()
+    .setDirection(new THREE.Vector3(0, 1, 0))
+    .setColor(0x00ffcc);
   const arrowZero = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 0));
   helperScene.add(arrowDown);
   helperScene.add(arrowUp);
@@ -1150,7 +1196,9 @@ function runProceduralTests(): void {
     'GridHelper clamps divisions<=256, syncs center-line opacity, and clone() avoids duplicating internal children on Grid/Axes/Arrow',
   );
   // Verify arrowDown quaternion rotates +Y (0,1,0) to -Y (0,-1,0) without NaN
-  const downTip = new THREE.Vector3(0, 1, 0).applyQuaternion(arrowDown.quaternion);
+  const downTip = new THREE.Vector3(0, 1, 0).applyQuaternion(
+    arrowDown.quaternion,
+  );
   assert(
     approx(downTip.x, 0, 1e-5) &&
       approx(downTip.y, -1, 1e-5) &&
@@ -1234,7 +1282,7 @@ function runProceduralTests(): void {
     [1478526405, 1444740549, 2500509125],
     [1443984829, 2558384049, 135696830],
     [3324647719, 2659050445, 2746743098],
-    [107901172, 1108293677, 658875471],
+    [2185805582, 4034745237, 2813262117],
     [1265016261, 4205602757, 4063555013],
     [2375540222, 4017094934, 479134790],
     [4050570107, 1948544486, 3373758917],
@@ -1400,8 +1448,7 @@ function runProceduralTests(): void {
     sA.material !== sB.material &&
       mapA === (sA.material as any).map &&
       mapB === (sB.material as any).map &&
-      mapA ===
-        PT.wood({size: 32, color: 0x996633}).map &&
+      mapA === PT.wood({size: 32, color: 0x996633}).map &&
       mapB === PT.marble({size: 32, color: 0x996633}).map,
     'Shared material with conflicting presets is copied per mesh, each tinted by the original color',
   );

@@ -243,7 +243,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const vx = Number(v.x);
       const vy = Number(v.y);
       const vz = Number(v.z);
-      if (!Number.isFinite(vx) || !Number.isFinite(vy) || !Number.isFinite(vz)) {
+      if (
+        !Number.isFinite(vx) ||
+        !Number.isFinite(vy) ||
+        !Number.isFinite(vz)
+      ) {
         return this;
       }
       this.min.set(this.min.x - vx, this.min.y - vy, this.min.z - vz);
@@ -470,7 +474,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   }
 
   // tslint:disable-next-line:no-any Dynamic Object3D instance.
-  function expandBox3ByObject(targetBox: Box3, object: any, precise: boolean): void {
+  function expandBox3ByObject(
+    targetBox: Box3,
+    object: any,
+    precise: boolean,
+  ): void {
     if (!object) return;
     object.updateMatrixWorld?.(true);
     const v = new Vector3();
@@ -480,7 +488,6 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const seen = new Set<unknown>();
     // tslint:disable-next-line:no-any Per-geometry local AABB cache.
     const localBoxes = new Map<any, Box3>();
-
 
     // tslint:disable-next-line:no-any Dynamic BufferGeometry / Matrix4.
     const expandGeo = (geo: any, m: any) => {
@@ -849,7 +856,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   // tslint:disable-next-line:no-any Optional native Rust accelerator in Boa VM.
   const nativeEncodeRgbaPng: any =
     typeof globalThis !== 'undefined'
-      ? (globalThis as Record<string, unknown>)['__three_live_native_encode_rgba_png__']
+      ? (globalThis as Record<string, unknown>)[
+          '__three_live_native_encode_rgba_png__'
+        ]
       : undefined;
 
   const NAMED_COLORS: Record<string, number> = {};
@@ -1151,7 +1160,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   };
 
   const packRgba = (r: number, g: number, b: number, a: number): number =>
-    ((r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | ((a & 255) << 24)) >>> 0;
+    ((r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | ((a & 255) << 24)) >>>
+    0;
 
   const getGradLut = (g: VirtualCanvasGradient): Uint32Array => {
     if (g._lut) return g._lut;
@@ -1265,7 +1275,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
     addColorStop(offset: number, color: string): void {
       const o = Math.max(0, Math.min(1, Number(offset) || 0));
-      this.s.push({o, c: parseCssColor(color, [0, 0, 0, 255]), i: this.s.length});
+      this.s.push({
+        o,
+        c: parseCssColor(color, [0, 0, 0, 255]),
+        i: this.s.length,
+      });
       this.s.sort((a, b) => a.o - b.o || a.i - b.i);
       this._lut = null;
     }
@@ -1390,9 +1404,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     return out;
   };
 
-  const parseFontSpec = (
-    fontStr: string,
-  ): {sizePx: number; bold: boolean} => {
+  const parseFontSpec = (fontStr: string): {sizePx: number; bold: boolean} => {
     const s = String(fontStr || '10px sans-serif');
     const bold = /\b(bold|bolder|[6-9]00)\b/i.test(s);
     const m = /(\d+(?:\.\d+)?)\s*(px|pt|em|rem)\b/i.exec(s);
@@ -1473,7 +1485,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   };
 
   const resolveOp = (ctx: VirtualCanvasContext2D): number => {
-    const op = String(ctx.globalCompositeOperation || 'source-over').toLowerCase();
+    const op = String(
+      ctx.globalCompositeOperation || 'source-over',
+    ).toLowerCase();
     if (op === 'source-over') return 0;
     if (op === 'copy') return 1;
     if (op === 'destination-out') return 2;
@@ -1706,7 +1720,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const totalW = rawW * squeezeX;
     let startX = x;
     if (ctx.textAlign === 'center') startX -= totalW * 0.5;
-    else if (ctx.textAlign === 'right' || ctx.textAlign === 'end') startX -= totalW;
+    else if (ctx.textAlign === 'right' || ctx.textAlign === 'end')
+      startX -= totalW;
 
     let topY = y;
     const base = ctx.textBaseline;
@@ -1735,10 +1750,22 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const c1 = toBuf(ctx, gx0 + gw, topY);
       const c2 = toBuf(ctx, gx0 + gw, topY + cellH);
       const c3 = toBuf(ctx, gx0, topY + cellH);
-      const minX = Math.max(0, Math.floor(Math.min(c0[0], c1[0], c2[0], c3[0])));
-      const maxX = Math.min(bw - 1, Math.ceil(Math.max(c0[0], c1[0], c2[0], c3[0])));
-      const minY = Math.max(0, Math.floor(Math.min(c0[1], c1[1], c2[1], c3[1])));
-      const maxY = Math.min(bh - 1, Math.ceil(Math.max(c0[1], c1[1], c2[1], c3[1])));
+      const minX = Math.max(
+        0,
+        Math.floor(Math.min(c0[0], c1[0], c2[0], c3[0])),
+      );
+      const maxX = Math.min(
+        bw - 1,
+        Math.ceil(Math.max(c0[0], c1[0], c2[0], c3[0])),
+      );
+      const minY = Math.max(
+        0,
+        Math.floor(Math.min(c0[1], c1[1], c2[1], c3[1])),
+      );
+      const maxY = Math.min(
+        bh - 1,
+        Math.ceil(Math.max(c0[1], c1[1], c2[1], c3[1])),
+      );
       for (let py = minY; py <= maxY; py++) {
         const cy = py + 0.5;
         for (let px = minX; px <= maxX; px++) {
@@ -1875,9 +1902,23 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
 
     // tslint:disable-next-line:no-any Accepts DOMMatrix-like object or 6 numbers.
-    setTransform(a?: any, b?: number, c?: number, d?: number, e?: number, f?: number): void {
+    setTransform(
+      a?: any,
+      b?: number,
+      c?: number,
+      d?: number,
+      e?: number,
+      f?: number,
+    ): void {
       if (a && typeof a === 'object') {
-        this.setTransform(a.a ?? 1, a.b ?? 0, a.c ?? 0, a.d ?? 1, a.e ?? 0, a.f ?? 0);
+        this.setTransform(
+          a.a ?? 1,
+          a.b ?? 0,
+          a.c ?? 0,
+          a.d ?? 1,
+          a.e ?? 0,
+          a.f ?? 0,
+        );
         return;
       }
       const na = Number(a ?? 1);
@@ -1891,12 +1932,26 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       }
     }
 
-    getTransform(): {a: number; b: number; c: number; d: number; e: number; f: number} {
+    getTransform(): {
+      a: number;
+      b: number;
+      c: number;
+      d: number;
+      e: number;
+      f: number;
+    } {
       const m = this._m;
       return {a: m[0], b: m[1], c: m[2], d: m[3], e: m[4], f: m[5]};
     }
 
-    transform(a: number, b: number, c: number, d: number, e: number, f: number): void {
+    transform(
+      a: number,
+      b: number,
+      c: number,
+      d: number,
+      e: number,
+      f: number,
+    ): void {
       if (!Number.isFinite(a + b + c + d + e + f)) return;
       const m = this._m;
       this._m = [
@@ -1924,7 +1979,12 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       this.transform(x, 0, 0, y, 0, 0);
     }
 
-    createLinearGradient(x0: number, y0: number, x1: number, y1: number): VirtualCanvasGradient {
+    createLinearGradient(
+      x0: number,
+      y0: number,
+      x1: number,
+      y1: number,
+    ): VirtualCanvasGradient {
       return new VirtualCanvasGradient(false, x0, y0, 0, x1, y1, 0);
     }
 
@@ -1940,7 +2000,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
 
     // tslint:disable-next-line:no-any Accepts VirtualCanvas, ImageData, or Texture-like object.
-    createPattern(image: any, repetition = 'repeat'): VirtualCanvasPattern | null {
+    createPattern(
+      image: any,
+      repetition = 'repeat',
+    ): VirtualCanvasPattern | null {
       const ex = extractPixelsFromSource(image);
       return ex
         ? new VirtualCanvasPattern(ex.data, ex.width, ex.height, repetition)
@@ -1999,7 +2062,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         y += h;
         h = -h;
       }
-      const list = Array.isArray(radii) ? radii : radii !== undefined ? [radii] : [0];
+      const list = Array.isArray(radii)
+        ? radii
+        : radii !== undefined
+          ? [radii]
+          : [0];
       const readR = (v: unknown): number => {
         const raw =
           v && typeof v === 'object'
@@ -2050,7 +2117,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         Math.min(
           64,
           Math.ceil(
-            (Math.hypot(bx1 - x0, by1 - y0) + Math.hypot(bx2 - bx1, by2 - by1)) *
+            (Math.hypot(bx1 - x0, by1 - y0) +
+              Math.hypot(bx2 - bx1, by2 - by1)) *
               0.5,
           ),
         ),
@@ -2116,7 +2184,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       endAngle = Math.PI * 2,
       counterclockwise = false,
     ): void {
-      if (!Number.isFinite(x + y + radiusX + radiusY + rotation + startAngle + endAngle)) {
+      if (
+        !Number.isFinite(
+          x + y + radiusX + radiusY + rotation + startAngle + endAngle,
+        )
+      ) {
         return;
       }
       const rx = Math.max(0, radiusX);
@@ -2146,7 +2218,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       );
       const segs = Math.max(
         8,
-        Math.min(96, Math.ceil((Math.abs(sweep) * Math.max(1, rx, ry) * estScale) / 3)),
+        Math.min(
+          96,
+          Math.ceil((Math.abs(sweep) * Math.max(1, rx, ry) * estScale) / 3),
+        ),
       );
       for (let i = 0; i <= segs; i++) {
         const a = startAngle + (sweep * i) / segs;
@@ -2154,7 +2229,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         const ey = ry * Math.sin(a);
         const px = x + ex * cosR - ey * sinR;
         const py = y + ex * sinR + ey * cosR;
-        if (i === 0 && (!this._cur || this._cur.pts.length === 0)) this.moveTo(px, py);
+        if (i === 0 && (!this._cur || this._cur.pts.length === 0))
+          this.moveTo(px, py);
         else this.lineTo(px, py);
       }
     }
@@ -2167,10 +2243,25 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       endAngle: number,
       counterclockwise = false,
     ): void {
-      this.ellipse(x, y, radius, radius, 0, startAngle, endAngle, counterclockwise);
+      this.ellipse(
+        x,
+        y,
+        radius,
+        radius,
+        0,
+        startAngle,
+        endAngle,
+        counterclockwise,
+      );
     }
 
-    arcTo(x1: number, y1: number, x2: number, y2: number, radius: number): void {
+    arcTo(
+      x1: number,
+      y1: number,
+      x2: number,
+      y2: number,
+      radius: number,
+    ): void {
       if (!Number.isFinite(x1 + y1 + x2 + y2 + radius)) return;
       const r = Math.max(0, radius);
       if (!this._cur || this._cur.pts.length === 0) {
@@ -2203,7 +2294,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         this.lineTo(x1, y1);
         return;
       }
-      const halfA = Math.acos(Math.max(-1, Math.min(1, u1x * u2x + u1y * u2y))) * 0.5;
+      const halfA =
+        Math.acos(Math.max(-1, Math.min(1, u1x * u2x + u1y * u2y))) * 0.5;
       const dist = r / Math.tan(halfA);
       const bisX = u1x + u2x;
       const bisY = u1y + u2y;
@@ -2318,8 +2410,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
             const pIdx = py * bw + px;
             if (stamp[pIdx]) continue;
             const cx = px + 0.5;
-            let t = segL2 > 1e-9 ? ((cx - x0) * dx + (cy - y0) * dy) / segL2 : 0;
-            if (cap === 'butt' && ((t < 0 && startCap) || (t > 1 && endCap))) continue;
+            let t =
+              segL2 > 1e-9 ? ((cx - x0) * dx + (cy - y0) * dy) / segL2 : 0;
+            if (cap === 'butt' && ((t < 0 && startCap) || (t > 1 && endCap)))
+              continue;
             t = Math.max(0, Math.min(1, t));
             const qx = x0 + t * dx;
             const qy = y0 + t * dy;
@@ -2346,7 +2440,14 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
           const [ax, ay] = pts[i];
           const [bx, by] = pts[(i + 1) % n];
           if (dashTotal <= 1e-6) {
-            drawThickSeg(ax, ay, bx, by, !sp.closed && i === 0, !sp.closed && i === segCount - 1);
+            drawThickSeg(
+              ax,
+              ay,
+              bx,
+              by,
+              !sp.closed && i === 0,
+              !sp.closed && i === segCount - 1,
+            );
           } else {
             const segLen = Math.hypot(bx - ax, by - ay);
             if (segLen <= 1e-6) continue;
@@ -2360,7 +2461,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
               }
               const step = Math.min(
                 segLen - pos,
-                di < scaledDash.length ? Math.max(0.25, scaledDash[di] - rem) : segLen - pos,
+                di < scaledDash.length
+                  ? Math.max(0.25, scaledDash[di] - rem)
+                  : segLen - pos,
               );
               if (di % 2 === 0) {
                 const t0 = pos / segLen;
@@ -2474,7 +2577,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
                 ]).buffer,
               )[0]!;
               const data = this.canvas._data;
-              const u32 = new Uint32Array(data.buffer, data.byteOffset, bw * bh);
+              const u32 = new Uint32Array(
+                data.buffer,
+                data.byteOffset,
+                bw * bh,
+              );
               if (x0 === 0 && x1 === bw - 1) {
                 u32.fill(word, y0 * bw, (y1 + 1) * bw);
               } else {
@@ -2558,7 +2665,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
 
     // tslint:disable-next-line:no-any Accepts (sw, sh) or existing ImageData.
-    createImageData(swOrImg: any, sh?: number): {
+    createImageData(
+      swOrImg: any,
+      sh?: number,
+    ): {
       data: Uint8ClampedArray;
       width: number;
       height: number;
@@ -2617,7 +2727,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         for (let col = 0; col < w; col++) {
           const lx = x0 + col;
           if (lx < 0 || lx >= this.canvas.width) continue;
-          const si = (by * bw + Math.min(bw - 1, Math.floor((lx + 0.5) * sxS))) * 4;
+          const si =
+            (by * bw + Math.min(bw - 1, Math.floor((lx + 0.5) * sxS))) * 4;
           const di = (row * w + col) * 4;
           out[di] = src[si];
           out[di + 1] = src[si + 1];
@@ -2673,9 +2784,15 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const dst = this.canvas._data;
       const src = imageData.data;
       const bx0 = Math.max(0, Math.floor((ox + xStart) * this.canvas._sx));
-      const bx1 = Math.min(bw - 1, Math.ceil((ox + xEnd) * this.canvas._sx) - 1);
+      const bx1 = Math.min(
+        bw - 1,
+        Math.ceil((ox + xEnd) * this.canvas._sx) - 1,
+      );
       const by0 = Math.max(0, Math.floor((oy + yStart) * this.canvas._sy));
-      const by1 = Math.min(bh - 1, Math.ceil((oy + yEnd) * this.canvas._sy) - 1);
+      const by1 = Math.min(
+        bh - 1,
+        Math.ceil((oy + yEnd) * this.canvas._sy) - 1,
+      );
       for (let by = by0; by <= by1; by++) {
         const iy = Math.floor((by + 0.5) * invSy) - oy;
         if (iy < yStart || iy >= yEnd) continue;
@@ -2705,8 +2822,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       ) {
         return;
       }
-      const logSrcW = Number(image?.width) > 0 ? Number(image.width) : src.width;
-      const logSrcH = Number(image?.height) > 0 ? Number(image.height) : src.height;
+      const logSrcW =
+        Number(image?.width) > 0 ? Number(image.width) : src.width;
+      const logSrcH =
+        Number(image?.height) > 0 ? Number(image.height) : src.height;
       let sx = 0;
       let sy = 0;
       let sw = logSrcW;
@@ -2781,7 +2900,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
   }
 
-  const reallocCanvas = (c: VirtualCanvas, rawW: number, rawH: number): void => {
+  const reallocCanvas = (
+    c: VirtualCanvas,
+    rawW: number,
+    rawH: number,
+  ): void => {
     const nw = Math.floor(Number(rawW));
     const nh = Math.floor(Number(rawH));
     c._w = Number.isFinite(nw) && nw >= 0 ? nw : 0;
@@ -2844,7 +2967,13 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       ) {
         return '';
       }
-      return encodeRgbaToPngDataUri(this._data, this._bw, this._bh, false, false).uri;
+      return encodeRgbaToPngDataUri(
+        this._data,
+        this._bw,
+        this._bh,
+        false,
+        false,
+      ).uri;
     }
 
     addEventListener(): void {}
@@ -3183,11 +3312,15 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     perlinP[i + 256] = PERLIN_BASE[i];
   }
 
-  const perlinFade = (t: number): number =>
-    t * t * t * (t * (t * 6 - 15) + 10);
+  const perlinFade = (t: number): number => t * t * t * (t * (t * 6 - 15) + 10);
   const perlinLerp = (t: number, a: number, b: number): number =>
     a + t * (b - a);
-  const perlinGrad = (hash: number, x: number, y: number, z: number): number => {
+  const perlinGrad = (
+    hash: number,
+    x: number,
+    y: number,
+    z: number,
+  ): number => {
     const h = hash & 15;
     const u = h < 8 ? x : y;
     const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
@@ -3542,12 +3675,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const z0 = zIn - (k - t);
       const w0 = wIn - (l - t);
 
-      const rankx =
-        (x0 > y0 ? 1 : 0) + (x0 > z0 ? 1 : 0) + (x0 > w0 ? 1 : 0);
-      const ranky =
-        (x0 <= y0 ? 1 : 0) + (y0 > z0 ? 1 : 0) + (y0 > w0 ? 1 : 0);
-      const rankz =
-        (x0 <= z0 ? 1 : 0) + (y0 <= z0 ? 1 : 0) + (z0 > w0 ? 1 : 0);
+      const rankx = (x0 > y0 ? 1 : 0) + (x0 > z0 ? 1 : 0) + (x0 > w0 ? 1 : 0);
+      const ranky = (x0 <= y0 ? 1 : 0) + (y0 > z0 ? 1 : 0) + (y0 > w0 ? 1 : 0);
+      const rankz = (x0 <= z0 ? 1 : 0) + (y0 <= z0 ? 1 : 0) + (z0 > w0 ? 1 : 0);
       const rankw =
         (x0 <= w0 ? 1 : 0) + (y0 <= w0 ? 1 : 0) + (z0 <= w0 ? 1 : 0);
 
@@ -4008,7 +4138,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
     // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
     getPoints(divisions = 5): any[] {
-      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 5))));
+      const divs = Math.max(
+        1,
+        Math.min(1024, Math.floor(finNum(divisions, 5))),
+      );
       const pts = [];
       for (let d = 0; d <= divs; d++) pts.push(this.getPoint(d / divs));
       return pts;
@@ -4016,7 +4149,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
     // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
     getSpacedPoints(divisions = 5): any[] {
-      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 5))));
+      const divs = Math.max(
+        1,
+        Math.min(1024, Math.floor(finNum(divisions, 5))),
+      );
       const pts = [];
       for (let d = 0; d <= divs; d++) pts.push(this.getPointAt(d / divs));
       return pts;
@@ -4078,7 +4214,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const idx = Math.max(0, low - 1);
       const before = arcLengths[idx]!;
       const segLen = (arcLengths[idx + 1] ?? total) - before;
-      return (idx + (segLen > 1e-12 ? (targetLen - before) / segLen : 0)) / (il - 1);
+      return (
+        (idx + (segLen > 1e-12 ? (targetLen - before) / segLen : 0)) / (il - 1)
+      );
     }
 
     // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 target.
@@ -4122,7 +4260,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         const val = s[k];
         if (Array.isArray(val)) {
           d[k] = val.map((it) =>
-            it?.clone ? it.clone() : it && typeof it === 'object' && 'x' in it ? toV2(it) : it,
+            it?.clone
+              ? it.clone()
+              : it && typeof it === 'object' && 'x' in it
+                ? toV2(it)
+                : it,
           );
         } else if (val?.clone) {
           d[k] = val.clone();
@@ -4157,7 +4299,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const y1 = finNum(this.v1.y);
       return s === 1
         ? target.set(finNum(this.v2.x), finNum(this.v2.y))
-        : target.set(x1 + (finNum(this.v2.x) - x1) * s, y1 + (finNum(this.v2.y) - y1) * s);
+        : target.set(
+            x1 + (finNum(this.v2.x) - x1) * s,
+            y1 + (finNum(this.v2.y) - y1) * s,
+          );
     }
 
     // tslint:disable-next-line:no-any Dynamic Vector2 target.
@@ -4188,8 +4333,12 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const s = clamp01(t);
       const m = 1 - s;
       return target.set(
-        m * m * finNum(this.v0.x) + 2 * m * s * finNum(this.v1.x) + s * s * finNum(this.v2.x),
-        m * m * finNum(this.v0.y) + 2 * m * s * finNum(this.v1.y) + s * s * finNum(this.v2.y),
+        m * m * finNum(this.v0.x) +
+          2 * m * s * finNum(this.v1.x) +
+          s * s * finNum(this.v2.x),
+        m * m * finNum(this.v0.y) +
+          2 * m * s * finNum(this.v1.y) +
+          s * s * finNum(this.v2.y),
       );
     }
   }
@@ -4457,14 +4606,18 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
     // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
     override getPoints(divisions = 12): any[] {
-      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 12))));
+      const divs = Math.max(
+        1,
+        Math.min(1024, Math.floor(finNum(divisions, 12))),
+      );
       const points = [];
       // tslint:disable-next-line:no-any Previous point for deduplication.
       let last: any = null;
       for (const curve of this.curves) {
         const res = curve?.isEllipseCurve
           ? divs * 2
-          : curve?.isLineCurve || curve instanceof (threeNs.LineCurve3 || Function)
+          : curve?.isLineCurve ||
+              curve instanceof (threeNs.LineCurve3 || Function)
             ? 1
             : curve?.isSplineCurve && Array.isArray(curve.points)
               ? divs * Math.max(1, curve.points.length)
@@ -4501,7 +4654,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
     // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
     override getSpacedPoints(divisions = 40): any[] {
-      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 40))));
+      const divs = Math.max(
+        1,
+        Math.min(1024, Math.floor(finNum(divisions, 40))),
+      );
       const pts = [];
       for (let i = 0; i <= divs; i++) pts.push(this.getPoint(i / divs));
       if (this.autoClose && pts.length > 0) {
@@ -4521,7 +4677,12 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   const Color = threeNs.Color;
 
   // tslint:disable-next-line:no-any Copy common Object3D state onto cloned helper.
-  const copyObjBase = (dst: any, src: any, skipKids: number, recursive: boolean) => {
+  const copyObjBase = (
+    dst: any,
+    src: any,
+    skipKids: number,
+    recursive: boolean,
+  ) => {
     dst.name = src.name;
     dst.position.copy(src.position);
     dst.quaternion.copy(src.quaternion);
@@ -4545,7 +4706,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   // tslint:disable-next-line:no-any Segment-pair BufferGeometry builder.
   const segPairGeo = (coords: number[]): any => {
     const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(new Float32Array(coords), 3));
+    g.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array(coords), 3),
+    );
     g.__isSegmentPairs = true;
     return g;
   };
@@ -4595,17 +4759,32 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       color2: any = 0x888888,
     ) {
       const sz = Math.max(1e-4, Math.abs(finNum(size, 10)));
-      const divs = Math.max(1, Math.min(256, Math.floor(finNum(divisions, 10))));
+      const divs = Math.max(
+        1,
+        Math.min(256, Math.floor(finNum(divisions, 10))),
+      );
       const c1 = new Color(color1 ?? 0x444444);
       const c2 = new Color(color2 ?? 0x888888);
       const half = sz * 0.5;
       const step = sz / divs;
-      const split = divs % 2 === 0 && c1.getHex() !== c2.getHex() ? divs >> 1 : -1;
+      const split =
+        divs % 2 === 0 && c1.getHex() !== c2.getHex() ? divs >> 1 : -1;
       const minor: number[] = [];
       const major: number[] = [];
       for (let i = 0, k = -half; i <= divs; i++, k += step) {
         (i === split ? major : minor).push(
-          -half, 0, k, half, 0, k, k, 0, -half, k, 0, half,
+          -half,
+          0,
+          k,
+          half,
+          0,
+          k,
+          k,
+          0,
+          -half,
+          k,
+          0,
+          half,
         );
       }
       super(
@@ -4618,7 +4797,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       this._divisions = divs;
       this._internalKids = 0;
       if (major.length && minor.length) {
-        const cl = new LineSegments(segPairGeo(major), new LineBasicMaterial({color: c1}));
+        const cl = new LineSegments(
+          segPairGeo(major),
+          new LineBasicMaterial({color: c1}),
+        );
         this._centerLines = cl;
         this._internalKids = 1;
         this.add(cl);
@@ -4637,7 +4819,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const c = new GridHelper(
         this._size,
         this._divisions,
-        this._centerLines ? this._centerLines.material.color : this.material.color,
+        this._centerLines
+          ? this._centerLines.material.color
+          : this.material.color,
         this.material.color,
       );
       c.material.transparent = this.material.transparent;
@@ -4659,7 +4843,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
     constructor(size = 1) {
       const s = Math.max(1e-4, Math.abs(finNum(size, 1)));
-      super(segPairGeo([0, 0, 0, s, 0, 0]), new LineBasicMaterial({color: 0xff3300}));
+      super(
+        segPairGeo([0, 0, 0, s, 0, 0]),
+        new LineBasicMaterial({color: 0xff3300}),
+      );
       this.type = 'AxesHelper';
       this.isAxesHelper = true;
       this._size = s;
@@ -4729,9 +4916,16 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       super();
       this.type = 'ArrowHelper';
       this.isArrowHelper = true;
-      this.position.set(finNum(origin?.x), finNum(origin?.y), finNum(origin?.z));
+      this.position.set(
+        finNum(origin?.x),
+        finNum(origin?.y),
+        finNum(origin?.z),
+      );
       const lg = new BufferGeometry();
-      lg.setAttribute('position', new BufferAttribute(new Float32Array([0, 0, 0, 0, 1, 0]), 3));
+      lg.setAttribute(
+        'position',
+        new BufferAttribute(new Float32Array([0, 0, 0, 0, 1, 0]), 3),
+      );
       this.line = new Line(lg, new LineBasicMaterial({color}));
       this.cone = new Mesh(
         new ConeGeometry(0.5, 1, 8).translate(0, -0.5, 0),
@@ -5038,8 +5232,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       pMix(a[2], b[2], t),
     ];
     if (kind === 0) {
-      const odd =
-        pMod(Math.floor(u * S) + Math.floor(v * S), 2) === 1 ? c2 : c;
+      const odd = pMod(Math.floor(u * S) + Math.floor(v * S), 2) === 1 ? c2 : c;
       return [odd[0], odd[1], odd[2], 0.5, rough, 0];
     }
     if (kind === 1) {
@@ -5074,12 +5267,12 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       ];
     }
     if (kind === 4) {
-      const n = pFbm(u, v, 2, 192 * S, 2, seed);
+      const n = pFbm(u, v, 2, 96 * S, 2, seed);
       const fine = pRnd(xi, yi, (seed + 3) >>> 0);
       return [
-        ...k(0.85 + 0.12 * n + 0.03 * fine),
-        0.35 + n * 0.3,
-        rough + (n - 0.5) * 0.12,
+        ...k(0.94 + 0.05 * n + 0.01 * fine),
+        0.48 + n * 0.035,
+        rough + (n - 0.5) * 0.05,
         1,
       ];
     }
@@ -5227,7 +5420,19 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     for (let y = 0; y < N; y++) {
       const v = (y + 0.5) / N;
       for (let x = 0; x < N; x++) {
-        const t = pShade(kind, N, S, seed, c, c2, rough, (x + 0.5) / N, v, x, y);
+        const t = pShade(
+          kind,
+          N,
+          S,
+          seed,
+          c,
+          c2,
+          rough,
+          (x + 0.5) / N,
+          v,
+          x,
+          y,
+        );
         const o = (y * N + x) * 4;
         albedo[o] = pByte(t[0]);
         albedo[o + 1] = pByte(t[1]);
@@ -5256,7 +5461,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const yu = (y + N - 1) % N;
       const yd = (y + 1) % N;
       for (let x = 0; x < N; x++) {
-        const nx = -(height[y * N + ((x + 1) % N)] - height[y * N + ((x + N - 1) % N)]) * sc;
+        const nx =
+          -(height[y * N + ((x + 1) % N)] - height[y * N + ((x + N - 1) % N)]) *
+          sc;
         const ny = (height[yd * N + x] - height[yu * N + x]) * sc;
         const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
         const o = (y * N + x) * 4;
@@ -5274,7 +5481,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     try {
       if (val !== undefined && val !== null) hex = new Color(val).getHex();
     } catch {}
-    return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+    return [
+      ((hex >> 16) & 255) / 255,
+      ((hex >> 8) & 255) / 255,
+      (hex & 255) / 255,
+    ];
   };
 
   // tslint:disable-next-line:no-any Cached preset texture sets.
@@ -5302,7 +5513,16 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const memoKey = [kind, N, S, seed, ...c, ...c2, rough, ns].join(',');
     const hit = presetMemo.get(memoKey);
     if (hit) return {...hit};
-    const [albedo, normal, orm] = presetPixels(kind, N, S, seed, c, c2, rough, ns);
+    const [albedo, normal, orm] = presetPixels(
+      kind,
+      N,
+      S,
+      seed,
+      c,
+      c2,
+      rough,
+      ns,
+    );
     const tex = (bytes: Uint8Array, cs: string) => {
       const vc = new VirtualCanvas(N, N);
       vc._data.set(bytes);
@@ -5369,7 +5589,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   };
   // Normal / ORM maps stop at 512: a 1024 albedo derives them from an exact
   // 2×2 box downsample (`(a + b + c + d + 2) >> 2`).
-  const texMapSize = (n: number): number => (n > 512 && n % 2 === 0 ? n / 2 : n);
+  const texMapSize = (n: number): number =>
+    n > 512 && n % 2 === 0 ? n / 2 : n;
   const texBox2 = (a: ArrayLike<number>, n: number): Uint8Array => {
     const m = n / 2;
     const out = new Uint8Array(m * m * 4);
@@ -5646,11 +5867,16 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     if (mat._presetOwner && mat._presetOwner !== node) {
       // A material shared by meshes with different presets: give this mesh its
       // own copy instead of flip-flopping the shared one.
-      const copy = Object.assign(Object.create(Object.getPrototypeOf(mat)), mat);
+      const copy = Object.assign(
+        Object.create(Object.getPrototypeOf(mat)),
+        mat,
+      );
       copy.color = new Color(mat._presetTint);
-      for (const f of ['_presetKey', '_presetMaps', '_presetOwner']) copy[f] = undefined;
+      for (const f of ['_presetKey', '_presetMaps', '_presetOwner'])
+        copy[f] = undefined;
       for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) {
-        if (mat._presetMaps?.[slot] && copy[slot] === mat._presetMaps[slot]) copy[slot] = null;
+        if (mat._presetMaps?.[slot] && copy[slot] === mat._presetMaps[slot])
+          copy[slot] = null;
       }
       node.material = mat = copy;
     }
@@ -5658,7 +5884,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       ai ??
       makePreset(name, {
         ...o,
-        color: o.color ?? (mat._presetTint === 0xffffff ? undefined : mat._presetTint),
+        color:
+          o.color ??
+          (mat._presetTint === 0xffffff ? undefined : mat._presetTint),
       });
     const owned: Record<string, unknown> = mat._presetMaps || {};
     for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) {

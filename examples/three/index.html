@@ -21,13 +21,14 @@ limitations under the License.
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>three-live — AI-First Native 3D &amp; AR</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
-  <script src="./three-live.js?v=20261110b"></script>
-  <script src="./three-live-studio.min.js?v=20261110b"></script>
-  <script src="./three-live-cad.min.js?v=20261110b"></script>
-  <script src="./three-live-kits.min.js?v=20261110b"></script>
-  <script src="./three-live-procedural.min.js?v=20261110b"></script>
-  <script src="./three-live-animation.min.js?v=20261110b"></script>
-  <script src="./three-live-tsl.min.js?v=20261110b"></script>
+  <script src="./three-live.js?v=20261111e"></script>
+  <script src="./three-live-studio.min.js?v=20261111e"></script>
+  <script src="./three-live-cad.min.js?v=20261111e"></script>
+  <script src="./three-live-kits.min.js?v=20261111e"></script>
+  <script src="./three-live-procedural.min.js?v=20261111e"></script>
+  <script src="./three-live-animation.min.js?v=20261111e"></script>
+  <script src="./three-live-tsl.min.js?v=20261111e"></script>
+  <script src="./three-live-ai.min.js?v=20261111e"></script>
   <style>
     :root {
       --bg-primary: #090d16;
@@ -438,35 +439,44 @@ limitations under the License.
     }
     .output-stat .label { font-size: 11px; color: var(--text-secondary); }
     .output-stat .value { font-size: 15px; font-weight: 700; font-family: monospace; color: var(--accent-blue); }
-    .snippet-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-    .snippet-tabs button { padding: 5px 10px; font-size: 12px; }
-    .snippet-tabs button[aria-selected="true"] { border-color: var(--accent-blue); color: var(--accent-blue); }
-    pre.snippet {
-      max-height: 240px;
-      overflow: auto;
-      background: rgba(0, 0, 0, 0.35);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 10px;
-      font-size: 11.5px;
-      color: #e2e8f0;
-      white-space: pre;
-    }
     .outputs-note { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
     .outputs-note code { color: #a5f3fc; }
 
-    /* Sample AI Edits Card */
-    .ai-key-note {
-      font-size: 10.5px;
+    /* Sample & Live BYOA AI Edits Card */
+    .ai-connect-btn {
+      font-size: 11px;
       font-weight: 600;
       text-transform: none;
       letter-spacing: 0;
-      color: var(--text-secondary);
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border-color);
-      padding: 2px 8px;
+      color: var(--text-primary);
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 4px 10px;
       border-radius: 9999px;
       white-space: nowrap;
+    }
+    .ai-connect-btn.connected {
+      color: var(--accent-emerald);
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+    .ai-disconnect-inline-btn {
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text-secondary);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      padding: 4px 8px;
+      border-radius: 9999px;
+    }
+    .ai-disconnect-inline-btn:hover {
+      color: #fb7185;
+      border-color: rgba(244, 63, 94, 0.45);
+      background: rgba(244, 63, 94, 0.12);
+    }
+    .ai-disconnect-inline-btn[hidden] {
+      display: none;
     }
     .ai-prompt-list {
       display: flex;
@@ -502,6 +512,147 @@ limitations under the License.
       padding: 5px 10px;
       font-size: 11.5px;
       color: var(--text-secondary);
+    }
+    .ai-live-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border-color);
+    }
+    .ai-selection-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      align-self: flex-start;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      background: rgba(168, 85, 247, 0.14);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      color: #e9d5ff;
+      font-size: 11px;
+      font-family: monospace;
+    }
+    .ai-selection-chip[hidden] { display: none; }
+    .ai-selection-chip button {
+      background: none;
+      border: none;
+      padding: 0 2px;
+      font-size: 13px;
+      color: #e9d5ff;
+      line-height: 1;
+    }
+    .ai-input-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .ai-input-row input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      padding: 8px 10px;
+      font-size: 12.5px;
+      outline: none;
+    }
+    .ai-input-row input[type="text"]:focus {
+      border-color: var(--accent-blue);
+    }
+    .ai-input-row button {
+      padding: 8px 10px;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .ai-input-row button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .ai-edit-status {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.35;
+      min-height: 15px;
+    }
+    .ai-edit-status.error { color: #fb7185; }
+    .ai-edit-status.ok { color: var(--accent-emerald); }
+
+    dialog.ai-dialog {
+      max-width: 440px;
+    }
+    .ai-dialog-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 10px;
+    }
+    .ai-dialog-field label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ai-dialog-field label a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .ai-dialog-field label a:hover { text-decoration: underline; }
+    .ai-dialog-field input[type="text"],
+    .ai-dialog-field input[type="password"],
+    .ai-dialog-field input[type="url"] {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      padding: 8px 10px;
+      font-size: 12.5px;
+      font-family: monospace;
+      outline: none;
+    }
+    .ai-dialog-field input:focus {
+      border-color: var(--accent-blue);
+    }
+    .ai-model-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .ai-model-row input { flex: 1; }
+    .ai-model-row button {
+      padding: 7px 10px;
+      font-size: 11.5px;
+      white-space: nowrap;
+    }
+    .ai-remember-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .ai-oauth-btn {
+      width: 100%;
+      justify-content: center;
+      margin-top: 10px;
+      padding: 9px 12px;
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(56, 189, 248, 0.22));
+      border-color: rgba(168, 85, 247, 0.5);
+      color: #f3e8ff;
+    }
+    .ai-helper-note {
+      font-size: 11px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      margin-top: 4px;
     }
 
     @media (max-width: 640px) {
@@ -593,7 +744,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">77.0 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">77.7 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -646,13 +797,29 @@ limitations under the License.
         </div>
       </div>
 
-      <!-- Instant Sample AI Edits -->
+      <!-- Instant Sample & Bring-Your-Own-Account Live AI Edits -->
       <div class="card">
         <div class="card-title">
           <span>✨ AI Edit</span>
-          <span class="ai-key-note" title="Live custom prompts use three-live-ai.min.js with an LLM API key">API Key required for live edits</span>
+          <span class="ai-header-actions" style="display: inline-flex; align-items: center; gap: 5px;">
+            <button type="button" class="ai-connect-btn" id="btn-ai-connect" title="Connect or change AI provider, model, and API key">🔑 Connect AI</button>
+            <button type="button" class="ai-disconnect-inline-btn" id="btn-ai-disconnect-inline" title="Disconnect &amp; forget saved API key" aria-label="Disconnect AI provider" hidden>×</button>
+          </span>
         </div>
         <div class="ai-prompt-list" id="ai-prompt-list"></div>
+        <div class="ai-live-bar">
+          <div class="ai-selection-chip" id="ai-selection-chip" hidden>
+            <span id="ai-selection-label">Target: None</span>
+            <button type="button" id="btn-ai-clear-selection" title="Clear target mesh selection" aria-label="Clear target mesh selection">×</button>
+          </div>
+          <div class="ai-input-row">
+            <input type="text" id="ai-custom-input" placeholder="Ask AI to edit this scene (e.g. 'add a copper kettle')…" autocomplete="off">
+            <button type="button" class="primary" id="btn-ai-send" title="Generate and compile live Three.js edit">Apply</button>
+            <button type="button" id="btn-ai-voice" title="Push-to-talk voice edit (Web Speech API)">🎤</button>
+            <button type="button" id="btn-ai-undo" title="Undo last AI edit" disabled>↶</button>
+          </div>
+          <div class="ai-edit-status" id="ai-edit-status" role="status"></div>
+        </div>
       </div>
 
       <!-- Camera, mesh inspector, and spatial & AR controls share one tabbed card. -->
@@ -739,21 +906,14 @@ limitations under the License.
     <textarea id="code-editor" spellcheck="false"></textarea>
   </div>
 
-  <!-- Native outputs: what the same compiler produces for each platform. -->
+  <!-- Compiled output sizes (live from scene): what the same compiler produces for each platform. -->
   <div class="card" id="outputs-card">
-    <div class="card-title"><span>Native outputs</span></div>
+    <div class="card-title"><span>Compiled output sizes (live from scene)</span></div>
     <div class="outputs-grid">
       <div class="output-stat"><div class="label">Meshes</div><div class="value" id="out-meshes">–</div></div>
       <div class="output-stat"><div class="label">GLB (Android, web)</div><div class="value" id="out-glb">–</div></div>
       <div class="output-stat"><div class="label">USDZ (iOS, visionOS)</div><div class="value" id="out-usdz">–</div></div>
     </div>
-    <div class="snippet-tabs" role="tablist">
-      <button type="button" role="tab" data-snippet="android" aria-selected="true">Android (Kotlin)</button>
-      <button type="button" role="tab" data-snippet="ios" aria-selected="false">iOS (Swift)</button>
-      <button type="button" role="tab" data-snippet="web" aria-selected="false">Web</button>
-    </div>
-    <pre class="snippet" id="snippet-code"></pre>
-    <div class="btn-row"><button type="button" id="btn-copy-snippet" style="padding: 4px 10px; font-size: 12px;">Copy snippet</button></div>
     <p class="outputs-note">
       The same Rust compiler runs on-device in the
       <a href="https://github.com/google/three-live/tree/main/mobile" target="_blank" rel="noopener" style="color: var(--accent-blue);">Android and iOS samples</a>.
@@ -784,8 +944,66 @@ limitations under the License.
   </div>
 </dialog>
 
+<dialog class="phone-dialog ai-dialog" id="ai-connect-dialog">
+  <h2>Connect AI Provider (Bring Your Own Account)</h2>
+  <p>Credentials stay in your browser and call your chosen endpoint directly. Generated Three.js edits are validated in the on-device sandbox before applying.</p>
+  <div class="panel-tabs" role="tablist" aria-label="AI Provider" style="margin-top: 10px;">
+    <button type="button" role="tab" id="tab-ai-gemini" data-provider="gemini" aria-selected="true">Gemini</button>
+    <button type="button" role="tab" id="tab-ai-openrouter" data-provider="openrouter" aria-selected="false">OpenRouter</button>
+    <button type="button" role="tab" id="tab-ai-custom" data-provider="custom" aria-selected="false">Local / Custom</button>
+  </div>
+
+  <div id="ai-oauth-panel" hidden>
+    <button type="button" class="ai-oauth-btn" id="btn-ai-oauth-openrouter">⚡ Sign in with OpenRouter (1-Click OAuth PKCE)</button>
+    <div class="ai-helper-note" style="text-align: center;">or paste an OpenRouter API key below</div>
+  </div>
+
+  <div class="ai-dialog-field" id="ai-endpoint-field" hidden>
+    <label for="ai-endpoint-input">
+      <span>OpenAI-Compatible Base URL</span>
+    </label>
+    <input type="url" id="ai-endpoint-input" placeholder="http://localhost:11434/v1" autocomplete="off">
+    <div class="ai-helper-note">Works with Ollama (<code>:11434/v1</code>), LM Studio (<code>:1234/v1</code>), vLLM, or any corporate proxy.</div>
+  </div>
+
+  <div class="ai-dialog-field" id="ai-key-field">
+    <label for="ai-key-input">
+      <span id="ai-key-label">Gemini API Key</span>
+      <a id="ai-key-help-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get free Gemini key ↗</a>
+    </label>
+    <input type="password" id="ai-key-input" placeholder="AIza..." autocomplete="off">
+  </div>
+
+  <div class="ai-dialog-field">
+    <label for="ai-model-input">
+      <span>Model (Evergreen Alias or Live ID)</span>
+    </label>
+    <div class="ai-model-row">
+      <input type="text" id="ai-model-input" list="ai-model-datalist" placeholder="gemini-flash-latest" autocomplete="off">
+      <button type="button" id="btn-ai-fetch-models" title="Query GET /models from provider">↻ Models</button>
+    </div>
+    <datalist id="ai-model-datalist"></datalist>
+    <div class="ai-helper-note" id="ai-model-note">
+      Defaults to <code>gemini-flash-latest</code> (rolling alias for the newest Gemini Flash, or pick <code>gemini-pro-latest</code>). Click <strong>↻ Models</strong> to list all live models on your account.
+    </div>
+  </div>
+
+  <label class="ai-remember-row">
+    <input type="checkbox" id="ai-remember-checkbox">
+    <span>Remember key on this device (<code>localStorage</code>, or across refreshes in this tab on sandboxed hosts)</span>
+  </label>
+
+  <div class="ai-edit-status" id="ai-dialog-status" style="margin-top: 8px;"></div>
+
+  <div class="btn-row" style="margin-top: 12px; justify-content: flex-end;">
+    <button type="button" id="btn-ai-disconnect" style="margin-right: auto;" hidden>Disconnect</button>
+    <button type="button" id="btn-ai-dialog-cancel">Cancel</button>
+    <button type="button" class="primary" id="btn-ai-dialog-save">Save &amp; Connect</button>
+  </div>
+</dialog>
+
 <script>
-  const ThreeLiveLib = Object.assign({}, window.THREE || {}, window.ThreeLive || {}, window.ThreeLiveBundle || {});
+  const ThreeLiveLib = Object.assign({}, window.THREE || {}, window.ThreeLive || {}, window.ThreeLiveAI || {}, window.ThreeLiveBundle || {});
   const el = document.getElementById("viewer");
   const cameraBadge = document.getElementById("camera-badge");
   const meshBadge = document.getElementById("mesh-badge");
@@ -809,7 +1027,7 @@ limitations under the License.
   // 1. Preset Procedural Scene Code Definitions (6 Curated Studio Presets)
   const PRESET_SCRIPTS = {
     espresso: `// Commercial E61 Espresso Machine (Brushed Stainless Steel & Slate)
-const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xd8e0e8, metalness: 0.92, roughness: 0.14, clearcoat: 0.2 });
+const bodyMat = new THREE.MeshPhysicalMaterial({ ...THREE.ProceduralTexture.brushedMetal({ color: 0xdce4ec, roughness: 0.17, scale: 1, normalStrength: 0.18 }), clearcoat: 0.25, clearcoatRoughness: 0.08 });
 const woodAccentMat = new THREE.MeshPhysicalMaterial({ color: 0x1e293b, metalness: 0.55, roughness: 0.24, clearcoat: 0.4 });
 const brassOrChromeMat = new THREE.MeshPhysicalMaterial({ color: 0xe2e8f0, metalness: 0.95, roughness: 0.09, clearcoat: 0.2 });
 const mirrorChromeMat = new THREE.MeshPhysicalMaterial({ color: 0xf1f5f9, metalness: 0.96, roughness: 0.07, clearcoat: 0.25 });
@@ -928,12 +1146,12 @@ for (const side of [-1, 1]) {
 }
 
 // Forward Brushed-Steel Drip Tray with Top Grate
-const trayCenter = new THREE.Mesh(new THREE.BoxGeometry(0.60, 0.1404, 0.36), mirrorChromeMat);
+const trayCenter = new THREE.Mesh(new THREE.BoxGeometry(0.60, 0.1404, 0.36), bodyMat);
 trayCenter.name = "DripTray";
 trayCenter.position.set(0, -0.41, 0.36);
 machine.add(trayCenter);
 for (const side of [-1, 1]) {
-  const trayCorner = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.14, 28), mirrorChromeMat);
+  const trayCorner = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.14, 28), bodyMat);
   trayCorner.position.set(side * 0.30, -0.41, 0.36);
   const trayTrim = new THREE.Mesh(new THREE.CylinderGeometry(0.184, 0.184, 0.022, 28), brassOrChromeMat);
   trayTrim.position.set(side * 0.30, -0.46, 0.36);
@@ -1450,7 +1668,7 @@ scene.add(core);`,
               `// AI Edit: Matte Obsidian Body, Polished Walnut Side Accents & Brass Trim\nconst WALNUT_URL = "${WALNUT_GRAIN_PNG}";`
             )
             .replace(
-              "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xd8e0e8, metalness: 0.92, roughness: 0.14, clearcoat: 0.2 });",
+              "const bodyMat = new THREE.MeshPhysicalMaterial({ ...THREE.ProceduralTexture.brushedMetal({ color: 0xdce4ec, roughness: 0.17, scale: 1, normalStrength: 0.18 }), clearcoat: 0.25, clearcoatRoughness: 0.08 });",
               "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0x161920, metalness: 0.48, roughness: 0.19, clearcoat: 0.45, clearcoatRoughness: 0.10 });"
             )
             .replace(
@@ -1471,7 +1689,7 @@ scene.add(core);`,
               "// AI Edit: Glossy British Racing-Green Body & Side Cheeks with Polished Copper Trim"
             )
             .replace(
-              "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xd8e0e8, metalness: 0.92, roughness: 0.14, clearcoat: 0.2 });",
+              "const bodyMat = new THREE.MeshPhysicalMaterial({ ...THREE.ProceduralTexture.brushedMetal({ color: 0xdce4ec, roughness: 0.17, scale: 1, normalStrength: 0.18 }), clearcoat: 0.25, clearcoatRoughness: 0.08 });",
               "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0x198754, metalness: 0.16, roughness: 0.14, clearcoat: 0.95, clearcoatRoughness: 0.04 });"
             )
             .replace(
@@ -1782,8 +2000,11 @@ for (let t = 0; t < 5; t++) {
     if (cachedRoomGLB) return Promise.resolve(cachedRoomGLB);
     if (roomGLBPromise) return roomGLBPromise;
     roomGLBPromise = (async () => {
-      const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
-      const urls = isCorpHost
+      const isSandboxedOrigin = window.origin === "null";
+      const isCorpHost = !isSandboxedOrigin && /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
+      const urls = isSandboxedOrigin
+        ? [LIVING_ROOM_CDN]
+        : isCorpHost
         ? ["./livingRoom.glb", "../livingRoom.glb", LIVING_ROOM_CDN]
         : [LIVING_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
       for (const url of urls) {
@@ -1812,6 +2033,14 @@ for (let t = 0; t < 5; t++) {
     currentPresetId = presetId;
     currentAiEditIndex = -1;
     renderAiPromptChips(presetId, -1);
+    el.selectedMesh = null;
+    el.selectedMeshes = [];
+    el.editHistory = [];
+    el.__tlAiHistory = [];
+    const selChip = document.getElementById("ai-selection-chip");
+    if (selChip) selChip.hidden = true;
+    const undoBtn = document.getElementById("btn-ai-undo");
+    if (undoBtn) undoBtn.disabled = true;
 
     const presetButtons = {
       espresso: document.getElementById("btn-espresso"),
@@ -2115,6 +2344,9 @@ for (let t = 0; t < 5; t++) {
       const start = performance.now();
       try {
         const result = await executeScript(code);
+        if (result instanceof ArrayBuffer) {
+          currentGLBBuffer = result;
+        }
         const ms = performance.now() - start;
         compileBadge.textContent = `Compiled in ${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
         compileBadge.title = "Sandboxed Three.js run plus GLB build, in this browser";
@@ -2388,86 +2620,15 @@ for (let t = 0; t < 5; t++) {
     $("btn-mobile-source").addEventListener("click", showSource);
     $("btn-view-source").addEventListener("click", showSource);
 
-    // --- Native outputs ----------------------------------------------------------------------
+    // --- Compiled output sizes (live from scene) ---------------------------------------------
     const formatBytes = (n) =>
       n >= 1048576 ? (n / 1048576).toFixed(2) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
-    let snippetKind = "android";
-
-    function snippetFor(kind, script) {
-      const body = script.replace(/\s+$/, "");
-      if (kind === "android") {
-        // Kotlin raw strings still interpolate `$`, so escape it.
-        const kt = body.replace(/\$/g, '${"$"}');
-        return [
-          "// build.gradle.kts (JitPack):",
-          '//   implementation("com.github.google.three-live:compiler:v1.3.2")',
-          '//   implementation("com.github.google.three-live:filament:v1.3.2")',
-          "import com.google.threelive.ThreeCompiler",
-          "import com.google.threelive.filament.ThreeLiveFilamentRenderer",
-          "",
-          'val scene = """',
-          kt,
-          '"""',
-          "",
-          "val renderer = ThreeLiveFilamentRenderer(context)",
-          "setContentView(renderer.createView(context))",
-          "lifecycleScope.launch {",
-          "  // Compiles on-device to GLB in native memory; Filament reads it without a copy.",
-          "  ThreeCompiler.compile(scene).use { glb -> renderer.load(glb.byteBuffer.duplicate()) }",
-          "}",
-        ].join("\n");
-      }
-      if (kind === "ios") {
-        return [
-          "// Package.swift:",
-          '//   .package(url: "https://github.com/google/three-live.git", from: "1.0.0")',
-          "import RealityKit",
-          "import ThreeLiveCompiler",
-          "",
-          'let scene = #"""',
-          body,
-          '"""#',
-          "",
-          "// Compiles on-device to USDZ and loads it as a RealityKit entity.",
-          "let entity = try await RealityKitHelper.loadEntity(from: scene)",
-          "anchor.addChild(entity)",
-        ].join("\n");
-      }
-      return [
-        "<!-- npm install three-live, or three-live-web-dist.zip from GitHub Releases -->",
-        '<script src="three-live.min.js"><\/script>',
-        "",
-        "<three-live camera-controls ar allow-client-scripts>",
-        '  <script type="text/three">',
-        body.replace(/<\/script/gi, "<\\/script"),
-        "  <\/script>",
-        "</three-live>",
-      ].join("\n");
-    }
-
-    function renderSnippet() {
-      $("snippet-code").textContent = snippetFor(snippetKind, codeEditor.value);
-      document.querySelectorAll(".snippet-tabs button").forEach((btn) => {
-        btn.setAttribute("aria-selected", String(btn.dataset.snippet === snippetKind));
-      });
-    }
-
-    document.querySelectorAll(".snippet-tabs button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        snippetKind = btn.dataset.snippet;
-        renderSnippet();
-      });
-    });
-    $("btn-copy-snippet").addEventListener("click", async () => {
-      if (await copyText($("snippet-code").textContent)) arStatus.textContent = "Snippet copied.";
-    });
 
     window.onSceneCompiled = () => {
       const glb = currentGLBBuffer;
       $("out-meshes").textContent = el.viewer?.meshes ? String(el.viewer.meshes.length) : "–";
       $("out-glb").textContent = glb && glb.byteLength ? formatBytes(glb.byteLength) : "–";
       $("out-usdz").textContent = "…";
-      renderSnippet();
       // USDZ packaging runs after the frame so it never delays the first render.
       setTimeout(() => {
         try {
@@ -2477,7 +2638,639 @@ for (let t = 0; t < 5; t++) {
         }
       }, 0);
     };
-    codeEditor.addEventListener("input", renderSnippet);
+
+    // --- Bring-Your-Own-Account (BYOA) Live AI Editing & Evergreen Model Discovery ----------
+    const AI_STORAGE_KEY = "three_live_byoa_config_v1";
+    const PKCE_STORAGE_KEY = "three_live_openrouter_pkce_verifier";
+    const PROVIDER_CONFIGS = {
+      gemini: {
+        label: "Gemini",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+        defaultModel: "gemini-flash-latest",
+        evergreenAliases: ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest"],
+        keyLabel: "Gemini API Key",
+        keyPlaceholder: "AIza...",
+        helpText: "Get free Gemini key ↗",
+        helpUrl: "https://aistudio.google.com/apikey",
+        modelNote:
+          'Defaults to <code>gemini-flash-latest</code> (rolling alias for the newest Gemini Flash, or pick <code>gemini-flash-lite-latest</code> / <code>gemini-pro-latest</code>). Click <strong>↻ Models</strong> to list all live models on your account.',
+      },
+      openrouter: {
+        label: "OpenRouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        defaultModel: "openrouter/auto",
+        evergreenAliases: ["openrouter/auto"],
+        keyLabel: "OpenRouter API Key",
+        keyPlaceholder: "sk-or-v1-...",
+        helpText: "Get OpenRouter key ↗",
+        helpUrl: "https://openrouter.ai/keys",
+        modelNote:
+          'Defaults to <code>openrouter/auto</code>. Click <strong>↻ Models</strong> to browse live models across Gemini, Claude, GPT, and Qwen.',
+      },
+      custom: {
+        label: "Local / Custom",
+        baseUrl: "http://localhost:11434/v1",
+        defaultModel: "",
+        evergreenAliases: [],
+        keyLabel: "Bearer API Key (Optional for localhost)",
+        keyPlaceholder: "Optional API key...",
+        helpText: "",
+        helpUrl: "",
+        modelNote:
+          'Leave blank to let single-model servers (LM Studio, vLLM) use their loaded model automatically, or click <strong>↻ Models</strong> to pick an Ollama/proxy model.',
+      },
+    };
+
+    const aiConnectBtn = $("btn-ai-connect");
+    const aiDialog = $("ai-connect-dialog");
+    const aiCustomInput = $("ai-custom-input");
+    const aiSendBtn = $("btn-ai-send");
+    const aiVoiceBtn = $("btn-ai-voice");
+    const aiUndoBtn = $("btn-ai-undo");
+    const aiEditStatus = $("ai-edit-status");
+    const aiSelectionChip = $("ai-selection-chip");
+    const aiSelectionLabel = $("ai-selection-label");
+    const aiClearSelectionBtn = $("btn-ai-clear-selection");
+    const aiEndpointField = $("ai-endpoint-field");
+    const aiEndpointInput = $("ai-endpoint-input");
+    const aiOauthPanel = $("ai-oauth-panel");
+    const aiKeyLabel = $("ai-key-label");
+    const aiKeyHelpLink = $("ai-key-help-link");
+    const aiKeyInput = $("ai-key-input");
+    const aiModelInput = $("ai-model-input");
+    const aiModelDatalist = $("ai-model-datalist");
+    const aiModelNote = $("ai-model-note");
+    const aiFetchModelsBtn = $("btn-ai-fetch-models");
+    const aiRememberCheckbox = $("ai-remember-checkbox");
+    const aiDialogStatus = $("ai-dialog-status");
+    const aiDisconnectBtn = $("btn-ai-disconnect");
+    const aiDisconnectInlineBtn = $("btn-ai-disconnect-inline");
+
+    let activeDialogProvider = "gemini";
+    let activeByoaConfig = null;
+    let voiceStopHandle = null;
+
+    // Storage helpers with window.name fallback so saved keys survive refreshes
+    // on sandboxed hosts like x20web.corp.google.com (Content-Security-Policy: sandbox allow-scripts).
+    function readWindowNameStore() {
+      try {
+        const raw = window.name || "";
+        if (!raw.startsWith("{")) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" && parsed.__tlByoaStore
+          ? parsed.__tlByoaStore
+          : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function writeWindowNameStore(store) {
+      try {
+        let root = {};
+        if (window.name && window.name.startsWith("{")) {
+          try {
+            root = JSON.parse(window.name) || {};
+          } catch (_) {
+            root = {};
+          }
+        }
+        root.__tlByoaStore = store;
+        window.name = JSON.stringify(root);
+      } catch (_) {}
+    }
+
+    function readStorageItem(key) {
+      try {
+        const sVal = sessionStorage.getItem(key);
+        if (sVal) return sVal;
+      } catch (_) {}
+      try {
+        const lVal = localStorage.getItem(key);
+        if (lVal) return lVal;
+      } catch (_) {}
+      const store = readWindowNameStore();
+      return typeof store[key] === "string" ? store[key] : null;
+    }
+
+    function writeStorageItem(key, value, remember) {
+      try {
+        if (remember) {
+          localStorage.setItem(key, value);
+          sessionStorage.removeItem(key);
+        } else {
+          sessionStorage.setItem(key, value);
+          localStorage.removeItem(key);
+        }
+      } catch (_) {}
+      const store = readWindowNameStore();
+      store[key] = value;
+      writeWindowNameStore(store);
+    }
+
+    function removeStorageItem(key) {
+      try {
+        sessionStorage.removeItem(key);
+      } catch (_) {}
+      try {
+        localStorage.removeItem(key);
+      } catch (_) {}
+      const store = readWindowNameStore();
+      if (key in store) {
+        delete store[key];
+        writeWindowNameStore(store);
+      }
+    }
+
+    function setAiStatus(text, kind) {
+      if (!aiEditStatus) return;
+      aiEditStatus.textContent = text || "";
+      aiEditStatus.classList.remove("error", "ok");
+      if (kind === "error") aiEditStatus.classList.add("error");
+      if (kind === "ok") aiEditStatus.classList.add("ok");
+    }
+
+    function setDialogStatus(text, kind) {
+      if (!aiDialogStatus) return;
+      aiDialogStatus.textContent = text || "";
+      aiDialogStatus.classList.remove("error", "ok");
+      if (kind === "error") aiDialogStatus.classList.add("error");
+      if (kind === "ok") aiDialogStatus.classList.add("ok");
+    }
+
+    function normalizeBaseUrl(rawUrl, provider) {
+      const fallback = (PROVIDER_CONFIGS[provider] || PROVIDER_CONFIGS.gemini).baseUrl;
+      const trimmed = String(rawUrl || fallback).trim().replace(/\/+$/, "");
+      return trimmed.replace(/\/chat\/completions$/i, "");
+    }
+
+    function extractVersionScore(modelId) {
+      const m = String(modelId).match(/(\d+)\.(\d+)/);
+      if (m) return parseFloat(m[1] + "." + m[2]);
+      const single = String(modelId).match(/(?:gemini-|gpt-|claude-|qwen|llama-)(\d+)/i);
+      if (single) return parseFloat(single[1]);
+      return 0;
+    }
+
+    function filterAndSortModels(rawIds, evergreenAliases) {
+      const nonChatRegex = /embedding|imagen|veo|aqa|tts|whisper|moderation|audio|robotics|learnlm|bison|gecko/i;
+      const seen = new Set();
+      const result = [];
+      for (const alias of evergreenAliases || []) {
+        if (alias && !seen.has(alias)) {
+          seen.add(alias);
+          result.push(alias);
+        }
+      }
+      const discovered = [];
+      for (const raw of rawIds || []) {
+        const clean = String(raw || "").trim().replace(/^models\//, "");
+        if (!clean || seen.has(clean) || nonChatRegex.test(clean)) continue;
+        seen.add(clean);
+        discovered.push(clean);
+      }
+      discovered.sort((a, b) => {
+        const aLatest = /latest/i.test(a) ? 1 : 0;
+        const bLatest = /latest/i.test(b) ? 1 : 0;
+        if (aLatest !== bLatest) return bLatest - aLatest;
+        const verDiff = extractVersionScore(b) - extractVersionScore(a);
+        if (verDiff !== 0) return verDiff;
+        return a.localeCompare(b);
+      });
+      return result.concat(discovered);
+    }
+
+    function populateModelDatalist(models) {
+      if (!aiModelDatalist) return;
+      aiModelDatalist.textContent = "";
+      for (const id of models) {
+        const opt = document.createElement("option");
+        opt.value = id;
+        aiModelDatalist.appendChild(opt);
+      }
+    }
+
+    async function fetchProviderModels(provider, apiKey, customBaseUrl, silent) {
+      const cfg = PROVIDER_CONFIGS[provider] || PROVIDER_CONFIGS.gemini;
+      const baseUrl = normalizeBaseUrl(provider === "custom" ? customBaseUrl : cfg.baseUrl, provider);
+      if (provider === "gemini" && !apiKey) {
+        populateModelDatalist(cfg.evergreenAliases);
+        if (!silent) setDialogStatus("Enter your Gemini API key first to query live models.", "error");
+        return cfg.evergreenAliases;
+      }
+      const headers = {};
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+      if (!silent) setDialogStatus("Querying live models from GET /models…");
+      try {
+        const res = await fetch(`${baseUrl}/models`, { method: "GET", headers });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+        const rawIds = list.map((item) => item?.id || item?.name || "").filter(Boolean);
+        const sorted = filterAndSortModels(rawIds, cfg.evergreenAliases);
+        populateModelDatalist(sorted);
+        if (!silent) {
+          setDialogStatus(`Loaded ${sorted.length} live models (newest first).`, "ok");
+        }
+        return sorted;
+      } catch (err) {
+        populateModelDatalist(cfg.evergreenAliases);
+        if (!silent) {
+          setDialogStatus(`Couldn't fetch /models (${err.message}). Using evergreen aliases.`, "error");
+        }
+        return cfg.evergreenAliases;
+      }
+    }
+
+    function selectDialogProviderTab(provider) {
+      activeDialogProvider = provider in PROVIDER_CONFIGS ? provider : "gemini";
+      const cfg = PROVIDER_CONFIGS[activeDialogProvider];
+      ["gemini", "openrouter", "custom"].forEach((p) => {
+        const tab = $("tab-ai-" + p);
+        if (tab) tab.setAttribute("aria-selected", String(p === activeDialogProvider));
+      });
+      aiOauthPanel.hidden = activeDialogProvider !== "openrouter";
+      aiEndpointField.hidden = activeDialogProvider !== "custom";
+      aiKeyLabel.textContent = cfg.keyLabel;
+      aiKeyInput.placeholder = cfg.keyPlaceholder;
+      if (cfg.helpUrl) {
+        aiKeyHelpLink.href = cfg.helpUrl;
+        aiKeyHelpLink.textContent = cfg.helpText;
+        aiKeyHelpLink.hidden = false;
+      } else {
+        aiKeyHelpLink.hidden = true;
+      }
+      aiModelInput.placeholder = cfg.defaultModel || "Server default (or pick from ↻ Models)";
+      aiModelNote.innerHTML = cfg.modelNote;
+
+      if (activeByoaConfig && activeByoaConfig.provider === activeDialogProvider) {
+        aiKeyInput.value = activeByoaConfig.apiKey || "";
+        aiModelInput.value = activeByoaConfig.model ?? cfg.defaultModel;
+        if (activeDialogProvider === "custom") {
+          aiEndpointInput.value = activeByoaConfig.baseUrl || cfg.baseUrl;
+        }
+      } else {
+        aiKeyInput.value = "";
+        aiModelInput.value = cfg.defaultModel;
+        if (activeDialogProvider === "custom" && !aiEndpointInput.value) {
+          aiEndpointInput.value = cfg.baseUrl;
+        }
+      }
+      populateModelDatalist(cfg.evergreenAliases);
+      setDialogStatus("");
+      if (activeDialogProvider === "openrouter" || (activeDialogProvider === "gemini" && aiKeyInput.value.trim())) {
+        fetchProviderModels(activeDialogProvider, aiKeyInput.value.trim(), aiEndpointInput.value.trim(), true);
+      }
+    }
+
+    ["gemini", "openrouter", "custom"].forEach((p) => {
+      $("tab-ai-" + p)?.addEventListener("click", () => selectDialogProviderTab(p));
+    });
+
+    aiFetchModelsBtn?.addEventListener("click", () => {
+      fetchProviderModels(
+        activeDialogProvider,
+        aiKeyInput.value.trim(),
+        aiEndpointInput.value.trim(),
+        false
+      );
+    });
+
+    function applyByoaConfig(config, persist) {
+      if (!config || !ThreeLiveLib.createAIChatProvider) return false;
+      const provider = config.provider in PROVIDER_CONFIGS ? config.provider : "gemini";
+      const cfg = PROVIDER_CONFIGS[provider];
+      const baseUrl = normalizeBaseUrl(provider === "custom" ? config.baseUrl : cfg.baseUrl, provider);
+      const endpoint = `${baseUrl}/chat/completions`;
+      const model = config.model !== undefined ? String(config.model).trim() : cfg.defaultModel;
+      const apiKey = String(config.apiKey || "").trim();
+      if (provider !== "custom" && !apiKey) return false;
+
+      const headers = {};
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+
+      el.aiProvider = ThreeLiveLib.createAIChatProvider({
+        endpoint,
+        model: model || undefined,
+        headers,
+        stream: true,
+        onStatus: (statusText) => setAiStatus(statusText),
+        onProgress: ({ chars, lines, phase }) => {
+          if (!aiSendBtn.disabled) return;
+          if (phase === "thinking" || chars === 0) {
+            setAiStatus("Thinking…");
+          } else {
+            setAiStatus(
+              `Streaming scene edit (${lines} line${lines === 1 ? "" : "s"})…`
+            );
+          }
+        },
+      });
+      activeByoaConfig = {
+        provider,
+        baseUrl,
+        model,
+        apiKey,
+        remember: Boolean(config.remember),
+      };
+
+      const shortModel = (model || "default").replace(/^models\//, "");
+      aiConnectBtn.textContent = `🟢 ${cfg.label} · ${shortModel} · ⚙️`;
+      aiConnectBtn.classList.add("connected");
+      aiDisconnectBtn.hidden = false;
+      if (aiDisconnectInlineBtn) aiDisconnectInlineBtn.hidden = false;
+
+      if (persist) {
+        writeStorageItem(AI_STORAGE_KEY, JSON.stringify(activeByoaConfig), activeByoaConfig.remember);
+      }
+      return true;
+    }
+
+    function disconnectByoa() {
+      el.aiProvider = undefined;
+      activeByoaConfig = null;
+      aiConnectBtn.textContent = "🔑 Connect AI";
+      aiConnectBtn.classList.remove("connected");
+      aiDisconnectBtn.hidden = true;
+      if (aiDisconnectInlineBtn) aiDisconnectInlineBtn.hidden = true;
+      removeStorageItem(AI_STORAGE_KEY);
+      setAiStatus("Disconnected AI provider. Click 🔑 Connect AI to enter a different key.");
+    }
+
+    function restoreSavedByoaConfig() {
+      try {
+        const raw = readStorageItem(AI_STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          if (applyByoaConfig(parsed, false) && activeByoaConfig) {
+            setAiStatus(
+              `Connected to ${PROVIDER_CONFIGS[activeByoaConfig.provider]?.label || "AI"} (${(activeByoaConfig.model || "default").replace(/^models\//, "")}). Click ⚙️ above to change or × to disconnect.`,
+              "ok"
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    // OpenRouter 1-Click OAuth PKCE Flow
+    async function startOpenRouterOAuth() {
+      try {
+        const rand = new Uint8Array(32);
+        crypto.getRandomValues(rand);
+        const verifier = toBase64Url(rand);
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+        const challenge = toBase64Url(new Uint8Array(digest));
+        writeStorageItem(PKCE_STORAGE_KEY, verifier, false);
+        const callbackUrl = location.origin + location.pathname;
+        const authUrl =
+          `https://openrouter.ai/auth?callback_url=${encodeURIComponent(callbackUrl)}` +
+          `&code_challenge=${encodeURIComponent(challenge)}&code_challenge_method=S256`;
+        location.href = authUrl;
+      } catch (err) {
+        setDialogStatus(`OAuth error: ${err.message}`, "error");
+      }
+    }
+
+    async function completeOpenRouterOAuthIfPresent() {
+      const params = new URLSearchParams(location.search);
+      const code = params.get("code");
+      if (!code) return;
+      const verifier = readStorageItem(PKCE_STORAGE_KEY);
+      if (verifier) removeStorageItem(PKCE_STORAGE_KEY);
+      if (!verifier) return;
+      params.delete("code");
+      const cleanSearch = params.toString();
+      const cleanUrl = location.pathname + (cleanSearch ? "?" + cleanSearch : "") + location.hash;
+      history.replaceState(null, "", cleanUrl);
+      setAiStatus("Completing OpenRouter sign-in…");
+      try {
+        const res = await fetch("https://openrouter.ai/api/v1/auth/keys", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code,
+            code_verifier: verifier,
+            code_challenge_method: "S256",
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data?.key) throw new Error("No API key returned from OpenRouter.");
+        applyByoaConfig(
+          {
+            provider: "openrouter",
+            model: "openrouter/auto",
+            apiKey: data.key,
+            remember: false,
+          },
+          true
+        );
+        setAiStatus("Connected to OpenRouter (openrouter/auto).", "ok");
+      } catch (err) {
+        setAiStatus(`OpenRouter sign-in failed: ${err.message}`, "error");
+      }
+    }
+
+    $("btn-ai-oauth-openrouter")?.addEventListener("click", startOpenRouterOAuth);
+
+    aiConnectBtn?.addEventListener("click", () => {
+      const initialProvider = activeByoaConfig?.provider || "gemini";
+      aiRememberCheckbox.checked = Boolean(activeByoaConfig?.remember);
+      selectDialogProviderTab(initialProvider);
+      aiDialog.showModal();
+    });
+
+    $("btn-ai-dialog-cancel")?.addEventListener("click", () => aiDialog.close());
+
+    aiDisconnectBtn?.addEventListener("click", () => {
+      disconnectByoa();
+      aiDialog.close();
+    });
+
+    aiDisconnectInlineBtn?.addEventListener("click", () => {
+      disconnectByoa();
+    });
+
+    $("btn-ai-dialog-save")?.addEventListener("click", () => {
+      const provider = activeDialogProvider;
+      const cfg = PROVIDER_CONFIGS[provider];
+      const apiKey = aiKeyInput.value.trim();
+      const baseUrl = provider === "custom" ? aiEndpointInput.value.trim() || cfg.baseUrl : cfg.baseUrl;
+      const model = aiModelInput.value.trim() || cfg.defaultModel;
+      if (provider !== "custom" && !apiKey) {
+        setDialogStatus(`Please enter your ${cfg.label} API key.`, "error");
+        aiKeyInput.focus();
+        return;
+      }
+      const ok = applyByoaConfig(
+        {
+          provider,
+          baseUrl,
+          model,
+          apiKey,
+          remember: aiRememberCheckbox.checked,
+        },
+        true
+      );
+      if (ok) {
+        aiDialog.close();
+        setAiStatus(`Connected to ${cfg.label} (${model || "server default"}).`, "ok");
+        if (aiCustomInput.value.trim()) {
+          aiCustomInput.focus();
+        }
+      }
+    });
+
+    // Sync target mesh selection pill with viewport clicks
+    function syncSelectionChip() {
+      const selected = el.selectedMesh;
+      if (selected) {
+        aiSelectionLabel.textContent = `Target: ${selected}`;
+        aiSelectionChip.hidden = false;
+      } else {
+        aiSelectionChip.hidden = true;
+      }
+    }
+
+    el.addEventListener("meshclick", () => {
+      syncSelectionChip();
+    });
+
+    aiClearSelectionBtn?.addEventListener("click", () => {
+      el.selectedMesh = null;
+      el.selectedMeshes = [];
+      meshBadge.textContent = "Click sub-mesh to pick";
+      inspName.textContent = "None";
+      syncSelectionChip();
+    });
+
+    function hasAiUndoHistory() {
+      return Boolean(
+        (el.__tlAiHistory && el.__tlAiHistory.length > 0) ||
+          (el.editHistory && el.editHistory.length > 0)
+      );
+    }
+
+    async function runLiveAiEdit() {
+      const prompt = aiCustomInput.value.trim();
+      if (!prompt) {
+        aiCustomInput.focus();
+        return;
+      }
+      if (!el.aiProvider) {
+        selectDialogProviderTab(activeByoaConfig?.provider || "gemini");
+        setDialogStatus("Connect an AI key or local model to run live scene edits.");
+        aiDialog.showModal();
+        return;
+      }
+      el.__tlAiSource = codeEditor.value;
+      aiSendBtn.disabled = true;
+      setAiStatus(
+        el.selectedMesh
+          ? `Editing "${el.selectedMesh}" & validating in sandbox…`
+          : "Generating & validating Three.js edit in sandbox…"
+      );
+      try {
+        const res = await el.editScene(prompt, { source: codeEditor.value });
+        if (res.applied) {
+          codeEditor.value = res.code;
+          currentAiEditIndex = -1;
+          renderAiPromptChips(currentPresetId, -1);
+          aiUndoBtn.disabled = !hasAiUndoHistory();
+          const repairNote = res.repairs > 0 ? ` (${res.repairs} auto-repair)` : "";
+          setAiStatus(`Applied live edit: “${prompt}”${repairNote}`, "ok");
+          aiCustomInput.value = "";
+          window.onSceneCompiled?.();
+        } else {
+          setAiStatus(`Sandbox rejected edit: ${res.error || "Compilation failed"}`, "error");
+        }
+      } catch (err) {
+        setAiStatus(`AI error: ${err.message || String(err)}`, "error");
+      } finally {
+        aiSendBtn.disabled = false;
+      }
+    }
+
+    aiSendBtn?.addEventListener("click", runLiveAiEdit);
+    aiCustomInput?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runLiveAiEdit();
+      }
+    });
+
+    aiUndoBtn?.addEventListener("click", async () => {
+      if (!el.undoEdit) return;
+      const reverted = await el.undoEdit();
+      if (reverted) {
+        codeEditor.value = el.sceneSource || codeEditor.value;
+        aiUndoBtn.disabled = !hasAiUndoHistory();
+        setAiStatus("Reverted last AI edit.", "ok");
+        window.onSceneCompiled?.();
+      }
+    });
+
+    aiVoiceBtn?.addEventListener("click", () => {
+      if (voiceStopHandle) {
+        voiceStopHandle();
+        voiceStopHandle = null;
+        aiVoiceBtn.classList.remove("primary");
+        return;
+      }
+      if (!el.aiProvider) {
+        selectDialogProviderTab(activeByoaConfig?.provider || "gemini");
+        setDialogStatus("Connect an AI provider first to use voice editing.");
+        aiDialog.showModal();
+        return;
+      }
+      if (!el.startVoiceEdit) {
+        setAiStatus("Web Speech API unavailable in this browser.", "error");
+        return;
+      }
+      el.__tlAiSource = codeEditor.value;
+      aiVoiceBtn.classList.add("primary");
+      setAiStatus("Listening… Speak an edit command (e.g. 'select the handle', 'make it brass').");
+      voiceStopHandle = el.startVoiceEdit({
+        onTranscript: (transcript, isFinal) => {
+          aiCustomInput.value = transcript;
+          if (isFinal) {
+            setAiStatus(`Heard: “${transcript}” — applying…`);
+          }
+        },
+        onSelect: (meshes) => {
+          syncSelectionChip();
+          setAiStatus(
+            meshes.length > 0 ? `Selected by voice: ${meshes.join(", ")}` : "Cleared mesh selection.",
+            "ok"
+          );
+          voiceStopHandle = null;
+          aiVoiceBtn.classList.remove("primary");
+        },
+        onEditResult: (res) => {
+          voiceStopHandle = null;
+          aiVoiceBtn.classList.remove("primary");
+          if (res.applied) {
+            codeEditor.value = res.code;
+            aiUndoBtn.disabled = !hasAiUndoHistory();
+            setAiStatus("Applied voice AI edit!", "ok");
+            window.onSceneCompiled?.();
+          } else {
+            setAiStatus(`Voice edit failed: ${res.error || "Unknown error"}`, "error");
+          }
+        },
+        onError: (err) => {
+          voiceStopHandle = null;
+          aiVoiceBtn.classList.remove("primary");
+          setAiStatus(`Voice notice: ${err.message || String(err)}`, "error");
+        },
+      });
+    });
+
+    restoreSavedByoaConfig();
+    completeOpenRouterOAuthIfPresent();
   })();
 </script>
 
