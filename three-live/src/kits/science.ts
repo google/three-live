@@ -44,6 +44,33 @@ export const MAX_SCI_GLYPHS = 1000;
 export const MAX_SCI_BASE_PAIRS = 256;
 /** Maximum backbone guide points in `RibbonGeometry`. */
 export const MAX_SCI_RIBBON_POINTS = 512;
+/** Maximum 3D grid resolution per axis in `IsoSurfaceGeometry`. */
+export const MAX_SCI_ISOSURFACE_RES = 48;
+/** Maximum integration steps per streamline in `StreamlineGeometry`. */
+export const MAX_SCI_STREAMLINE_STEPS = 240;
+
+/** Supported quantitative and structural colormaps in `THREE.Science`. */
+export type ScienceColormapName =
+  | 'viridis'
+  | 'plasma'
+  | 'turbo'
+  | 'coolwarm'
+  | 'plddt'
+  | 'spectrum';
+
+/** Options for `THREE.Science.colormapTexture`. */
+export interface ColormapTextureOptions {
+  colormap?: ScienceColormapName;
+  scalars?: readonly number[];
+  domain?: readonly [number, number];
+  width?: number;
+}
+
+/** Options for `THREE.Science.applyVertexColormap`. */
+export interface ApplyVertexColormapOptions {
+  colormap?: ScienceColormapName;
+  domain?: readonly [number, number];
+}
 
 /** IUPAC & CPK atomic metadata returned by `THREE.Science.elementSpec`. */
 export interface ElementSpec {
@@ -75,7 +102,9 @@ export interface MoleculeOptions {
     | 'cyclohexane'
     | 'caffeine';
   atoms?: readonly MoleculeAtomSpec[];
-  bonds?: ReadonlyArray<readonly [number, number] | readonly [number, number, number]>;
+  bonds?: ReadonlyArray<
+    readonly [number, number] | readonly [number, number, number]
+  >;
   style?: 'ball-and-stick' | 'space-filling' | 'licorice';
   scale?: number;
   atomScale?: number;
@@ -157,6 +186,9 @@ export interface SurfacePlotOptions {
   segmentsZ?: number;
   solid?: boolean;
   thickness?: number;
+  colormap?: ScienceColormapName;
+  colorFn?: (x: number, y: number, z: number) => number;
+  vertexColors?: boolean;
 }
 
 /** Options for `THREE.Science.ParametricSurfaceGeometry`. */
@@ -222,7 +254,10 @@ export interface RibbonSpanSpec {
 
 /** Options for `THREE.Science.ribbonColorMap`. */
 export interface RibbonColorMapOptions {
-  scheme?: 'spectrum' | 'secondary' | 'plddt';
+  scheme?: 'spectrum' | 'secondary' | 'plddt' | ScienceColormapName;
+  colormap?: ScienceColormapName;
+  scalars?: readonly number[];
+  domain?: readonly [number, number];
   kinds?: readonly RibbonSecondaryKind[];
   spans?: readonly RibbonSpanSpec[];
   pointCount?: number;
@@ -250,7 +285,73 @@ export interface RibbonOptions {
   arrowHeadFraction?: number;
   subdivisions?: number;
   profileSegments?: number;
-  colorScheme?: 'spectrum' | 'secondary';
+  colorScheme?: 'spectrum' | 'secondary' | 'plddt' | ScienceColormapName;
+  colormap?: ScienceColormapName;
+  scalars?: readonly number[];
+  domain?: readonly [number, number];
+  scale?: number;
+}
+
+/** Built-in implicit surface presets for `THREE.Science.IsoSurfaceGeometry`. */
+export type IsoSurfacePreset =
+  | 'gyroid'
+  | 'schwarz-p'
+  | 'schwarz-d'
+  | 'pi-orbital'
+  | 'sp3-hybrid'
+  | 'dipole-potential';
+
+/** Options for `THREE.Science.IsoSurfaceGeometry`. */
+export interface IsoSurfaceOptions {
+  preset?: IsoSurfacePreset;
+  field?: (x: number, y: number, z: number) => number;
+  isoLevel?: number;
+  bounds?:
+    | number
+    | readonly [number, number]
+    | readonly [
+        readonly [number, number],
+        readonly [number, number],
+        readonly [number, number],
+      ];
+  resolution?: number;
+  shellThickness?: number;
+  colorField?: (x: number, y: number, z: number) => number;
+  colormap?: ScienceColormapName;
+  vertexColors?: boolean;
+  scale?: number;
+}
+
+/** Built-in vector-field & dynamical-system presets for `THREE.Science.StreamlineGeometry`. */
+export type StreamlinePreset =
+  | 'dipole'
+  | 'helmholtz'
+  | 'vortex'
+  | 'lorenz'
+  | 'rossler';
+
+/** Options for `THREE.Science.StreamlineGeometry`. */
+export interface StreamlineOptions {
+  preset?: StreamlinePreset;
+  field?: (
+    x: number,
+    y: number,
+    z: number,
+  ) => readonly [number, number, number];
+  seeds?: ReadonlyArray<
+    readonly [number, number, number] | {x: number; y: number; z: number}
+  >;
+  seedCount?: number;
+  steps?: number;
+  maxSteps?: number;
+  stepSize?: number;
+  bounds?: number;
+  radius?: number;
+  radialSegments?: number;
+  arrowsPerLine?: number;
+  arrowScale?: number;
+  colormap?: ScienceColormapName;
+  vertexColors?: boolean;
   scale?: number;
 }
 
@@ -277,6 +378,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
   const MAX_GLYPHS = 1000;
   const MAX_BP = 256;
   const MAX_RIBBON_PTS = 512;
+  const MAX_ISOSURFACE_RES = 48;
+  const MAX_STREAMLINE_STEPS = 240;
   const TAU = Math.PI * 2;
 
   type Vec3 = [number, number, number];
@@ -359,7 +462,9 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         }
       }
     } else {
-      const sym = String(symbolOrZ ?? 'C').trim().toUpperCase();
+      const sym = String(symbolOrZ ?? 'C')
+        .trim()
+        .toUpperCase();
       for (const r of ELEMENTS) {
         if (r[1].toUpperCase() === sym) {
           row = r;
@@ -645,7 +750,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     return {pos, nrm, uv, idx};
   }
 
-  function revolveClosedProfile(pts: readonly Pt2[], radialSegs: number): RawBufs {
+  function revolveClosedProfile(
+    pts: readonly Pt2[],
+    radialSegs: number,
+  ): RawBufs {
     const clean: Pt2[] = [];
     for (const p of pts) {
       const r = Math.max(0, p[0]);
@@ -716,7 +824,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       dy = by - ay,
       dz = bz - az;
     const len = Math.hypot(dx, dy, dz);
-    if (len <= 1e-6 || radius <= 1e-6) return {pos: [], nrm: [], uv: [], idx: []};
+    if (len <= 1e-6 || radius <= 1e-6)
+      return {pos: [], nrm: [], uv: [], idx: []};
     const hL = len * 0.5;
     const raw = revolveClosedProfile(
       [
@@ -1015,9 +1124,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
   }
 
   // Built-in 3D molecular coordinate presets in Angstroms
-  function presetMolecule(
-    name: string,
-  ): {atoms: Array<[string, Vec3]>; bonds: Array<[number, number, number]>} {
+  function presetMolecule(name: string): {
+    atoms: Array<[string, Vec3]>;
+    bonds: Array<[number, number, number]>;
+  } {
     switch (name) {
       case 'water': {
         const d = 0.958;
@@ -1217,10 +1327,28 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const hBase = atoms.length;
           atoms.push(
             ['H', [cP[0] + ux * 0.36, 1.02, cP[2] + uz * 0.36]],
-            ['H', [cP[0] + ux * 0.36 + px * 0.88, -0.51, cP[2] + uz * 0.36 + pz * 0.88]],
-            ['H', [cP[0] + ux * 0.36 - px * 0.88, -0.51, cP[2] + uz * 0.36 - pz * 0.88]],
+            [
+              'H',
+              [
+                cP[0] + ux * 0.36 + px * 0.88,
+                -0.51,
+                cP[2] + uz * 0.36 + pz * 0.88,
+              ],
+            ],
+            [
+              'H',
+              [
+                cP[0] + ux * 0.36 - px * 0.88,
+                -0.51,
+                cP[2] + uz * 0.36 - pz * 0.88,
+              ],
+            ],
           );
-          bonds.push([cIdx, hBase, 1], [cIdx, hBase + 1, 1], [cIdx, hBase + 2, 1]);
+          bonds.push(
+            [cIdx, hBase, 1],
+            [cIdx, hBase + 1, 1],
+            [cIdx, hBase + 2, 1],
+          );
         }
         return {atoms, bonds};
       }
@@ -1261,7 +1389,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         2.5,
       );
       const bondR = clamp(
-        num(options.bondRadius, style === 'licorice' ? 0.16 * scale : 0.095 * scale),
+        num(
+          options.bondRadius,
+          style === 'licorice' ? 0.16 * scale : 0.095 * scale,
+        ),
         0.004,
         1.0,
       );
@@ -1276,7 +1407,9 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         atomList = capped.map((a) => {
           const el = elementSpec(a?.element ?? 'C');
           const baseR =
-            style === 'space-filling' ? el.vdwRadius : Math.max(0.38, el.covalentRadius);
+            style === 'space-filling'
+              ? el.vdwRadius
+              : Math.max(0.38, el.covalentRadius);
           const rad = clamp(
             num(a?.radius, baseR * atomScale * scale),
             0.008,
@@ -1311,7 +1444,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
                 ai.p[1] - aj.p[1],
                 ai.p[2] - aj.p[2],
               );
-              const maxCov = (ai.el.covalentRadius + aj.el.covalentRadius) * 1.28 * scale;
+              const maxCov =
+                (ai.el.covalentRadius + aj.el.covalentRadius) * 1.28 * scale;
               if (dist > 0.04 * scale && dist <= maxCov) {
                 bondList.push([i, j, 1]);
               }
@@ -1323,7 +1457,9 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         atomList = pre.atoms.map(([sym, posAng]) => {
           const el = elementSpec(sym);
           const baseR =
-            style === 'space-filling' ? el.vdwRadius : Math.max(0.4, el.covalentRadius);
+            style === 'space-filling'
+              ? el.vdwRadius
+              : Math.max(0.4, el.covalentRadius);
           const rad = baseR * atomScale * scale;
           return {
             el,
@@ -1373,7 +1509,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           order === 1 ? [0] : order === 2 ? [-sep, sep] : [-sep, 0, sep];
         // Slight axial inset + per-bond micro-jitter so multiple bonds sharing an atom never create coplanar caps
         const trimA = Math.min(dist * 0.35, aa.r * 0.55) + (bIdx % 7) * 3e-5;
-        const trimB = Math.min(dist * 0.35, ab.r * 0.55) + ((bIdx + 3) % 7) * 3e-5;
+        const trimB =
+          Math.min(dist * 0.35, ab.r * 0.55) + ((bIdx + 3) % 7) * 3e-5;
         if (dist - trimA - trimB <= 1e-4) continue;
 
         const colMid: Vec3 = [
@@ -1435,7 +1572,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         a0 * 0.04,
         a0 * 0.38,
       );
-      const bondR = clamp(num(options.bondRadius, atomR * 0.28), 0.003, atomR * 0.7);
+      const bondR = clamp(
+        num(options.bondRadius, atomR * 0.28),
+        0.003,
+        atomR * 0.7,
+      );
       const includeBonds = options.includeBonds !== false;
       const showBox = options.showUnitCell === true;
       const segs = clampInt(options.sphereSegments, 8, 32, 14);
@@ -1496,10 +1637,16 @@ export function installScienceKit(threeNs: any, reg?: any): any {
             }
           }
         }
-        spanBox = [(nx + 0.5 * nz) * a0, Math.max(0, ny - 1) * layerGap, nz * s3 * a0];
+        spanBox = [
+          (nx + 0.5 * nz) * a0,
+          Math.max(0, ny - 1) * layerGap,
+          nz * s3 * a0,
+        ];
       } else {
         // Cubic Bravais / compound lattices
-        const cornerAndFaces = (includeFace: boolean): Array<[number, number, number, number]> => {
+        const cornerAndFaces = (
+          includeFace: boolean,
+        ): Array<[number, number, number, number]> => {
           const list: Array<[number, number, number, number]> = [];
           for (let ix = 0; ix <= 1; ix++) {
             for (let iy = 0; iy <= 1; iy++) {
@@ -1585,8 +1732,15 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           rad = s.sp === 1 ? atomR * 1.22 : atomR * 0.85;
           col = hexToRgb(s.sp === 0 ? 0x8b5cf6 : 0x22c55e);
         } else if (lattice === 'perovskite') {
-          rad = s.sp === 0 ? atomR * 1.22 : s.sp === 1 ? atomR * 0.92 : atomR * 0.78;
-          col = hexToRgb(s.sp === 0 ? 0x8b5cf6 : s.sp === 1 ? 0x38bdf8 : 0xef4444);
+          rad =
+            s.sp === 0
+              ? atomR * 1.22
+              : s.sp === 1
+                ? atomR * 0.92
+                : atomR * 0.78;
+          col = hexToRgb(
+            s.sp === 0 ? 0x8b5cf6 : s.sp === 1 ? 0x38bdf8 : 0xef4444,
+          );
         } else if (lattice === 'diamond') {
           col = hexToRgb(0x38bdf8);
         } else if (lattice === 'graphene') {
@@ -1594,7 +1748,9 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         } else if (lattice === 'hcp') {
           col = hexToRgb(s.sp === 0 ? 0x38bdf8 : 0x818cf8);
         }
-        parts.push(paintRaw(buildSphere(s.p[0], s.p[1], s.p[2], rad, segs), col));
+        parts.push(
+          paintRaw(buildSphere(s.p[0], s.p[1], s.p[2], rad, segs), col),
+        );
       }
 
       if (includeBonds) {
@@ -1605,7 +1761,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           for (let j = i + 1; j < sites.length; j++) {
             if (
               lattice === 'perovskite' &&
-              !((sites[i].sp === 1 && sites[j].sp === 2) || (sites[i].sp === 2 && sites[j].sp === 1))
+              !(
+                (sites[i].sp === 1 && sites[j].sp === 2) ||
+                (sites[i].sp === 2 && sites[j].sp === 1)
+              )
             ) {
               continue;
             }
@@ -1741,7 +1900,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           ? options.fn
           : (u: number, v: number): number => {
               if (preset === 'saddle') return (u * u - v * v) * 0.18;
-              if (preset === 'gaussian') return Math.exp(-(u * u + v * v) * 0.45);
+              if (preset === 'gaussian')
+                return Math.exp(-(u * u + v * v) * 0.45);
               if (preset === 'ripple') {
                 const r = Math.hypot(u, v);
                 return Math.cos(r * 2.6) * Math.exp(-r * 0.35);
@@ -1912,8 +2072,34 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const c = (iz + 1) * nx + (ix + 1);
           const d = iz * nx + (ix + 1);
           // Top (+Y)
-          emitSurfaceTri(topPos, smoothTopN, 1, a, b, c, u0, v0, u0, v1, u1, v1);
-          emitSurfaceTri(topPos, smoothTopN, 1, a, c, d, u0, v0, u1, v1, u1, v0);
+          emitSurfaceTri(
+            topPos,
+            smoothTopN,
+            1,
+            a,
+            b,
+            c,
+            u0,
+            v0,
+            u0,
+            v1,
+            u1,
+            v1,
+          );
+          emitSurfaceTri(
+            topPos,
+            smoothTopN,
+            1,
+            a,
+            c,
+            d,
+            u0,
+            v0,
+            u1,
+            v1,
+            u1,
+            v0,
+          );
           // Bottom (-Y, reversed winding)
           emitSurfaceTri(
             botPos,
@@ -2013,7 +2199,20 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         emitSideQuad(iz * nx, (iz + 1) * nx); // -X left
       }
 
-      applyBuffers(this, {pos, nrm, uv, idx}, 'SurfacePlotGeometry', {
+      let col: number[] | undefined;
+      if (
+        options.colormap !== undefined ||
+        typeof options.colorFn === 'function' ||
+        options.vertexColors === true
+      ) {
+        const cFn =
+          typeof options.colorFn === 'function'
+            ? options.colorFn
+            : (_x: number, y: number, _z: number) => y;
+        col = buildPosColorArray(pos, cFn, options.colormap ?? 'viridis');
+      }
+
+      applyBuffers(this, {pos, nrm, uv, idx, col}, 'SurfacePlotGeometry', {
         preset,
         width,
         depth,
@@ -2029,8 +2228,17 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       super();
       const kind = options.kind ?? 'torus-knot';
       const R = clamp(num(options.radius, 0.7), 0.1, 15);
-      const rTube = clamp(num(options.tubeRadius, R * 0.24), R * 0.05, R * 0.75);
-      const uSegs = clampInt(options.uSegments, 16, MAX_GRID, kind === 'torus-knot' ? 96 : 48);
+      const rTube = clamp(
+        num(options.tubeRadius, R * 0.24),
+        R * 0.05,
+        R * 0.75,
+      );
+      const uSegs = clampInt(
+        options.uSegments,
+        16,
+        MAX_GRID,
+        kind === 'torus-knot' ? 96 : 48,
+      );
       const vSegs = clampInt(options.vSegments, 8, 64, 20);
 
       let raw: RawBufs;
@@ -2080,7 +2288,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           for (let j = 0; j < lon; j++) {
             const th = (j * TAU) / lon;
             const rr = radAt(phi, th);
-            gridP.push([rr * sp * Math.cos(th), rr * cp, -rr * sp * Math.sin(th)]);
+            gridP.push([
+              rr * sp * Math.cos(th),
+              rr * cp,
+              -rr * sp * Math.sin(th),
+            ]);
           }
         }
         const southIdx = gridP.length;
@@ -2095,7 +2307,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const r1 = r0 + lon;
           for (let j = 0; j < lon; j++) {
             const j1 = (j + 1) % lon;
-            triPairs.push([r0 + j, r1 + j, r1 + j1], [r0 + j, r1 + j1, r0 + j1]);
+            triPairs.push(
+              [r0 + j, r1 + j, r1 + j1],
+              [r0 + j, r1 + j1, r0 + j1],
+            );
           }
         }
         const lastR = 1 + (lat - 2) * lon;
@@ -2109,9 +2324,12 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const a = gridP[ia],
             b = gridP[ib],
             c = gridP[ic];
-          const fnx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
-          const fny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
-          const fnz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+          const fnx =
+            (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
+          const fny =
+            (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+          const fnz =
+            (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
           for (const vi of [ia, ib, ic]) {
             vN[vi * 3] += fnx;
             vN[vi * 3 + 1] += fny;
@@ -2202,9 +2420,15 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const pa = gridP[ia],
             pb = gridP[ib],
             pc = gridP[ic];
-          const fnx = (pb[1] - pa[1]) * (pc[2] - pa[2]) - (pb[2] - pa[2]) * (pc[1] - pa[1]);
-          const fny = (pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]);
-          const fnz = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]);
+          const fnx =
+            (pb[1] - pa[1]) * (pc[2] - pa[2]) -
+            (pb[2] - pa[2]) * (pc[1] - pa[1]);
+          const fny =
+            (pb[2] - pa[2]) * (pc[0] - pa[0]) -
+            (pb[0] - pa[0]) * (pc[2] - pa[2]);
+          const fnz =
+            (pb[0] - pa[0]) * (pc[1] - pa[1]) -
+            (pb[1] - pa[1]) * (pc[0] - pa[0]);
           for (const vi of [ia, ib, ic]) {
             vN[vi * 3] += fnx;
             vN[vi * 3 + 1] += fny;
@@ -2219,10 +2443,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const nl = Math.hypot(vN[i * 3], vN[i * 3 + 1], vN[i * 3 + 2]) || 1;
           pos.push(gridP[i][0], gridP[i][1], gridP[i][2]);
           nrm.push(vN[i * 3] / nl, vN[i * 3 + 1] / nl, vN[i * 3 + 2] / nl);
-          uv.push(
-            Math.floor(i / vSegs) / uSegs,
-            (i % vSegs) / vSegs,
-          );
+          uv.push(Math.floor(i / vSegs) / uSegs, (i % vSegs) / vSegs);
         }
         for (const [ia, ib, ic] of tris) idx.push(ia, ib, ic);
         raw = {pos, nrm, uv, idx};
@@ -2259,7 +2480,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         gy > 1 ? sy / (gy - 1) : sy,
         gz > 1 ? sz / (gz - 1) : sz,
       );
-      const maxArrow = clamp(num(options.arrowScale, cellMin * 0.78), 0.04, 4.0);
+      const maxArrow = clamp(
+        num(options.arrowScale, cellMin * 0.78),
+        0.04,
+        4.0,
+      );
       const shaftR = clamp(
         num(options.shaftRadius, maxArrow * 0.075),
         0.002,
@@ -2278,7 +2503,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
               const r2 = x * x + y * y + z * z + 0.12;
               const r5 = Math.pow(r2, 2.5);
               const r3 = Math.pow(r2, 1.5);
-              return [(3 * y * x) / r5, (3 * y * y) / r5 - 1 / r3, (3 * y * z) / r5];
+              return [
+                (3 * y * x) / r5,
+                (3 * y * y) / r5 - 1 / r3,
+                (3 * y * z) / r5,
+              ];
             };
 
       const samples: Array<{p: Vec3; v: Vec3; mag: number}> = [];
@@ -2300,7 +2529,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
             const vz = num(fv?.[2], 0);
             const mag = Math.hypot(vx, vy, vz);
             if (mag > 1e-6) {
-              samples.push({p: [x, y, z], v: [vx / mag, vy / mag, vz / mag], mag});
+              samples.push({
+                p: [x, y, z],
+                v: [vx / mag, vy / mag, vz / mag],
+                mag,
+              });
               if (mag > maxMag) maxMag = mag;
             }
           }
@@ -2344,9 +2577,21 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     constructor(options: Axes3DOptions = {}) {
       super();
       const len = clamp(num(options.length, 1.2), 0.15, 20);
-      const shaftR = clamp(num(options.shaftRadius, len * 0.022), 0.002, len * 0.12);
-      const headR = clamp(num(options.headRadius, shaftR * 2.5), shaftR * 1.3, len * 0.25);
-      const headLen = clamp(num(options.headLength, len * 0.14), headR * 0.8, len * 0.4);
+      const shaftR = clamp(
+        num(options.shaftRadius, len * 0.022),
+        0.002,
+        len * 0.12,
+      );
+      const headR = clamp(
+        num(options.headRadius, shaftR * 2.5),
+        shaftR * 1.3,
+        len * 0.25,
+      );
+      const headLen = clamp(
+        num(options.headLength, len * 0.14),
+        headR * 0.8,
+        len * 0.4,
+      );
       const sym = options.symmetric === true;
       const ticks = clampInt(options.ticks, 0, 20, 4);
 
@@ -2441,8 +2686,16 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const bpPerTurn = clamp(num(options.basePairsPerTurn, 10.5), 4, 24);
       const radius = clamp(num(options.radius, 0.35), 0.05, 5);
       const pitch = clamp(num(options.pitch, radius * 3.4), radius * 1.2, 20);
-      const bbR = clamp(num(options.backboneRadius, radius * 0.14), 0.005, radius * 0.42);
-      const rungR = clamp(num(options.rungRadius, bbR * 0.58), 0.003, bbR * 0.92);
+      const bbR = clamp(
+        num(options.backboneRadius, radius * 0.14),
+        0.005,
+        radius * 0.42,
+      );
+      const rungR = clamp(
+        num(options.rungRadius, bbR * 0.58),
+        0.003,
+        bbR * 0.92,
+      );
       const segs = clampInt(options.radialSegments, 8, 32, 12);
       const origin = options.origin ?? 'center';
 
@@ -2562,10 +2815,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const t = i / steps;
           const y = y0 + (y1 - y0) * t;
           const r =
-            scale *
-            widthFrac *
-            Math.sin(Math.PI * t) *
-            Math.pow(t, 0.38);
+            scale * widthFrac * Math.sin(Math.PI * t) * Math.pow(t, 0.38);
           prof.push([r, y]);
         }
         prof.push([0, y1]);
@@ -2585,7 +2835,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         parts.push(useVCol ? paintRaw(sph, posRgb) : sph);
       } else if (orbital === '2px' || orbital === '2py' || orbital === '2pz') {
         const dir: Vec3 =
-          orbital === '2px' ? [1, 0, 0] : orbital === '2py' ? [0, 1, 0] : [0, 0, 1];
+          orbital === '2px'
+            ? [1, 0, 0]
+            : orbital === '2py'
+              ? [0, 1, 0]
+              : [0, 0, 1];
         parts.push(
           buildLobe(dir[0], dir[1], dir[2], 0.045, 0.44, posRgb),
           buildLobe(-dir[0], -dir[1], -dir[2], 0.045, 0.44, negRgb),
@@ -2640,9 +2894,13 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const segs = clampInt(options.radialSegments, 12, 96, 36);
 
       if (kind === 'prism-equilateral' || kind === 'prism-right-angle') {
-        const len = clamp(num(options.length ?? options.thickness, dia * 1.2), 0.02, 15);
+        const len = clamp(
+          num(options.length ?? options.thickness, dia * 1.2),
+          0.02,
+          15,
+        );
         const hL = len * 0.5;
-        const hTri = (dia * Math.sqrt(3)) * 0.5;
+        const hTri = dia * Math.sqrt(3) * 0.5;
         const tri: [Pt2, Pt2, Pt2] =
           kind === 'prism-equilateral'
             ? [
@@ -2681,7 +2939,20 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const el = Math.hypot(dx, dy) || 1;
           const nx = dy / el;
           const ny = -dx / el;
-          pos.push(a[0], a[1], -hL, b[0], b[1], -hL, a[0], a[1], hL, b[0], b[1], hL);
+          pos.push(
+            a[0],
+            a[1],
+            -hL,
+            b[0],
+            b[1],
+            -hL,
+            a[0],
+            a[1],
+            hL,
+            b[0],
+            b[1],
+            hL,
+          );
           nrm.push(nx, ny, 0, nx, ny, 0, nx, ny, 0, nx, ny, 0);
           uv.push(0, 0, 1, 0, 0, 1, 1, 1);
           idx.push(vOff, vOff + 1, vOff + 3, vOff, vOff + 3, vOff + 2);
@@ -2703,10 +2974,7 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const R2 = Math.max(
         rAp * 1.15,
         Math.abs(
-          num(
-            options.curvatureRadius2,
-            kind === 'meniscus' ? R1 * 1.85 : R1,
-          ),
+          num(options.curvatureRadius2, kind === 'meniscus' ? R1 * 1.85 : R1),
         ),
       );
       const sag = (r: number, R: number) =>
@@ -2714,7 +2982,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const s1Max = sag(rAp, R1);
       const s2Max = sag(rAp, R2);
       const minRim = Math.max(0.004, dia * 0.06);
-      const rawThick = clamp(num(options.thickness, dia * 0.22), minRim, dia * 1.5);
+      const rawThick = clamp(
+        num(options.thickness, dia * 0.22),
+        minRim,
+        dia * 1.5,
+      );
 
       const nCurve = 12;
       const prof: Pt2[] = [];
@@ -2769,6 +3041,331 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     }
   }
 
+  const COLORMAP_STOPS: Record<string, Vec3[]> = {
+    viridis: [
+      [0.267, 0.005, 0.329],
+      [0.23, 0.322, 0.546],
+      [0.128, 0.567, 0.551],
+      [0.369, 0.788, 0.383],
+      [0.993, 0.906, 0.144],
+    ],
+    plasma: [
+      [0.05, 0.03, 0.528],
+      [0.494, 0.012, 0.658],
+      [0.798, 0.28, 0.47],
+      [0.973, 0.58, 0.254],
+      [0.94, 0.975, 0.131],
+    ],
+    turbo: [
+      [0.19, 0.072, 0.232],
+      [0.158, 0.635, 0.899],
+      [0.493, 0.965, 0.34],
+      [0.985, 0.533, 0.134],
+      [0.479, 0.016, 0.011],
+    ],
+    coolwarm: [
+      [0.23, 0.299, 0.754],
+      [0.553, 0.69, 0.996],
+      [0.865, 0.865, 0.865],
+      [0.957, 0.608, 0.486],
+      [0.706, 0.016, 0.15],
+    ],
+  };
+
+  function sampleColormap(
+    name: ScienceColormapName | string,
+    tRaw: number,
+  ): Vec3 {
+    const t = clamp(num(tRaw, 0.5), 0, 1);
+    const key = String(name || 'viridis').toLowerCase();
+    if (key === 'spectrum') {
+      return hslToRgb01(0.63 - t * 0.6, 0.86, 0.54);
+    }
+    if (key === 'plddt') {
+      if (t >= 0.9) return [0.11, 0.31, 0.85];
+      if (t >= 0.7) return [0.22, 0.74, 0.97];
+      if (t >= 0.5) return [0.98, 0.8, 0.08];
+      return [0.98, 0.45, 0.09];
+    }
+    const stops = COLORMAP_STOPS[key] ?? COLORMAP_STOPS['viridis'];
+    const nSeg = stops.length - 1;
+    const f = t * nSeg;
+    const i0 = clamp(Math.floor(f), 0, nSeg - 1);
+    const u = f - i0;
+    const c0 = stops[i0];
+    const c1 = stops[i0 + 1];
+    return [
+      c0[0] + (c1[0] - c0[0]) * u,
+      c0[1] + (c1[1] - c0[1]) * u,
+      c0[2] + (c1[2] - c0[2]) * u,
+    ];
+  }
+
+  function resolveScalarSampler(
+    scalars: readonly number[] | undefined,
+    domain: readonly [number, number] | undefined,
+    cmap: string,
+  ): ((u: number) => Vec3) | null {
+    if (!Array.isArray(scalars) || scalars.length === 0) return null;
+    const clean = new Float64Array(scalars.length);
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let i = 0; i < scalars.length; i++) {
+      const v = num(scalars[i], NaN);
+      if (Number.isFinite(v)) {
+        clean[i] = v;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      } else {
+        clean[i] = i > 0 ? clean[i - 1] : 0;
+      }
+    }
+    if (!Number.isFinite(minV) || !Number.isFinite(maxV)) {
+      minV = 0;
+      maxV = 1;
+    }
+    let lo = minV;
+    let hi = maxV;
+    if (
+      Array.isArray(domain) &&
+      domain.length >= 2 &&
+      Number.isFinite(Number(domain[0])) &&
+      Number.isFinite(Number(domain[1]))
+    ) {
+      lo = Number(domain[0]);
+      hi = Number(domain[1]);
+    } else if (cmap === 'plddt' && maxV > 1.5 && minV >= 0 && maxV <= 100) {
+      lo = 0;
+      hi = 100;
+    }
+    const span = hi - lo;
+    return (u: number): Vec3 => {
+      const uu = clamp(u, 0, 1);
+      const fIdx = uu * (clean.length - 1);
+      const i0 = clamp(Math.floor(fIdx), 0, clean.length - 1);
+      const i1 = clamp(i0 + 1, 0, clean.length - 1);
+      const frac = fIdx - i0;
+      const val = clean[i0] + (clean[i1] - clean[i0]) * frac;
+      const tNorm =
+        Math.abs(span) > 1e-12 ? clamp((val - lo) / span, 0, 1) : 0.5;
+      return sampleColormap(cmap, tNorm);
+    };
+  }
+
+  // tslint:disable-next-line:no-any Returns host THREE.DataTexture or raw pixel descriptor.
+  function colormapTexture(options: ColormapTextureOptions = {}): any {
+    const cmap = options.colormap ?? 'viridis';
+    const w = clampInt(options.width, 16, 512, 256);
+    const h = 4;
+    const scalarFn = resolveScalarSampler(
+      options.scalars,
+      options.domain,
+      cmap,
+    );
+    const data = new Uint8Array(w * h * 4);
+    for (let x = 0; x < w; x++) {
+      const u = w > 1 ? x / (w - 1) : 0;
+      const [r, g, b] = scalarFn ? scalarFn(u) : sampleColormap(cmap, u);
+      const R = clamp(Math.round(r * 255), 0, 255);
+      const G = clamp(Math.round(g * 255), 0, 255);
+      const B = clamp(Math.round(b * 255), 0, 255);
+      for (let y = 0; y < h; y++) {
+        const off = (y * w + x) * 4;
+        data[off] = R;
+        data[off + 1] = G;
+        data[off + 2] = B;
+        data[off + 3] = 255;
+      }
+    }
+    if (typeof DataTexture === 'function') {
+      const tex = new DataTexture(
+        data,
+        w,
+        h,
+        1023,
+        1009,
+        undefined,
+        1001,
+        1001,
+        1006,
+        1006,
+        1,
+        'srgb',
+      );
+      tex.needsUpdate = true;
+      return tex;
+    }
+    return {data, width: w, height: h};
+  }
+
+  function buildPosColorArray(
+    pos: readonly number[],
+    cFn: (x: number, y: number, z: number, idx: number) => number,
+    cmap: ScienceColormapName | string,
+    domain?: readonly [number, number],
+  ): number[] {
+    const vCount = Math.floor(pos.length / 3);
+    const vals = new Array<number>(vCount);
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let i = 0; i < vCount; i++) {
+      const b = i * 3;
+      let raw = 0;
+      try {
+        raw = cFn(pos[b], pos[b + 1], pos[b + 2], i);
+      } catch {
+        raw = 0;
+      }
+      const v = Number.isFinite(raw) ? raw : 0;
+      vals[i] = v;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+    let lo = Number.isFinite(minV) ? minV : 0;
+    let hi = Number.isFinite(maxV) ? maxV : 1;
+    if (
+      Array.isArray(domain) &&
+      domain.length >= 2 &&
+      Number.isFinite(Number(domain[0])) &&
+      Number.isFinite(Number(domain[1]))
+    ) {
+      lo = Number(domain[0]);
+      hi = Number(domain[1]);
+    } else if (cmap === 'plddt' && hi > 1.5 && lo >= 0 && hi <= 100) {
+      lo = 0;
+      hi = 100;
+    }
+    const span = hi - lo;
+    const key = String(cmap || 'viridis').toLowerCase();
+    const stops =
+      key === 'spectrum' || key === 'plddt'
+        ? null
+        : (COLORMAP_STOPS[key] ?? COLORMAP_STOPS['viridis']);
+    const nSeg = stops ? stops.length - 1 : 0;
+    const col = new Array<number>(vCount * 3);
+    for (let i = 0; i < vCount; i++) {
+      let t = Math.abs(span) > 1e-12 ? (vals[i] - lo) / span : 0.5;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const o = i * 3;
+      if (stops) {
+        const f = t * nSeg;
+        let i0 = Math.floor(f);
+        if (i0 < 0) i0 = 0;
+        else if (i0 >= nSeg) i0 = nSeg - 1;
+        const u = f - i0;
+        const c0 = stops[i0];
+        const c1 = stops[i0 + 1];
+        col[o] = c0[0] + (c1[0] - c0[0]) * u;
+        col[o + 1] = c0[1] + (c1[1] - c0[1]) * u;
+        col[o + 2] = c0[2] + (c1[2] - c0[2]) * u;
+      } else {
+        const rgb = sampleColormap(key, t);
+        col[o] = rgb[0];
+        col[o + 1] = rgb[1];
+        col[o + 2] = rgb[2];
+      }
+    }
+    return col;
+  }
+
+  // tslint:disable-next-line:no-any Mutates and returns BufferGeometry-compatible object.
+  function applyVertexColormap(
+    // tslint:disable-next-line:no-any
+    geometry: any,
+    scalars:
+      | readonly number[]
+      | Float32Array
+      | Float64Array
+      | ((x: number, y: number, z: number, vertexIndex: number) => number),
+    options: ApplyVertexColormapOptions = {},
+    // tslint:disable-next-line:no-any
+  ): any {
+    if (!geometry || typeof geometry !== 'object') return geometry;
+    const posAttr =
+      typeof geometry.getAttribute === 'function'
+        ? geometry.getAttribute('position')
+        : geometry.attributes?.position;
+    const posArr = posAttr?.array;
+    if (!posArr || typeof posArr.length !== 'number' || posArr.length < 3) {
+      return geometry;
+    }
+    const itemSize = clampInt(posAttr.itemSize, 1, 4, 3);
+    const vCount = Math.floor(posArr.length / itemSize);
+    if (vCount <= 0) return geometry;
+
+    const cmap = options.colormap ?? 'viridis';
+    const vals = new Float64Array(vCount);
+    let minV = Infinity;
+    let maxV = -Infinity;
+    const isFn = typeof scalars === 'function';
+    // tslint:disable-next-line:no-any
+    const arrLike =
+      !isFn && scalars && typeof (scalars as any).length === 'number'
+        ? (scalars as ArrayLike<number>)
+        : null;
+
+    for (let i = 0; i < vCount; i++) {
+      let raw = 0;
+      if (isFn) {
+        const base = i * itemSize;
+        const x = Number(posArr[base]) || 0;
+        const y = Number(posArr[base + 1]) || 0;
+        const z = Number(posArr[base + 2]) || 0;
+        try {
+          raw = (
+            scalars as (x: number, y: number, z: number, idx: number) => number
+          )(x, y, z, i);
+        } catch {
+          raw = 0;
+        }
+      } else if (arrLike && arrLike.length > 0) {
+        raw = Number(arrLike[Math.min(i, arrLike.length - 1)]);
+      }
+      const v = Number.isFinite(raw) ? raw : 0;
+      vals[i] = v;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+
+    let lo = Number.isFinite(minV) ? minV : 0;
+    let hi = Number.isFinite(maxV) ? maxV : 1;
+    if (
+      Array.isArray(options.domain) &&
+      options.domain.length >= 2 &&
+      Number.isFinite(Number(options.domain[0])) &&
+      Number.isFinite(Number(options.domain[1]))
+    ) {
+      lo = Number(options.domain[0]);
+      hi = Number(options.domain[1]);
+    } else if (cmap === 'plddt' && hi > 1.5 && lo >= 0 && hi <= 100) {
+      lo = 0;
+      hi = 100;
+    }
+    const span = hi - lo;
+    const colList = new Array<number>(vCount * 3);
+    for (let i = 0; i < vCount; i++) {
+      const t =
+        Math.abs(span) > 1e-12 ? clamp((vals[i] - lo) / span, 0, 1) : 0.5;
+      const [r, g, b] = sampleColormap(cmap, t);
+      const o = i * 3;
+      colList[o] = r;
+      colList[o + 1] = g;
+      colList[o + 2] = b;
+    }
+    const g = globalThis as Record<string, unknown>;
+    const nativeF32 = g['__three_live_native_f32_array__'] as
+      | ((src: number[]) => Float32Array)
+      | undefined;
+    const colArr = nativeF32 ? nativeF32(colList) : new Float32Array(colList);
+    if (typeof geometry.setAttribute === 'function') {
+      geometry.setAttribute('color', new BufferAttribute(colArr, 3));
+    } else if (geometry.attributes) {
+      geometry.attributes.color = new BufferAttribute(colArr, 3);
+    }
+    return geometry;
+  }
+
   function hslToRgb01(h: number, s: number, l: number): Vec3 {
     const hh = ((h % 1) + 1) % 1;
     const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -2812,7 +3409,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     }
     if (Array.isArray(spans)) {
       for (const sp of spans) {
-        if (!sp || (sp.kind !== 'coil' && sp.kind !== 'helix' && sp.kind !== 'sheet')) {
+        if (
+          !sp ||
+          (sp.kind !== 'coil' && sp.kind !== 'helix' && sp.kind !== 'sheet')
+        ) {
           continue;
         }
         const a = clampInt(sp.from, 0, count - 1, 0);
@@ -2827,10 +3427,14 @@ export function installScienceKit(threeNs: any, reg?: any): any {
 
   function evalColorScheme(
     u: number,
-    scheme: 'spectrum' | 'secondary' | 'plddt',
+    scheme: 'spectrum' | 'secondary' | 'plddt' | ScienceColormapName,
     ptKinds?: readonly RibbonSecondaryKind[],
+    scalarSampler?: ((u: number) => Vec3) | null,
   ): Vec3 {
     const t = clamp(u, 0, 1);
+    if (scalarSampler) {
+      return scalarSampler(t);
+    }
     if (scheme === 'secondary' && ptKinds && ptKinds.length > 0) {
       const fIdx = t * (ptKinds.length - 1);
       const i0 = clamp(Math.floor(fIdx), 0, ptKinds.length - 1);
@@ -2857,13 +3461,21 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       if (wave > 0.15) return [0.98, 0.8, 0.08];
       return [0.98, 0.45, 0.09];
     }
+    if (
+      scheme === 'viridis' ||
+      scheme === 'plasma' ||
+      scheme === 'turbo' ||
+      scheme === 'coolwarm'
+    ) {
+      return sampleColormap(scheme, t);
+    }
     // Richardson N->C rainbow spectrum (royal blue -> cyan -> emerald -> gold -> coral)
     return hslToRgb01(0.63 - t * 0.6, 0.86, 0.54);
   }
 
   // tslint:disable-next-line:no-any Returns host THREE.DataTexture or raw pixel descriptor.
   function ribbonColorMap(options: RibbonColorMapOptions = {}): any {
-    const scheme = options.scheme ?? 'spectrum';
+    const scheme = options.colormap ?? options.scheme ?? 'spectrum';
     const w = clampInt(options.width, 16, 512, 256);
     const h = 4;
     const pCount = clampInt(
@@ -2876,10 +3488,15 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       scheme === 'secondary'
         ? resolvePointKinds(pCount, options.kinds, options.spans)
         : undefined;
+    const scalarSampler = resolveScalarSampler(
+      options.scalars,
+      options.domain,
+      scheme === 'secondary' ? 'viridis' : scheme,
+    );
     const data = new Uint8Array(w * h * 4);
     for (let x = 0; x < w; x++) {
       const u = w > 1 ? x / (w - 1) : 0;
-      const [r, g, b] = evalColorScheme(u, scheme, ptKinds);
+      const [r, g, b] = evalColorScheme(u, scheme, ptKinds, scalarSampler);
       const R = clamp(Math.round(r * 255), 0, 255);
       const G = clamp(Math.round(g * 255), 0, 255);
       const B = clamp(Math.round(b * 255), 0, 255);
@@ -2927,17 +3544,28 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         for (let i = 0; i < lim; i++) {
           const p = options.points[i];
           if (!p) continue;
-          const px = Array.isArray(p) ? num(p[0], NaN) : num((p as {x: number}).x, NaN);
-          const py = Array.isArray(p) ? num(p[1], NaN) : num((p as {y: number}).y, NaN);
-          const pz = Array.isArray(p) ? num(p[2], NaN) : num((p as {z: number}).z, NaN);
-          if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) {
+          const px = Array.isArray(p)
+            ? num(p[0], NaN)
+            : num((p as {x: number}).x, NaN);
+          const py = Array.isArray(p)
+            ? num(p[1], NaN)
+            : num((p as {y: number}).y, NaN);
+          const pz = Array.isArray(p)
+            ? num(p[2], NaN)
+            : num((p as {z: number}).z, NaN);
+          if (
+            !Number.isFinite(px) ||
+            !Number.isFinite(py) ||
+            !Number.isFinite(pz)
+          ) {
             continue;
           }
           const sp: Vec3 = [px * s, py * s, pz * s];
           const prev = pts[pts.length - 1];
           if (
             prev &&
-            Math.hypot(sp[0] - prev[0], sp[1] - prev[1], sp[2] - prev[2]) <= 1e-5 * s
+            Math.hypot(sp[0] - prev[0], sp[1] - prev[1], sp[2] - prev[2]) <=
+              1e-5 * s
           ) {
             continue;
           }
@@ -2956,7 +3584,9 @@ export function installScienceKit(threeNs: any, reg?: any): any {
               : num((rn as {z: number}).z, NaN);
             const nl = Math.hypot(nx, ny, nz);
             rawNormals.push(
-              Number.isFinite(nl) && nl > 1e-6 ? [nx / nl, ny / nl, nz / nl] : null,
+              Number.isFinite(nl) && nl > 1e-6
+                ? [nx / nl, ny / nl, nz / nl]
+                : null,
             );
           } else {
             rawNormals.push(null);
@@ -2989,25 +3619,41 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         const defKinds: RibbonSecondaryKind[] = [];
         for (let i = 0; i < 10; i++) {
           const t = i / 9;
-          pts.push([-0.55 * s, (-0.7 + 1.4 * t) * s, 0.025 * Math.sin(t * TAU * 2) * s]);
+          pts.push([
+            -0.55 * s,
+            (-0.7 + 1.4 * t) * s,
+            0.025 * Math.sin(t * TAU * 2) * s,
+          ]);
           rawNormals.push([0, 0, 1]);
           defKinds.push(i >= 1 && i <= 8 ? 'sheet' : 'coil');
         }
         for (let i = 1; i <= 4; i++) {
           const a = Math.PI * (1 - i / 5);
-          pts.push([(-0.275 + 0.275 * Math.cos(a)) * s, (0.7 + 0.24 * Math.sin(a)) * s, 0]);
+          pts.push([
+            (-0.275 + 0.275 * Math.cos(a)) * s,
+            (0.7 + 0.24 * Math.sin(a)) * s,
+            0,
+          ]);
           rawNormals.push([0, 0, 1]);
           defKinds.push('coil');
         }
         for (let i = 0; i < 10; i++) {
           const t = i / 9;
-          pts.push([0, (0.7 - 1.4 * t) * s, -0.025 * Math.sin(t * TAU * 2) * s]);
+          pts.push([
+            0,
+            (0.7 - 1.4 * t) * s,
+            -0.025 * Math.sin(t * TAU * 2) * s,
+          ]);
           rawNormals.push([0, 0, 1]);
           defKinds.push(i >= 1 && i <= 8 ? 'sheet' : 'coil');
         }
         for (let i = 1; i <= 3; i++) {
           const t = i / 4;
-          pts.push([0.62 * t * s, (-0.7 - 0.16 * Math.sin(t * Math.PI)) * s, 0]);
+          pts.push([
+            0.62 * t * s,
+            (-0.7 - 0.16 * Math.sin(t * Math.PI)) * s,
+            0,
+          ]);
           rawNormals.push(null);
           defKinds.push('coil');
         }
@@ -3043,7 +3689,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const P = clampInt(options.profileSegments, 8, 28, 16);
       const M = segCount * subdiv;
 
-      const coilR = clamp(num(options.coilRadius, 0.036) * s, 0.003 * s, 0.6 * s);
+      const coilR = clamp(
+        num(options.coilRadius, 0.036) * s,
+        0.003 * s,
+        0.6 * s,
+      );
       const helixHW = clamp(
         num(options.helixWidth, 0.17) * s * 0.5,
         coilR * 1.05,
@@ -3067,10 +3717,19 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       const arrowMax = Math.min(1.8 * s, sheetHW * 2.5);
       const arrowHW =
         options.arrowHeadWidth !== undefined
-          ? clamp(num(options.arrowHeadWidth, 0.37) * s * 0.5, sheetHW * 1.15, arrowMax)
+          ? clamp(
+              num(options.arrowHeadWidth, 0.37) * s * 0.5,
+              sheetHW * 1.15,
+              arrowMax,
+            )
           : clamp(sheetHW * 1.7, sheetHW * 1.15, arrowMax);
       const arrowFrac = clamp(num(options.arrowHeadFraction, 0.24), 0.12, 0.45);
-      const colorScheme = options.colorScheme ?? 'spectrum';
+      const colorScheme = options.colormap ?? options.colorScheme ?? 'spectrum';
+      const scalarSampler = resolveScalarSampler(
+        options.scalars,
+        options.domain,
+        colorScheme === 'secondary' ? 'viridis' : colorScheme,
+      );
 
       const fc = options.faceCenter;
       const hasFaceCenter =
@@ -3225,7 +3884,11 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           const ay = tp[2] * tc[0] - tp[0] * tc[2];
           const az = tp[0] * tc[1] - tp[1] * tc[0];
           const sinA = Math.hypot(ax, ay, az);
-          const cosA = clamp(tp[0] * tc[0] + tp[1] * tc[1] + tp[2] * tc[2], -1, 1);
+          const cosA = clamp(
+            tp[0] * tc[0] + tp[1] * tc[1] + tp[2] * tc[2],
+            -1,
+            1,
+          );
           let nx = up[0],
             ny = up[1],
             nz = up[2];
@@ -3383,7 +4046,10 @@ export function installScienceKit(threeNs: any, reg?: any): any {
               Math.max(k0 + 1, k1 - 2),
             );
             const kShoulder = clamp(
-              Math.max(kNeck + 1, Math.round(k0 + span * (1 - arrowFrac + 0.03))),
+              Math.max(
+                kNeck + 1,
+                Math.round(k0 + span * (1 - arrowFrac + 0.03)),
+              ),
               kNeck + 1,
               Math.max(kNeck + 1, k1 - 1),
             );
@@ -3598,7 +4264,12 @@ export function installScienceKit(threeNs: any, reg?: any): any {
       for (let r = 0; r < sideRows; r++) {
         const k = rowSpatialK[r];
         const uChain = k / M;
-        const [cr, cg, cb] = evalColorScheme(uChain, colorScheme, ptKinds);
+        const [cr, cg, cb] = evalColorScheme(
+          uChain,
+          colorScheme,
+          ptKinds,
+          scalarSampler,
+        );
         const nr = normRowOf(r);
         for (let j = 0; j <= P; j++) {
           const jMod = j === P ? 0 : j;
@@ -3637,7 +4308,12 @@ export function installScienceKit(threeNs: any, reg?: any): any {
         // Start cap at k = 0 (normal = -T_0, winding: center, v0, v1)
         const c0 = centers[0];
         const t0 = tangs[0];
-        const [c0r, c0g, c0b] = evalColorScheme(0, colorScheme, ptKinds);
+        const [c0r, c0g, c0b] = evalColorScheme(
+          0,
+          colorScheme,
+          ptKinds,
+          scalarSampler,
+        );
         const startCenter = vCap++;
         pos[startCenter * 3] = c0[0];
         pos[startCenter * 3 + 1] = c0[1];
@@ -3668,13 +4344,22 @@ export function installScienceKit(threeNs: any, reg?: any): any {
           col[vi * 3 + 2] = c0b;
         }
         for (let j = 0; j < P; j++) {
-          idx.push(startCenter, startRingBase + j, startRingBase + ((j + 1) % P));
+          idx.push(
+            startCenter,
+            startRingBase + j,
+            startRingBase + ((j + 1) % P),
+          );
         }
 
         // End cap at k = M (normal = +T_M, winding: center, b1, b0)
         const cM = centers[M];
         const tM = tangs[M];
-        const [cMr, cMg, cMb] = evalColorScheme(1, colorScheme, ptKinds);
+        const [cMr, cMg, cMb] = evalColorScheme(
+          1,
+          colorScheme,
+          ptKinds,
+          scalarSampler,
+        );
         const endCenter = vCap++;
         pos[endCenter * 3] = cM[0];
         pos[endCenter * 3 + 1] = cM[1];
@@ -3718,13 +4403,1147 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     }
   }
 
+  // Precompute 16 Marching-Tetrahedra edge-pair triangle cases once (zero per-tet array allocations!)
+  // Each entry is a flat list of pairs `[a0, b0, a1, b1, a2, b2, ...]` (0, 6, or 12 ints).
+  const TET_TRI_TABLE: number[][] = new Array(16);
+  for (let mask = 0; mask < 16; mask++) {
+    const posV: number[] = [];
+    const negV: number[] = [];
+    const perm: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      if ((mask >> i) & 1) {
+        posV.push(i);
+        perm.push(i);
+      }
+    }
+    if (posV.length === 0 || posV.length === 4) {
+      TET_TRI_TABLE[mask] = [];
+      continue;
+    }
+    for (let i = 0; i < 4; i++) {
+      if (!((mask >> i) & 1)) {
+        negV.push(i);
+        perm.push(i);
+      }
+    }
+    let inv = 0;
+    for (let i = 0; i < 4; i++) {
+      for (let j = i + 1; j < 4; j++) {
+        if (perm[i] > perm[j]) inv++;
+      }
+    }
+    if (inv % 2 === 1) {
+      if (negV.length >= 2) {
+        const tmp = negV[0];
+        negV[0] = negV[1];
+        negV[1] = tmp;
+      } else {
+        const tmp = posV[1];
+        posV[1] = posV[2];
+        posV[2] = tmp;
+      }
+    }
+    if (posV.length === 1) {
+      TET_TRI_TABLE[mask] = [
+        posV[0],
+        negV[0],
+        posV[0],
+        negV[1],
+        posV[0],
+        negV[2],
+      ];
+    } else if (posV.length === 3) {
+      TET_TRI_TABLE[mask] = [
+        negV[0],
+        posV[0],
+        negV[0],
+        posV[1],
+        negV[0],
+        posV[2],
+      ];
+    } else {
+      TET_TRI_TABLE[mask] = [
+        posV[0],
+        negV[0],
+        posV[0],
+        negV[1],
+        posV[1],
+        negV[1],
+        posV[0],
+        negV[0],
+        posV[1],
+        negV[1],
+        posV[1],
+        negV[0],
+      ];
+    }
+  }
+
+  // --- 11. IsoSurfaceGeometry (Watertight Kuhn 6-Tetrahedra Marching Tetrahedra) ---
+  class IsoSurfaceGeometry extends BufferGeometry {
+    constructor(options: IsoSurfaceOptions = {}) {
+      super();
+      const preset: IsoSurfacePreset = options.preset ?? 'gyroid';
+      const res = clampInt(options.resolution, 8, MAX_ISOSURFACE_RES, 15);
+      const scale = clamp(num(options.scale, 1), 0.05, 50);
+
+      let x0 = -1.2,
+        x1 = 1.2,
+        y0 = -1.2,
+        y1 = 1.2,
+        z0 = -1.2,
+        z1 = 1.2;
+      const rawB = options.bounds;
+      if (
+        typeof rawB === 'number' &&
+        Number.isFinite(rawB) &&
+        Math.abs(rawB) > 1e-4
+      ) {
+        const b = clamp(Math.abs(rawB), 0.1, 40);
+        x0 = -b;
+        x1 = b;
+        y0 = -b;
+        y1 = b;
+        z0 = -b;
+        z1 = b;
+      } else if (Array.isArray(rawB)) {
+        if (rawB.length >= 3 && Array.isArray(rawB[0])) {
+          const bx = rawB[0] as readonly [number, number];
+          const by = rawB[1] as readonly [number, number];
+          const bz = rawB[2] as readonly [number, number];
+          x0 = num(bx?.[0], -1.2);
+          x1 = num(bx?.[1], 1.2);
+          y0 = num(by?.[0], -1.2);
+          y1 = num(by?.[1], 1.2);
+          z0 = num(bz?.[0], -1.2);
+          z1 = num(bz?.[1], 1.2);
+        } else if (rawB.length >= 2) {
+          const b0 = num((rawB as readonly [number, number])[0], -1.2);
+          const b1 = num((rawB as readonly [number, number])[1], 1.2);
+          x0 = b0;
+          x1 = b1;
+          y0 = b0;
+          y1 = b1;
+          z0 = b0;
+          z1 = b1;
+        }
+      }
+      if (Math.abs(x1 - x0) < 1e-4) {
+        x0 = -1.2;
+        x1 = 1.2;
+      }
+      if (Math.abs(y1 - y0) < 1e-4) {
+        y0 = -1.2;
+        y1 = 1.2;
+      }
+      if (Math.abs(z1 - z0) < 1e-4) {
+        z0 = -1.2;
+        z1 = 1.2;
+      }
+
+      const defaultIso =
+        typeof options.field === 'function'
+          ? 0
+          : preset === 'pi-orbital'
+            ? 0.14
+            : preset === 'sp3-hybrid'
+              ? 0.22
+              : preset === 'dipole-potential'
+                ? 0.45
+                : 0;
+      const iso = clamp(num(options.isoLevel, defaultIso), -100, 100);
+      const rawShell = num(options.shellThickness, 0);
+      const shell = rawShell > 1e-4 ? clamp(rawShell, 0.02, 10) : 0;
+
+      const wxScale = (Math.PI * 2) / Math.max(0.2, Math.abs(x1 - x0));
+      const wyScale = (Math.PI * 2) / Math.max(0.2, Math.abs(y1 - y0));
+      const wzScale = (Math.PI * 2) / Math.max(0.2, Math.abs(z1 - z0));
+
+      const evalField =
+        typeof options.field === 'function'
+          ? options.field
+          : (x: number, y: number, z: number): number => {
+              if (preset === 'pi-orbital') {
+                const rA2 = (x - 0.52) * (x - 0.52) + y * y + z * z;
+                const rB2 = (x + 0.52) * (x + 0.52) + y * y + z * z;
+                const psi = z * (Math.exp(-1.85 * rA2) + Math.exp(-1.85 * rB2));
+                return Math.abs(psi);
+              }
+              if (preset === 'sp3-hybrid') {
+                const r2 = x * x + y * y + z * z;
+                const r = Math.sqrt(r2);
+                const u = (x + y + z) * 0.5773502691896258;
+                const psi = (1 - 0.55 * r + 1.85 * u) * Math.exp(-1.45 * r2);
+                return Math.abs(psi);
+              }
+              if (preset === 'dipole-potential') {
+                const dPos = Math.sqrt(
+                  x * x + (y - 0.52) * (y - 0.52) + z * z + 0.05,
+                );
+                const dNeg = Math.sqrt(
+                  x * x + (y + 0.52) * (y + 0.52) + z * z + 0.05,
+                );
+                return Math.abs(1 / dPos - 1 / dNeg);
+              }
+              const wx = x * wxScale;
+              const wy = y * wyScale;
+              const wz = z * wzScale;
+              if (preset === 'schwarz-p') {
+                return -(Math.cos(wx) + Math.cos(wy) + Math.cos(wz));
+              }
+              if (preset === 'schwarz-d') {
+                return (
+                  Math.sin(wx) * Math.sin(wy) * Math.sin(wz) +
+                  Math.sin(wx) * Math.cos(wy) * Math.cos(wz) +
+                  Math.cos(wx) * Math.sin(wy) * Math.cos(wz) +
+                  Math.cos(wx) * Math.cos(wy) * Math.sin(wz)
+                );
+              }
+              // 'gyroid'
+              return (
+                Math.sin(wx) * Math.cos(wy) +
+                Math.sin(wy) * Math.cos(wz) +
+                Math.sin(wz) * Math.cos(wx)
+              );
+            };
+
+      const KUHN_TETS = [
+        0, 1, 3, 7, 0, 3, 2, 7, 0, 2, 6, 7, 0, 6, 4, 7, 0, 4, 5, 7, 0, 5, 1, 7,
+      ];
+
+      const buildGridAndExtract = (gridRes: number) => {
+        const N = gridRes + 1;
+        const strideZ = N * N;
+        const G = strideZ * N;
+        const gx = new Array<number>(G);
+        const gy = new Array<number>(G);
+        const gz = new Array<number>(G);
+        const rawDiff = new Array<number>(G);
+        const hasCustomField = typeof options.field === 'function';
+
+        for (let iz = 0; iz <= gridRes; iz++) {
+          const uz = iz / gridRes;
+          const z = z0 + (z1 - z0) * uz;
+          const zScaled = z * scale;
+          const wz = z * wzScale;
+          const sinZ = Math.sin(wz);
+          const cosZ = Math.cos(wz);
+          for (let iy = 0; iy <= gridRes; iy++) {
+            const uy = iy / gridRes;
+            const y = y0 + (y1 - y0) * uy;
+            const yScaled = y * scale;
+            const wy = y * wyScale;
+            const sinY = Math.sin(wy);
+            const cosY = Math.cos(wy);
+            const baseYZ = (iz * N + iy) * N;
+            for (let ix = 0; ix <= gridRes; ix++) {
+              const ux = ix / gridRes;
+              const x = x0 + (x1 - x0) * ux;
+              const g = baseYZ + ix;
+              gx[g] = x * scale;
+              gy[g] = yScaled;
+              gz[g] = zScaled;
+              if (
+                ix === 0 ||
+                ix === gridRes ||
+                iy === 0 ||
+                iy === gridRes ||
+                iz === 0 ||
+                iz === gridRes
+              ) {
+                rawDiff[g] = NaN;
+              } else if (hasCustomField) {
+                let val = -1;
+                try {
+                  val = evalField(x, y, z);
+                } catch {
+                  val = -1;
+                }
+                const d = Number(val) - iso;
+                rawDiff[g] = Number.isFinite(d) ? d : NaN;
+              } else if (preset === 'gyroid') {
+                const wx = x * wxScale;
+                rawDiff[g] =
+                  Math.sin(wx) * cosY + sinY * cosZ + sinZ * Math.cos(wx) - iso;
+              } else if (preset === 'schwarz-p') {
+                rawDiff[g] = -(Math.cos(x * wxScale) + cosY + cosZ) - iso;
+              } else if (preset === 'schwarz-d') {
+                const wx = x * wxScale;
+                const sinX = Math.sin(wx);
+                const cosX = Math.cos(wx);
+                rawDiff[g] =
+                  sinX * sinY * sinZ +
+                  sinX * cosY * cosZ +
+                  cosX * sinY * cosZ +
+                  cosX * cosY * sinZ -
+                  iso;
+              } else {
+                const d = evalField(x, y, z) - iso;
+                rawDiff[g] = Number.isFinite(d) ? d : NaN;
+              }
+            }
+          }
+        }
+
+        const d1 = N;
+        const d2 = N + 1;
+        const d3 = strideZ;
+        const d4 = strideZ + 1;
+        const d5 = strideZ + N;
+
+        const extractIso = (signFlip: number) => {
+          const gv = new Array<number>(G);
+          let posCount = 0;
+          for (let g = 0; g < G; g++) {
+            const d = rawDiff[g];
+            if (d !== d) {
+              gv[g] = -1;
+              continue;
+            }
+            let fVal = shell > 0 ? 0.5 * shell - Math.abs(d) : d * signFlip;
+            if (Math.abs(fVal) < 1e-6) {
+              fVal = fVal >= 0 ? 1e-6 : -1e-6;
+            }
+            gv[g] = fVal;
+            if (fVal > 0) posCount++;
+          }
+          if (posCount === 0) return null;
+
+          const edgeCache = new Array<number>(G * 7);
+          const uPos: number[] = [];
+          const tris: number[] = [];
+          const cellV = [0, 0, 0, 0, 0, 0, 0, 0];
+
+          for (let iz = 0; iz < gridRes; iz++) {
+            for (let iy = 0; iy < gridRes; iy++) {
+              const rowBase = iz * strideZ + iy * N;
+              for (let ix = 0; ix < gridRes; ix++) {
+                const v0 = rowBase + ix;
+                const v1 = v0 + 1;
+                const v2 = v0 + N;
+                const v3 = v2 + 1;
+                const v4 = v0 + strideZ;
+                const v5 = v4 + 1;
+                const v6 = v4 + N;
+                const v7 = v6 + 1;
+                const p0 = gv[v0] > 0;
+                if (
+                  gv[v1] > 0 === p0 &&
+                  gv[v2] > 0 === p0 &&
+                  gv[v3] > 0 === p0 &&
+                  gv[v4] > 0 === p0 &&
+                  gv[v5] > 0 === p0 &&
+                  gv[v6] > 0 === p0 &&
+                  gv[v7] > 0 === p0
+                ) {
+                  continue;
+                }
+                cellV[0] = v0;
+                cellV[1] = v1;
+                cellV[2] = v2;
+                cellV[3] = v3;
+                cellV[4] = v4;
+                cellV[5] = v5;
+                cellV[6] = v6;
+                cellV[7] = v7;
+
+                for (let tet = 0; tet < 24; tet += 4) {
+                  const g0 = cellV[KUHN_TETS[tet]];
+                  const g1 = cellV[KUHN_TETS[tet + 1]];
+                  const g2 = cellV[KUHN_TETS[tet + 2]];
+                  const g3 = cellV[KUHN_TETS[tet + 3]];
+                  const mask =
+                    (gv[g0] > 0 ? 1 : 0) |
+                    (gv[g1] > 0 ? 2 : 0) |
+                    (gv[g2] > 0 ? 4 : 0) |
+                    (gv[g3] > 0 ? 8 : 0);
+                  if (mask === 0 || mask === 15) continue;
+                  const tab = TET_TRI_TABLE[mask];
+                  for (let k = 0; k < tab.length; k += 2) {
+                    const cA = tab[k];
+                    const cB = tab[k + 1];
+                    const a =
+                      cA === 0 ? g0 : cA === 1 ? g1 : cA === 2 ? g2 : g3;
+                    const b =
+                      cB === 0 ? g0 : cB === 1 ? g1 : cB === 2 ? g2 : g3;
+                    const lo = a < b ? a : b;
+                    const hi = a < b ? b : a;
+                    const diff = hi - lo;
+                    const slot =
+                      diff === 1
+                        ? 0
+                        : diff === d1
+                          ? 1
+                          : diff === d2
+                            ? 2
+                            : diff === d3
+                              ? 3
+                              : diff === d4
+                                ? 4
+                                : diff === d5
+                                  ? 5
+                                  : 6;
+                    const key = lo * 7 + slot;
+                    let idxV = edgeCache[key];
+                    if (idxV === undefined) {
+                      const fa = gv[lo];
+                      const fb = gv[hi];
+                      const denom = fa - fb;
+                      let t = Math.abs(denom) > 1e-12 ? fa / denom : 0.5;
+                      if (t < 0.05) t = 0.05;
+                      else if (t > 0.95) t = 0.95;
+                      idxV = uPos.length / 3;
+                      uPos.push(
+                        gx[lo] + (gx[hi] - gx[lo]) * t,
+                        gy[lo] + (gy[hi] - gy[lo]) * t,
+                        gz[lo] + (gz[hi] - gz[lo]) * t,
+                      );
+                      edgeCache[key] = idxV;
+                    }
+                    tris.push(idxV);
+                  }
+                }
+              }
+            }
+          }
+          return tris.length > 0 ? {uPos, tris} : null;
+        };
+
+        return extractIso(1) ?? (shell === 0 ? extractIso(-1) : null);
+      };
+
+      let extracted = buildGridAndExtract(res);
+      if (extracted && extracted.tris.length > 78000 && res > 14) {
+        extracted = buildGridAndExtract(14);
+      }
+
+      let raw: RawBufs;
+      if (!extracted) {
+        raw = buildSphere(0, 0, 0, 0.45 * scale, 16);
+      } else {
+        const {uPos, tris} = extracted;
+        const uCount = uPos.length / 3;
+        const nTris = tris.length / 3;
+        const vN = new Array<number>(uCount * 3).fill(0);
+        const triNrm = new Array<number>(tris.length);
+        for (let t = 0; t < tris.length; t += 3) {
+          const ia = tris[t],
+            ib = tris[t + 1],
+            ic = tris[t + 2];
+          const ax = uPos[ia * 3],
+            ay = uPos[ia * 3 + 1],
+            az = uPos[ia * 3 + 2];
+          const bx = uPos[ib * 3],
+            by = uPos[ib * 3 + 1],
+            bz = uPos[ib * 3 + 2];
+          const cx = uPos[ic * 3],
+            cy = uPos[ic * 3 + 1],
+            cz = uPos[ic * 3 + 2];
+          const fnx = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
+          const fny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+          const fnz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+          vN[ia * 3] += fnx;
+          vN[ia * 3 + 1] += fny;
+          vN[ia * 3 + 2] += fnz;
+          vN[ib * 3] += fnx;
+          vN[ib * 3 + 1] += fny;
+          vN[ib * 3 + 2] += fnz;
+          vN[ic * 3] += fnx;
+          vN[ic * 3 + 1] += fny;
+          vN[ic * 3 + 2] += fnz;
+          const fl = Math.hypot(fnx, fny, fnz) || 1;
+          triNrm[t] = fnx / fl;
+          triNrm[t + 1] = fny / fl;
+          triNrm[t + 2] = fnz / fl;
+        }
+        const invSpanX = 1 / Math.max(1e-4, (x1 - x0) * scale);
+        const invSpanZ = 1 / Math.max(1e-4, (z1 - z0) * scale);
+        const x0Scaled = x0 * scale;
+        const z0Scaled = z0 * scale;
+        const uv = new Array<number>(uCount * 2);
+        for (let i = 0; i < uCount; i++) {
+          const b = i * 3;
+          const nl = Math.hypot(vN[b], vN[b + 1], vN[b + 2]) || 1;
+          vN[b] /= nl;
+          vN[b + 1] /= nl;
+          vN[b + 2] /= nl;
+          const uBase = i * 2;
+          uv[uBase] = (uPos[b] - x0Scaled) * invSpanX;
+          uv[uBase + 1] = (uPos[b + 2] - z0Scaled) * invSpanZ;
+        }
+
+        const pos = uPos;
+        const nrm = vN;
+        const idx = tris;
+        let vOff = uCount;
+
+        for (let t = 0; t < nTris * 3; t += 3) {
+          const ia = idx[t],
+            ib = idx[t + 1],
+            ic = idx[t + 2];
+          const fnx = triNrm[t],
+            fny = triNrm[t + 1],
+            fnz = triNrm[t + 2];
+          const da =
+            fnx * nrm[ia * 3] + fny * nrm[ia * 3 + 1] + fnz * nrm[ia * 3 + 2];
+          const db =
+            fnx * nrm[ib * 3] + fny * nrm[ib * 3 + 1] + fnz * nrm[ib * 3 + 2];
+          const dc =
+            fnx * nrm[ic * 3] + fny * nrm[ic * 3 + 1] + fnz * nrm[ic * 3 + 2];
+          if (!(da > 0.25 && db > 0.25 && dc > 0.25)) {
+            const ax = pos[ia * 3],
+              ay = pos[ia * 3 + 1],
+              az = pos[ia * 3 + 2];
+            const bx = pos[ib * 3],
+              by = pos[ib * 3 + 1],
+              bz = pos[ib * 3 + 2];
+            const cx = pos[ic * 3],
+              cy = pos[ic * 3 + 1],
+              cz = pos[ic * 3 + 2];
+            pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+            nrm.push(fnx, fny, fnz, fnx, fny, fnz, fnx, fny, fnz);
+            uv.push(
+              (ax - x0Scaled) * invSpanX,
+              (az - z0Scaled) * invSpanZ,
+              (bx - x0Scaled) * invSpanX,
+              (bz - z0Scaled) * invSpanZ,
+              (cx - x0Scaled) * invSpanX,
+              (cz - z0Scaled) * invSpanZ,
+            );
+            idx[t] = vOff;
+            idx[t + 1] = vOff + 1;
+            idx[t + 2] = vOff + 2;
+            vOff += 3;
+          }
+        }
+        raw = {pos, nrm, uv, idx};
+      }
+
+      const isPhasePreset =
+        typeof options.field !== 'function' &&
+        (preset === 'pi-orbital' ||
+          preset === 'sp3-hybrid' ||
+          preset === 'dipole-potential');
+      const wantColors =
+        options.vertexColors !== false &&
+        (isPhasePreset ||
+          options.vertexColors === true ||
+          options.colormap !== undefined ||
+          typeof options.colorField === 'function');
+      if (wantColors) {
+        const invS = 1 / scale;
+        const cField =
+          typeof options.colorField === 'function'
+            ? (px: number, py: number, pz: number) =>
+                options.colorField!(px * invS, py * invS, pz * invS)
+            : preset === 'pi-orbital'
+              ? (_px: number, _py: number, pz: number) => (pz >= 0 ? 1 : -1)
+              : preset === 'sp3-hybrid'
+                ? (px: number, py: number, pz: number) => {
+                    const x = px * invS,
+                      y = py * invS,
+                      z = pz * invS;
+                    const r = Math.hypot(x, y, z);
+                    const u = (x + y + z) * 0.5773502691896258;
+                    return 1 - 0.55 * r + 1.85 * u >= 0 ? 1 : -1;
+                  }
+                : preset === 'dipole-potential'
+                  ? (_px: number, py: number, _pz: number) => (py >= 0 ? 1 : -1)
+                  : (_px: number, py: number, _pz: number) => py;
+        raw.col = buildPosColorArray(
+          raw.pos,
+          cField,
+          options.colormap ?? (isPhasePreset ? 'coolwarm' : 'viridis'),
+          isPhasePreset && !options.colorField ? [-1, 1] : undefined,
+        );
+      }
+
+      applyBuffers(this, raw, 'IsoSurfaceGeometry', {
+        preset,
+        resolution: res,
+        isoLevel: iso,
+        shellThickness: shell,
+      });
+    }
+  }
+
+  // --- 12. StreamlineGeometry (RK4 Field Lines & Strange Attractors) ---
+  class StreamlineGeometry extends BufferGeometry {
+    constructor(options: StreamlineOptions = {}) {
+      super();
+      const preset: StreamlinePreset = options.preset ?? 'dipole';
+      const s = clamp(num(options.scale, 1), 0.05, 50);
+      const isAttractor =
+        typeof options.field !== 'function' &&
+        (preset === 'lorenz' || preset === 'rossler');
+      const seedCount = clampInt(options.seedCount, 1, 64, isAttractor ? 4 : 8);
+      const maxSteps = clampInt(
+        options.steps ?? options.maxSteps,
+        8,
+        MAX_STREAMLINE_STEPS,
+        isAttractor ? 96 : 56,
+      );
+      const stepSize = clamp(
+        num(options.stepSize, isAttractor ? 0.032 : 0.042),
+        0.004,
+        0.5,
+      );
+      const bounds = clamp(num(options.bounds, 2.4), 0.25, 40);
+      const rTube = clamp(num(options.radius, 0.022) * s, 0.002 * s, 0.35 * s);
+      const P = clampInt(options.radialSegments, 6, 24, 8);
+      const arrowsPerLine = clampInt(options.arrowsPerLine, 0, 8, 2);
+      const arrowScale = clamp(num(options.arrowScale, 2.05), 1.25, 3.0);
+      const cmap = options.colormap ?? 'viridis';
+      const useVCol = options.vertexColors !== false;
+
+      const evalField =
+        typeof options.field === 'function'
+          ? options.field
+          : (x: number, y: number, z: number): Vec3 => {
+              if (preset === 'lorenz') {
+                const X = x * 22;
+                const Y = z * 22;
+                const Z = y * 22 + 25;
+                const dX = 10 * (Y - X);
+                const dY = X * (28 - Z) - Y;
+                const dZ = X * Y - (8 / 3) * Z;
+                return [dX / 22, dZ / 22, dY / 22];
+              }
+              if (preset === 'rossler') {
+                const X = x * 10;
+                const Y = z * 10;
+                const Z = (y + 0.5) * 10;
+                const dX = -Y - Z;
+                const dY = X + 0.2 * Y;
+                const dZ = 0.2 + Z * (X - 5.7);
+                return [dX / 10, dZ / 10, dY / 10];
+              }
+              if (preset === 'vortex') {
+                return [-z - 0.14 * x, 0.45, x - 0.14 * z];
+              }
+              if (preset === 'helmholtz') {
+                // Two coaxial current rings at y = ±0.42 with radius R = 0.65
+                const loopB = (ly: number): Vec3 => {
+                  const dy = y - ly;
+                  const rho = Math.hypot(x, z);
+                  const R = 0.65;
+                  const r2 = rho * rho + dy * dy + R * R + 0.08;
+                  const r5 = Math.pow(r2, 2.5);
+                  const br = 3 * R * R * dy * rho;
+                  const rx = rho > 1e-6 ? x / rho : 0;
+                  const rz = rho > 1e-6 ? z / rho : 0;
+                  const by = R * R * (2 * R * R - rho * rho + 2 * dy * dy);
+                  return [(br * rx) / r5, by / r5, (br * rz) / r5];
+                };
+                const b1 = loopB(-0.42);
+                const b2 = loopB(0.42);
+                return [b1[0] + b2[0], b1[1] + b2[1], b1[2] + b2[2]];
+              }
+              // 'dipole': magnetic dipole along +Y
+              const r2 = x * x + y * y + z * z + 0.14;
+              const r5 = Math.pow(r2, 2.5);
+              return [
+                (3 * x * y) / r5,
+                (2 * y * y - x * x - z * z) / r5,
+                (3 * z * y) / r5,
+              ];
+            };
+
+      const seedList: Vec3[] = [];
+      if (Array.isArray(options.seeds) && options.seeds.length > 0) {
+        const lim = Math.min(options.seeds.length, 64);
+        for (let i = 0; i < lim; i++) {
+          const sd = options.seeds[i];
+          if (!sd) continue;
+          const sx = Array.isArray(sd)
+            ? num(sd[0], NaN)
+            : num((sd as {x: number}).x, NaN);
+          const sy = Array.isArray(sd)
+            ? num(sd[1], NaN)
+            : num((sd as {y: number}).y, NaN);
+          const sz = Array.isArray(sd)
+            ? num(sd[2], NaN)
+            : num((sd as {z: number}).z, NaN);
+          if (
+            Number.isFinite(sx) &&
+            Number.isFinite(sy) &&
+            Number.isFinite(sz)
+          ) {
+            seedList.push([sx, sy, sz]);
+          }
+        }
+      }
+      if (seedList.length === 0) {
+        for (let i = 0; i < seedCount; i++) {
+          const ang = (i * TAU) / seedCount;
+          if (preset === 'lorenz') {
+            seedList.push([
+              0.12 + 0.09 * Math.cos(ang),
+              -0.25 + 0.08 * i,
+              0.15 + 0.09 * Math.sin(ang),
+            ]);
+          } else if (preset === 'rossler') {
+            seedList.push([
+              0.32 + 0.12 * Math.cos(ang),
+              -0.42 + 0.05 * i,
+              0.25 + 0.12 * Math.sin(ang),
+            ]);
+          } else if (preset === 'helmholtz') {
+            const rad = 0.16 + 0.34 * ((i % 3) / 2);
+            seedList.push([rad * Math.cos(ang), -0.82, rad * Math.sin(ang)]);
+          } else if (preset === 'vortex') {
+            seedList.push([0.75 * Math.cos(ang), -0.78, 0.75 * Math.sin(ang)]);
+          } else {
+            // 'dipole': start around the north polar cone and trace to south pole
+            seedList.push([0.28 * Math.cos(ang), 0.36, 0.28 * Math.sin(ang)]);
+          }
+        }
+      }
+
+      const sampleDir = (
+        px: number,
+        py: number,
+        pz: number,
+      ): {dir: Vec3; mag: number} | null => {
+        let fv: readonly [number, number, number] = [0, 0, 0];
+        try {
+          fv = evalField(px, py, pz);
+        } catch {
+          return null;
+        }
+        const vx = num(fv?.[0], NaN);
+        const vy = num(fv?.[1], NaN);
+        const vz = num(fv?.[2], NaN);
+        const mag = Math.hypot(vx, vy, vz);
+        if (!Number.isFinite(mag) || mag < 1e-6) return null;
+        return {dir: [vx / mag, vy / mag, vz / mag], mag};
+      };
+
+      const lines: Array<{pts: Vec3[]; speeds: number[]}> = [];
+      let minSpd = Infinity;
+      let maxSpd = -Infinity;
+
+      for (const seed of seedList) {
+        const pts: Vec3[] = [];
+        const speeds: number[] = [];
+        let cur: Vec3 = [seed[0], seed[1], seed[2]];
+        const s0 = sampleDir(cur[0], cur[1], cur[2]);
+        if (!s0) continue;
+        pts.push([cur[0] * s, cur[1] * s, cur[2] * s]);
+        speeds.push(s0.mag);
+        if (s0.mag < minSpd) minSpd = s0.mag;
+        if (s0.mag > maxSpd) maxSpd = s0.mag;
+
+        let prevDir = s0.dir;
+        for (let step = 0; step < maxSteps; step++) {
+          const k1 = sampleDir(cur[0], cur[1], cur[2]);
+          if (!k1) break;
+          const k2 = sampleDir(
+            cur[0] + 0.5 * stepSize * k1.dir[0],
+            cur[1] + 0.5 * stepSize * k1.dir[1],
+            cur[2] + 0.5 * stepSize * k1.dir[2],
+          );
+          if (!k2) break;
+          const k3 = sampleDir(
+            cur[0] + 0.5 * stepSize * k2.dir[0],
+            cur[1] + 0.5 * stepSize * k2.dir[1],
+            cur[2] + 0.5 * stepSize * k2.dir[2],
+          );
+          if (!k3) break;
+          const k4 = sampleDir(
+            cur[0] + stepSize * k3.dir[0],
+            cur[1] + stepSize * k3.dir[1],
+            cur[2] + stepSize * k3.dir[2],
+          );
+          if (!k4) break;
+
+          let dx = (k1.dir[0] + 2 * k2.dir[0] + 2 * k3.dir[0] + k4.dir[0]) / 6;
+          let dy = (k1.dir[1] + 2 * k2.dir[1] + 2 * k3.dir[1] + k4.dir[1]) / 6;
+          let dz = (k1.dir[2] + 2 * k2.dir[2] + 2 * k3.dir[2] + k4.dir[2]) / 6;
+          const dl = Math.hypot(dx, dy, dz);
+          if (dl < 1e-4) break;
+          dx /= dl;
+          dy /= dl;
+          dz /= dl;
+          // Stop before sharp hairpin reversals that would fold the swept tube
+          if (dx * prevDir[0] + dy * prevDir[1] + dz * prevDir[2] < 0.15) {
+            break;
+          }
+          const nx = cur[0] + stepSize * dx;
+          const ny = cur[1] + stepSize * dy;
+          const nz = cur[2] + stepSize * dz;
+          if (
+            Math.abs(nx) > bounds ||
+            Math.abs(ny) > bounds ||
+            Math.abs(nz) > bounds
+          ) {
+            break;
+          }
+          cur = [nx, ny, nz];
+          prevDir = [dx, dy, dz];
+          const sNext = sampleDir(nx, ny, nz);
+          const spd = sNext ? sNext.mag : k4.mag;
+          pts.push([nx * s, ny * s, nz * s]);
+          speeds.push(spd);
+          if (spd < minSpd) minSpd = spd;
+          if (spd > maxSpd) maxSpd = spd;
+        }
+        if (pts.length >= 2) {
+          lines.push({pts, speeds});
+        }
+      }
+
+      if (lines.length === 0) {
+        lines.push({
+          pts: [
+            [0, -0.4 * s, 0],
+            [0, 0, 0],
+            [0, 0.4 * s, 0],
+          ],
+          speeds: [1, 1, 1],
+        });
+        minSpd = 0;
+        maxSpd = 1;
+      }
+
+      const spdSpan = maxSpd - minSpd;
+      const colorForSpeed = (spd: number): Vec3 => {
+        const t =
+          Math.abs(spdSpan) > 1e-12
+            ? clamp((spd - minSpd) / spdSpan, 0, 1)
+            : 0.5;
+        return sampleColormap(cmap, t);
+      };
+
+      const cosTab: number[] = new Array(P);
+      const sinTab: number[] = new Array(P);
+      for (let j = 0; j < P; j++) {
+        const a = (j * TAU) / P;
+        cosTab[j] = Math.cos(a);
+        sinTab[j] = Math.sin(a);
+      }
+
+      const parts: RawBufs[] = [];
+      for (const line of lines) {
+        const pts = line.pts;
+        const speeds = line.speeds;
+        const m = pts.length;
+        const tangs: Vec3[] = new Array(m);
+        for (let i = 0; i < m; i++) {
+          let tx: number, ty: number, tz: number;
+          if (i === 0) {
+            tx = pts[1][0] - pts[0][0];
+            ty = pts[1][1] - pts[0][1];
+            tz = pts[1][2] - pts[0][2];
+          } else if (i === m - 1) {
+            tx = pts[m - 1][0] - pts[m - 2][0];
+            ty = pts[m - 1][1] - pts[m - 2][1];
+            tz = pts[m - 1][2] - pts[m - 2][2];
+          } else {
+            tx = pts[i + 1][0] - pts[i - 1][0];
+            ty = pts[i + 1][1] - pts[i - 1][1];
+            tz = pts[i + 1][2] - pts[i - 1][2];
+          }
+          const tl = Math.hypot(tx, ty, tz) || 1;
+          tangs[i] = [tx / tl, ty / tl, tz / tl];
+        }
+
+        const frameN: Vec3[] = new Array(m);
+        const frameB: Vec3[] = new Array(m);
+        const t0 = tangs[0];
+        const ref: Vec3 = Math.abs(t0[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+        let nx0 = ref[1] * t0[2] - ref[2] * t0[1];
+        let ny0 = ref[2] * t0[0] - ref[0] * t0[2];
+        let nz0 = ref[0] * t0[1] - ref[1] * t0[0];
+        const nl0 = Math.hypot(nx0, ny0, nz0) || 1;
+        nx0 /= nl0;
+        ny0 /= nl0;
+        nz0 /= nl0;
+        frameN[0] = [nx0, ny0, nz0];
+        frameB[0] = [
+          t0[1] * nz0 - t0[2] * ny0,
+          t0[2] * nx0 - t0[0] * nz0,
+          t0[0] * ny0 - t0[1] * nx0,
+        ];
+
+        for (let i = 1; i < m; i++) {
+          const tp = tangs[i - 1];
+          const tc = tangs[i];
+          const np = frameN[i - 1];
+          let ax = tp[1] * tc[2] - tp[2] * tc[1];
+          let ay = tp[2] * tc[0] - tp[0] * tc[2];
+          let az = tp[0] * tc[1] - tp[1] * tc[0];
+          const sinA = Math.hypot(ax, ay, az);
+          const cosA = clamp(
+            tp[0] * tc[0] + tp[1] * tc[1] + tp[2] * tc[2],
+            -1,
+            1,
+          );
+          let cnx = np[0],
+            cny = np[1],
+            cnz = np[2];
+          if (sinA > 1e-7) {
+            ax /= sinA;
+            ay /= sinA;
+            az /= sinA;
+            const dot = ax * cnx + ay * cny + az * cnz;
+            const crx = ay * cnz - az * cny;
+            const cry = az * cnx - ax * cnz;
+            const crz = ax * cny - ay * cnx;
+            cnx = cnx * cosA + crx * sinA + ax * dot * (1 - cosA);
+            cny = cny * cosA + cry * sinA + ay * dot * (1 - cosA);
+            cnz = cnz * cosA + crz * sinA + az * dot * (1 - cosA);
+          }
+          const d = cnx * tc[0] + cny * tc[1] + cnz * tc[2];
+          cnx -= d * tc[0];
+          cny -= d * tc[1];
+          cnz -= d * tc[2];
+          const cl = Math.hypot(cnx, cny, cnz) || 1;
+          cnx /= cl;
+          cny /= cl;
+          cnz /= cl;
+          frameN[i] = [cnx, cny, cnz];
+          frameB[i] = [
+            tc[1] * cnz - tc[2] * cny,
+            tc[2] * cnx - tc[0] * cnz,
+            tc[0] * cny - tc[1] * cnx,
+          ];
+        }
+
+        const rad: number[] = new Array(m).fill(rTube);
+        const isCrease: number[] = new Array(m).fill(0);
+        if (arrowsPerLine > 0 && m >= 8) {
+          let lastK = -10;
+          for (let a = 0; a < arrowsPerLine; a++) {
+            const kBase = clamp(
+              Math.round(((a + 0.5) / arrowsPerLine) * (m - 3)),
+              2,
+              m - 4,
+            );
+            if (kBase - lastK >= 4) {
+              rad[kBase] = rTube * arrowScale;
+              rad[kBase + 1] = rTube * (1 + 0.45 * (arrowScale - 1));
+              isCrease[kBase - 1] = 1;
+              isCrease[kBase] = 1;
+              isCrease[kBase + 2] = 1;
+              lastK = kBase;
+            }
+          }
+        }
+
+        // Prevent inner-bend ring folding on tight curvature
+        for (let i = 0; i < m - 1; i++) {
+          const dx = pts[i + 1][0] - pts[i][0];
+          const dy = pts[i + 1][1] - pts[i][1];
+          const dz = pts[i + 1][2] - pts[i][2];
+          const ds = Math.hypot(dx, dy, dz);
+          if (ds <= 1e-8) continue;
+          const tx = dx / ds,
+            ty = dy / ds,
+            tz = dz / ds;
+          const dNx = frameN[i + 1][0] - frameN[i][0];
+          const dNy = frameN[i + 1][1] - frameN[i][1];
+          const dNz = frameN[i + 1][2] - frameN[i][2];
+          const dBx = frameB[i + 1][0] - frameB[i][0];
+          const dBy = frameB[i + 1][1] - frameB[i][1];
+          const dBz = frameB[i + 1][2] - frameB[i][2];
+          const kTurn = Math.hypot(
+            dNx * tx + dNy * ty + dNz * tz,
+            dBx * tx + dBy * ty + dBz * tz,
+          );
+          if (kTurn > 1e-6) {
+            const maxR = (0.58 * ds) / kTurn;
+            if (rad[i] > maxR) rad[i] = Math.max(rTube * 0.25, maxR);
+            if (rad[i + 1] > maxR) rad[i + 1] = Math.max(rTube * 0.25, maxR);
+          }
+        }
+
+        const ringXYZ: number[] = new Array(m * P * 3);
+        const ringCol: Vec3[] = new Array(m);
+        for (let i = 0; i < m; i++) {
+          ringCol[i] = colorForSpeed(speeds[i]);
+          const c = pts[i];
+          const N = frameN[i];
+          const B = frameB[i];
+          const rCur = rad[i];
+          for (let j = 0; j < P; j++) {
+            const ct = cosTab[j];
+            const st = sinTab[j];
+            const rx = ct * N[0] + st * B[0];
+            const ry = ct * N[1] + st * B[1];
+            const rz = ct * N[2] + st * B[2];
+            const base = (i * P + j) * 3;
+            ringXYZ[base] = c[0] + rCur * rx;
+            ringXYZ[base + 1] = c[1] + rCur * ry;
+            ringXYZ[base + 2] = c[2] + rCur * rz;
+          }
+        }
+
+        const stripRow0: number[] = new Array(m - 1);
+        const stripRow1: number[] = new Array(m - 1);
+        const rowSpatialI: number[] = [0];
+        let curRow = 0;
+        for (let i = 0; i < m - 1; i++) {
+          stripRow0[i] = curRow;
+          curRow++;
+          rowSpatialI.push(i + 1);
+          stripRow1[i] = curRow;
+          if (i + 1 < m - 1 && isCrease[i + 1]) {
+            curRow++;
+            rowSpatialI.push(i + 1);
+          }
+        }
+        const sideRows = rowSpatialI.length;
+        const sideNrm: number[] = new Array(sideRows * P * 3).fill(0);
+
+        const addStripTriNrm = (
+          iA: number,
+          rA: number,
+          jA: number,
+          iB: number,
+          rB: number,
+          jB: number,
+          iC: number,
+          rC: number,
+          jC: number,
+        ) => {
+          const pA = (iA * P + jA) * 3;
+          const pB = (iB * P + jB) * 3;
+          const pC = (iC * P + jC) * 3;
+          const abx = ringXYZ[pB] - ringXYZ[pA];
+          const aby = ringXYZ[pB + 1] - ringXYZ[pA + 1];
+          const abz = ringXYZ[pB + 2] - ringXYZ[pA + 2];
+          const acx = ringXYZ[pC] - ringXYZ[pA];
+          const acy = ringXYZ[pC + 1] - ringXYZ[pA + 1];
+          const acz = ringXYZ[pC + 2] - ringXYZ[pA + 2];
+          const fnx = aby * acz - abz * acy;
+          const fny = abz * acx - abx * acz;
+          const fnz = abx * acy - aby * acx;
+          const dA = (rA * P + jA) * 3;
+          const dB = (rB * P + jB) * 3;
+          const dC = (rC * P + jC) * 3;
+          sideNrm[dA] += fnx;
+          sideNrm[dA + 1] += fny;
+          sideNrm[dA + 2] += fnz;
+          sideNrm[dB] += fnx;
+          sideNrm[dB + 1] += fny;
+          sideNrm[dB + 2] += fnz;
+          sideNrm[dC] += fnx;
+          sideNrm[dC + 1] += fny;
+          sideNrm[dC + 2] += fnz;
+        };
+
+        for (let i = 0; i < m - 1; i++) {
+          const r0 = stripRow0[i];
+          const r1 = stripRow1[i];
+          for (let j = 0; j < P; j++) {
+            const j1 = (j + 1) % P;
+            addStripTriNrm(i, r0, j, i, r0, j1, i + 1, r1, j1);
+            addStripTriNrm(i, r0, j, i + 1, r1, j1, i + 1, r1, j);
+          }
+        }
+        for (let k = 0; k < sideNrm.length; k += 3) {
+          const nl =
+            Math.hypot(sideNrm[k], sideNrm[k + 1], sideNrm[k + 2]) || 1;
+          sideNrm[k] /= nl;
+          sideNrm[k + 1] /= nl;
+          sideNrm[k + 2] /= nl;
+        }
+
+        const pos: number[] = [];
+        const nrm: number[] = [];
+        const uv: number[] = [];
+        const col: number[] = [];
+        const idx: number[] = [];
+
+        for (let r = 0; r < sideRows; r++) {
+          const i = rowSpatialI[r];
+          const u = i / (m - 1);
+          const [cr, cg, cb] = ringCol[i];
+          for (let j = 0; j < P; j++) {
+            const base = (i * P + j) * 3;
+            const nBase = (r * P + j) * 3;
+            pos.push(ringXYZ[base], ringXYZ[base + 1], ringXYZ[base + 2]);
+            nrm.push(sideNrm[nBase], sideNrm[nBase + 1], sideNrm[nBase + 2]);
+            uv.push(j / P, u);
+            col.push(cr, cg, cb);
+          }
+        }
+
+        for (let i = 0; i < m - 1; i++) {
+          const r0 = stripRow0[i] * P;
+          const r1 = stripRow1[i] * P;
+          for (let j = 0; j < P; j++) {
+            const j1 = (j + 1) % P;
+            idx.push(r0 + j, r0 + j1, r1 + j1, r0 + j, r1 + j1, r1 + j);
+          }
+        }
+
+        // Start cap at i = 0 (normal = -T_0)
+        let vOff = sideRows * P;
+        const ts = tangs[0];
+        const [c0r, c0g, c0b] = colorForSpeed(speeds[0]);
+        pos.push(pts[0][0], pts[0][1], pts[0][2]);
+        nrm.push(-ts[0], -ts[1], -ts[2]);
+        uv.push(0.5, 0.5);
+        col.push(c0r, c0g, c0b);
+        const cStart = vOff++;
+        const sRing = vOff;
+        for (let j = 0; j < P; j++) {
+          pos.push(ringXYZ[j * 3], ringXYZ[j * 3 + 1], ringXYZ[j * 3 + 2]);
+          nrm.push(-ts[0], -ts[1], -ts[2]);
+          uv.push(0.5 + 0.5 * cosTab[j], 0.5 + 0.5 * sinTab[j]);
+          col.push(c0r, c0g, c0b);
+        }
+        vOff += P;
+        for (let j = 0; j < P; j++) {
+          idx.push(cStart, sRing + ((j + 1) % P), sRing + j);
+        }
+
+        // End cap at i = m - 1 (normal = +T_{m-1})
+        const te = tangs[m - 1];
+        const [cMr, cMg, cMb] = colorForSpeed(speeds[m - 1]);
+        pos.push(pts[m - 1][0], pts[m - 1][1], pts[m - 1][2]);
+        nrm.push(te[0], te[1], te[2]);
+        uv.push(0.5, 0.5);
+        col.push(cMr, cMg, cMb);
+        const cEnd = vOff++;
+        const eRing = vOff;
+        const lastBase = (m - 1) * P;
+        for (let j = 0; j < P; j++) {
+          const k = (lastBase + j) * 3;
+          pos.push(ringXYZ[k], ringXYZ[k + 1], ringXYZ[k + 2]);
+          nrm.push(te[0], te[1], te[2]);
+          uv.push(0.5 + 0.5 * cosTab[j], 0.5 + 0.5 * sinTab[j]);
+          col.push(cMr, cMg, cMb);
+        }
+        for (let j = 0; j < P; j++) {
+          idx.push(cEnd, eRing + j, eRing + ((j + 1) % P));
+        }
+
+        parts.push({pos, nrm, uv, idx, col});
+      }
+
+      applyBuffers(this, mergeRaw(parts, useVCol), 'StreamlineGeometry', {
+        preset,
+        lineCount: lines.length,
+        arrowsPerLine,
+      });
+    }
+  }
+
   const Science = {
     MAX_SCI_ATOMS: MAX_ATOMS,
     MAX_SCI_GRID: MAX_GRID,
     MAX_SCI_GLYPHS: MAX_GLYPHS,
     MAX_SCI_BASE_PAIRS: MAX_BP,
     MAX_SCI_RIBBON_POINTS: MAX_RIBBON_PTS,
+    MAX_SCI_ISOSURFACE_RES: MAX_ISOSURFACE_RES,
+    MAX_SCI_STREAMLINE_STEPS: MAX_STREAMLINE_STEPS,
     elementSpec,
+    sampleColormap,
+    colormapTexture,
+    applyVertexColormap,
     ribbonColorMap,
     MoleculeGeometry,
     CrystalLatticeGeometry,
@@ -3736,6 +5555,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     Axes3DGeometry,
     DoubleHelixGeometry,
     RibbonGeometry,
+    IsoSurfaceGeometry,
+    StreamlineGeometry,
   };
 
   for (const Ctor of [
@@ -3749,6 +5570,8 @@ export function installScienceKit(threeNs: any, reg?: any): any {
     Axes3DGeometry,
     DoubleHelixGeometry,
     RibbonGeometry,
+    IsoSurfaceGeometry,
+    StreamlineGeometry,
   ]) {
     try {
       Object.freeze(Ctor.prototype);
