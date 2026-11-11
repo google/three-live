@@ -17,8 +17,9 @@
 
 /**
  * @fileoverview Deterministically generates:
- *   1. `examples/kits/thumbs/<slug>.webp` (57 × 480×360 Retina Studio PBR WebP
- *      thumbnails rendered via `<three-live>` WebGL2 in headless Chromium).
+ *   1. `examples/kits/thumbs/<thumbFile>` (all constructor & style variant
+ *      480×360 Retina Studio PBR WebP thumbnails rendered via `<three-live>`
+ *      WebGL2 in headless Chromium).
  *   2. `docs/kits-gallery.md` (GitHub-browsable Markdown visual catalog).
  *
  * Usage:
@@ -29,7 +30,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {execFileSync} = require('child_process');
+const {spawn} = require('child_process');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const CATALOG_PATH = path.join(ROOT_DIR, 'examples/kits/catalog-data.js');
@@ -38,7 +39,18 @@ const DOCS_MD_PATH = path.join(ROOT_DIR, 'docs/kits-gallery.md');
 
 const catalog = require(CATALOG_PATH);
 
+function thumbFileFor(slug, vIdx) {
+  if (typeof catalog.thumbFile === 'function') {
+    return catalog.thumbFile(slug, vIdx);
+  }
+  return (!vIdx || vIdx === 0 ? slug : `${slug}-v${vIdx}`) + '.webp';
+}
+
 function generateMarkdownDoc() {
+  const totalStyles = catalog.ITEMS.reduce(
+      (sum, it) => sum + it.variants.length,
+      0,
+  );
   const lines = [
     '<!--',
     'Copyright 2026 Google LLC',
@@ -58,28 +70,30 @@ function generateMarkdownDoc() {
     '',
     '# Domain Kits Visual Catalog',
     '',
-    `Browse all **${
+    `Browse all **${totalStyles} curated styles & variants** across **${
         catalog.ITEMS
-            .length} watertight 2-manifold parametric geometry constructors** across the **${
+            .length} watertight 2-manifold parametric geometry constructors** in the **${
         catalog.DOMAINS.length} \`three-live\` Domain Kits**.`,
     '',
-    '> **Interactive 3D Inspector:** Open the [**Live Domain Kits Catalog (`examples/kits/`)**](https://google.github.io/three-live/kits/) to search across all kits, orbit/zoom every primitive at 60 fps in `<three-live>` Studio PBR, switch multi-style variants, copy `<script type="text/three">` snippets, and export `.glb` / `.usdz` assets.',
+    '> **Interactive 3D Inspector:** Open the [**Live Domain Kits Catalog (`examples/kits/`)**](https://google.github.io/three-live/kits/) to toggle between **All Styles** and **Constructors (57)**, search across all kits, orbit/zoom every primitive at 60 fps in `<three-live>` Studio PBR, edit `<script type="text/three">` live, and export `.glb` / `.usdz` assets.',
     '',
     '## Quick Jump',
     '',
-    '| Domain Kit | Namespace | Bundle | Gzip Budget | Primitives |',
-    '| :--- | :--- | :--- | :---: | :---: |',
+    '| Domain Kit | Namespace | Bundle | Gzip Budget | Constructors | Visual Styles |',
+    '| :--- | :--- | :--- | :---: | :---: | :---: |',
   ];
 
   for (const dom of catalog.DOMAINS) {
-    const count = catalog.ITEMS.filter((it) => it.domain === dom.id).length;
+    const domItems = catalog.ITEMS.filter((it) => it.domain === dom.id);
+    const styleCount = domItems.reduce((s, it) => s + it.variants.length, 0);
     const anchor = `${
         dom.title.toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '')}`;
     lines.push(
         `| [**${dom.title}**](#${anchor}) | \`THREE.${dom.namespace}\` | \`${
-            dom.bundle}\` | \`${dom.budgetLabel}\` | **${count}** |`,
+            dom.bundle}\` | \`${dom.budgetLabel}\` | **${
+            domItems.length}** | **${styleCount}** |`,
     );
   }
 
@@ -90,6 +104,13 @@ function generateMarkdownDoc() {
 
   for (const dom of catalog.DOMAINS) {
     const domItems = catalog.ITEMS.filter((it) => it.domain === dom.id);
+    const flatStyles = [];
+    for (const item of domItems) {
+      item.variants.forEach((v, vIdx) => {
+        flatStyles.push({item, variant: v, vIdx});
+      });
+    }
+
     lines.push(
         '',
         '---',
@@ -98,7 +119,7 @@ function generateMarkdownDoc() {
         '',
         `**Namespace:** \`THREE.${dom.namespace}\` · **Bundle:** \`${
             dom.bundle}\` (\`${dom.budgetLabel}\`) · **Constructors:** ${
-            domItems.length}`,
+            domItems.length} · **Styles:** ${flatStyles.length}`,
         '',
         dom.description,
         '',
@@ -112,27 +133,26 @@ function generateMarkdownDoc() {
       lines.push('');
     }
 
-    const cols = 3;
-    for (let i = 0; i < domItems.length; i += cols) {
-      const row = domItems.slice(i, i + cols);
+    const cols = 4;
+    for (let i = 0; i < flatStyles.length; i += cols) {
+      const row = flatStyles.slice(i, i + cols);
       while (row.length < cols) row.push(null);
 
       if (i === 0) {
         lines.push(
-            '| ' + row.map((_, idx) => `Part ${idx + 1}`).join(' | ') + ' |',
+            '| ' + row.map((_, idx) => `Style ${idx + 1}`).join(' | ') + ' |',
         );
         lines.push('| ' + row.map(() => ':---').join(' | ') + ' |');
       }
 
-      const cells = row.map((item) => {
-        if (!item) return ' ';
-        const variantNote = item.variants.length > 1 ?
-            ` *(${item.variants.length} variants)*` :
-            '';
-        const cleanSummary = item.summary.replace(/\|/g, '\\|');
-        return `<img src="../examples/kits/thumbs/${item.slug}.webp" alt="${
-            dom.namespace}.${item.ctor}" width="260"><br>**\`${item.ctor}\`**${
-            variantNote}<br><sub>${cleanSummary}</sub>`;
+      const cells = row.map((entry) => {
+        if (!entry) return ' ';
+        const {item, variant, vIdx} = entry;
+        const file = thumbFileFor(item.slug, vIdx);
+        const cleanLabel = variant.label.replace(/\|/g, '\\|');
+        return `<img src="../examples/kits/thumbs/${file}" alt="${
+            dom.namespace}.${item.ctor} — ${cleanLabel}" width="210"><br>**\`${
+            item.ctor}\`**<br><sub>${cleanLabel}</sub>`;
       });
       lines.push('| ' + cells.join(' | ') + ' |');
     }
@@ -143,7 +163,7 @@ function generateMarkdownDoc() {
   fs.writeFileSync(DOCS_MD_PATH, lines.join('\n'), 'utf8');
   console.log(
       `--> Generated ${path.relative(ROOT_DIR, DOCS_MD_PATH)} (${
-          catalog.ITEMS.length} primitives)`,
+          catalog.ITEMS.length} constructors, ${totalStyles} styles)`,
   );
 }
 
@@ -164,61 +184,8 @@ function resolveChromeBinary() {
   );
 }
 
-async function renderThumbnails() {
-  const author =
-      require(path.join(ROOT_DIR, 'three-live/dist/three-author.cjs'));
-  const kits =
-      require(path.join(ROOT_DIR, 'three-live/dist/three-live-kits.cjs'));
-  kits.installMechanicalKit(author.THREE);
-  kits.installArchitectureKit(author.THREE);
-  kits.installIndustrialKit(author.THREE);
-  kits.installScienceKit(author.THREE);
-  kits.installElectronicsKit(author.THREE);
-
-  const domainAccents = Object.fromEntries(
-      catalog.DOMAINS.map((d) => [d.id, d.accent]),
-  );
-
-  console.log(
-      `--> Pre-compiling ${
-          catalog.ITEMS.length} default domain kit scenes to GLB...`,
-  );
-  const renderSpecs = [];
-  for (const item of catalog.ITEMS) {
-    const scene = new author.THREE.Scene();
-    const runner = new Function('THREE', 'scene', item.variants[0].code);
-    runner(author.THREE, scene);
-    const glb = await author.exportSceneToGLB(scene);
-    const glbB64 = Buffer
-                       .from(
-                           glb.buffer,
-                           glb.byteOffset,
-                           glb.byteLength,
-                           )
-                       .toString('base64');
-    renderSpecs.push({
-      slug: item.slug,
-      ctor: item.ctor,
-      domain: item.domain,
-      accent: domainAccents[item.domain] || '#38bdf8',
-      orbit: item.orbit,
-      glbB64,
-    });
-  }
-
-  fs.mkdirSync(THUMBS_DIR, {recursive: true});
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-kits-gallery-'));
-
-  try {
-    fs.copyFileSync(
-        path.join(ROOT_DIR, 'three-live/dist/three-live.min.js'),
-        path.join(tmpDir, 'three-live.min.js'),
-    );
-    fs.copyFileSync(
-        path.join(ROOT_DIR, 'three-live/dist/three-live-studio.min.js'),
-        path.join(tmpDir, 'three-live-studio.min.js'),
-    );
-
+function runChromeShard(chromeBin, tmpDir, shardIdx, shardSpecs) {
+  return new Promise((resolve, reject) => {
     const harnessHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -242,7 +209,7 @@ async function renderThumbnails() {
   <script id="gallery-report" type="application/json"></script>
   <script>
   (() => {
-    const specs = ${JSON.stringify(renderSpecs)};
+    const specs = ${JSON.stringify(shardSpecs)};
     const el = document.getElementById('viewer');
     const W = 480;
     const H = 360;
@@ -285,7 +252,6 @@ async function renderThumbnails() {
           }
         }
 
-        // Verify foreground silhouette coverage on transparent canvas
         fgCtx.clearRect(0, 0, W, H);
         el.viewer?.render?.();
         fgCtx.drawImage(el.canvas, 0, 0, W, H);
@@ -295,7 +261,6 @@ async function renderThumbnails() {
           if (fgData[i] > 12) fgPixels++;
         }
 
-        // Composite Studio PBR render over dark radial studio backdrop + subtle domain glow
         const [ar, ag, ab] = hexToRgb(spec.accent);
         const bgGrad = outCtx.createRadialGradient(
           W * 0.5, H * 0.44, 18,
@@ -321,13 +286,13 @@ async function renderThumbnails() {
 
         const dataUrl = outCanvas.toDataURL('image/webp', 0.85);
         report.push({
-          slug: spec.slug,
+          file: spec.file,
           fgCoverage: +((fgPixels / (W * H)) * 100).toFixed(1),
           webpB64: dataUrl.split(',')[1],
         });
       } catch (err) {
         report.push({
-          slug: spec.slug,
+          file: spec.file,
           error: String((err && err.message) || err),
         });
       }
@@ -339,17 +304,11 @@ async function renderThumbnails() {
 </body>
 </html>`;
 
-    const htmlPath = path.join(tmpDir, 'harness.html');
+    const htmlPath = path.join(tmpDir, `harness-${shardIdx}.html`);
     fs.writeFileSync(htmlPath, harnessHtml, 'utf8');
 
-    console.log(
-        `--> Rendering ${
-            catalog.ITEMS
-                .length} Studio PBR 480×360 WebP thumbnails via headless Chrome...`,
-    );
-    const t0 = Date.now();
-    const domOut = execFileSync(
-        resolveChromeBinary(),
+    const child = spawn(
+        chromeBin,
         [
           '--headless=new',
           '--no-sandbox',
@@ -368,44 +327,132 @@ async function renderThumbnails() {
           '--dump-dom',
           `file://${htmlPath}`,
         ],
-        {
-          encoding: 'utf8',
-          maxBuffer: 128 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
+        {stdio: ['ignore', 'pipe', 'ignore']},
     );
 
-    const match = domOut.match(
-        /<script id="gallery-report" type="application\/json">([\s\S]*?)<\/script>/,
-    );
-    if (!match || !match[1]) {
-      throw new Error(
-          'Failed to extract gallery-report JSON from headless Chrome DOM');
+    const chunks = [];
+    child.stdout.on('data', (c) => chunks.push(c));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Chrome shard ${shardIdx} exited with code ${code}`));
+        return;
+      }
+      const domOut = Buffer.concat(chunks).toString('utf8');
+      const match = domOut.match(
+          /<script id="gallery-report" type="application\/json">([\s\S]*?)<\/script>/,
+      );
+      if (!match || !match[1]) {
+        reject(
+            new Error(
+                `Failed to extract gallery-report JSON from Chrome shard ${
+                    shardIdx}`,
+                ),
+        );
+        return;
+      }
+      resolve(JSON.parse(match[1]));
+    });
+  });
+}
+
+async function renderThumbnails() {
+  const author =
+      require(path.join(ROOT_DIR, 'three-live/dist/three-author.cjs'));
+  const kits =
+      require(path.join(ROOT_DIR, 'three-live/dist/three-live-kits.cjs'));
+  kits.installMechanicalKit(author.THREE);
+  kits.installArchitectureKit(author.THREE);
+  kits.installIndustrialKit(author.THREE);
+  kits.installScienceKit(author.THREE);
+  kits.installElectronicsKit(author.THREE);
+
+  const domainAccents = Object.fromEntries(
+      catalog.DOMAINS.map((d) => [d.id, d.accent]),
+  );
+
+  const renderSpecs = [];
+  for (const item of catalog.ITEMS) {
+    for (let vIdx = 0; vIdx < item.variants.length; vIdx++) {
+      const variant = item.variants[vIdx];
+      const scene = new author.THREE.Scene();
+      const runner = new Function('THREE', 'scene', variant.code);
+      runner(author.THREE, scene);
+      const glb = await author.exportSceneToGLB(scene);
+      const glbB64 = Buffer
+                         .from(
+                             glb.buffer,
+                             glb.byteOffset,
+                             glb.byteLength,
+                             )
+                         .toString('base64');
+      renderSpecs.push({
+        file: thumbFileFor(item.slug, vIdx),
+        slug: item.slug,
+        vIdx,
+        label: variant.label,
+        accent: domainAccents[item.domain] || '#38bdf8',
+        orbit: variant.orbit || item.orbit,
+        glbB64,
+      });
     }
-    const report = JSON.parse(match[1]);
+  }
+
+  console.log(
+      `--> Pre-compiled ${renderSpecs.length} scenes across ${
+          catalog.ITEMS.length} constructors to GLB.`,
+  );
+
+  fs.mkdirSync(THUMBS_DIR, {recursive: true});
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-kits-gallery-'));
+
+  try {
+    fs.copyFileSync(
+        path.join(ROOT_DIR, 'three-live/dist/three-live.min.js'),
+        path.join(tmpDir, 'three-live.min.js'),
+    );
+    fs.copyFileSync(
+        path.join(ROOT_DIR, 'three-live/dist/three-live-studio.min.js'),
+        path.join(tmpDir, 'three-live-studio.min.js'),
+    );
+
+    const shardCount = 4;
+    const shardSize = Math.ceil(renderSpecs.length / shardCount);
+    const shards = [];
+    for (let s = 0; s < shardCount; s++) {
+      const slice = renderSpecs.slice(s * shardSize, (s + 1) * shardSize);
+      if (slice.length > 0) shards.push(slice);
+    }
+
+    const chromeBin = resolveChromeBinary();
+    console.log(
+        `--> Rendering ${
+            renderSpecs.length} Studio PBR 480×360 WebP thumbnails across ${
+            shards.length} parallel Chrome shards...`,
+    );
+    const t0 = Date.now();
+    const shardReports = await Promise.all(
+        shards.map(
+            (slice, idx) => runChromeShard(chromeBin, tmpDir, idx, slice)),
+    );
+    const report = shardReports.flat();
 
     let totalBytes = 0;
     const problems = [];
     for (const entry of report) {
       if (entry.error) {
-        problems.push(`${entry.slug}: ${entry.error}`);
+        problems.push(`${entry.file}: ${entry.error}`);
         continue;
       }
       const webpBuf = Buffer.from(entry.webpB64, 'base64');
-      const outPath = path.join(THUMBS_DIR, `${entry.slug}.webp`);
-      fs.writeFileSync(outPath, webpBuf);
+      fs.writeFileSync(path.join(THUMBS_DIR, entry.file), webpBuf);
       totalBytes += webpBuf.length;
       if (entry.fgCoverage < 0.8) {
         problems.push(
-            `${entry.slug}: low foreground pixel coverage (${
+            `${entry.file}: low foreground pixel coverage (${
                 entry.fgCoverage}%)`,
         );
       }
-      console.log(
-          `   [OK] ${entry.slug.padEnd(34)} ${
-              (webpBuf.length / 1024).toFixed(1).padStart(5)} KB   fg=${
-              String(entry.fgCoverage).padStart(4)}%`,
-      );
     }
 
     console.log(

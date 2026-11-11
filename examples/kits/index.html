@@ -59,19 +59,19 @@ limitations under the License.
     }
 
     .topbar-inner {
-      max-width: 1280px;
+      max-width: 1360px;
       margin: 0 auto;
-      padding: 14px 20px 12px;
+      padding: 13px 20px 12px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 11px;
     }
 
     .brand-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 14px;
       flex-wrap: wrap;
     }
 
@@ -131,11 +131,48 @@ limitations under the License.
       flex-wrap: wrap;
     }
 
+    /* Segmented View Mode Toggle */
+    .view-segmented {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid #334155;
+      border-radius: 999px;
+      padding: 2px;
+      gap: 2px;
+    }
+    .seg-btn {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      font: 600 12px/1 Inter, system-ui, sans-serif;
+      padding: 6px 11px;
+      border-radius: 999px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .seg-btn:hover { color: #f8fafc; }
+    .seg-btn.active {
+      background: rgba(56, 189, 248, 0.22);
+      color: #f8fafc;
+      box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.48);
+    }
+    .seg-count {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 10.5px;
+      opacity: 0.85;
+    }
+
     .controls-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
     }
 
@@ -180,11 +217,20 @@ limitations under the License.
       opacity: 0.78;
     }
 
+    .right-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1 1 auto;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
     .search-wrap {
       position: relative;
-      flex: 1 1 260px;
-      max-width: 360px;
-      min-width: 210px;
+      flex: 1 1 240px;
+      max-width: 340px;
+      min-width: 200px;
     }
     .search-input {
       width: 100%;
@@ -193,7 +239,7 @@ limitations under the License.
       border-radius: 10px;
       color: #f8fafc;
       font: 400 13px/1.3 Inter, system-ui, sans-serif;
-      padding: 8px 54px 8px 32px;
+      padding: 7.5px 52px 7.5px 32px;
       outline: none;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
@@ -227,19 +273,19 @@ limitations under the License.
 
     /* Main Content */
     main {
-      max-width: 1280px;
+      max-width: 1360px;
       margin: 0 auto;
-      padding: 22px 20px 56px;
+      padding: 20px 20px 56px;
       display: flex;
       flex-direction: column;
-      gap: 36px;
+      gap: 34px;
     }
 
     .intro-banner {
       background: linear-gradient(135deg, rgba(21, 32, 54, 0.85), rgba(15, 23, 42, 0.92));
       border: 1px solid #293954;
       border-radius: 14px;
-      padding: 14px 18px;
+      padding: 13px 18px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -281,10 +327,10 @@ limitations under the License.
       background: rgba(15, 23, 42, 0.72);
       border: 1px solid #26354f;
       border-radius: 14px;
-      padding: 16px 18px;
+      padding: 15px 18px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 9px;
     }
 
     .domain-title-row {
@@ -331,7 +377,7 @@ limitations under the License.
       flex-wrap: wrap;
       align-items: center;
       gap: 8px;
-      padding-top: 4px;
+      padding-top: 3px;
     }
     .helpers-label {
       font-size: 11.5px;
@@ -356,12 +402,17 @@ limitations under the License.
       background: rgba(30, 41, 59, 0.95);
     }
 
-    /* Card Grid */
+    /* Card Grids: Expanded All-Styles (dense 6-col) vs Constructors (5-col) */
     .cards-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
       gap: 14px;
     }
+    .cards-grid.styles-grid {
+      grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
+      gap: 11px;
+    }
+    .cards-grid[hidden] { display: none; }
 
     .part-card {
       appearance: none;
@@ -371,13 +422,14 @@ limitations under the License.
       padding: 0;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 13px;
+      border-radius: 12px;
       overflow: hidden;
       cursor: pointer;
       display: flex;
       flex-direction: column;
       transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
     }
+    .part-card[hidden] { display: none; }
     .part-card:hover, .part-card:focus-visible {
       transform: translateY(-2px);
       background: var(--bg-card-hover);
@@ -407,13 +459,13 @@ limitations under the License.
 
     .inspect-pill {
       position: absolute;
-      right: 8px;
-      bottom: 8px;
-      font-size: 11px;
+      right: 7px;
+      bottom: 7px;
+      font-size: 10.5px;
       font-weight: 600;
-      padding: 4px 8px;
+      padding: 3.5px 8px;
       border-radius: 999px;
-      background: rgba(9, 14, 26, 0.84);
+      background: rgba(9, 14, 26, 0.86);
       border: 1px solid rgba(56, 189, 248, 0.45);
       color: #e0f2fe;
       opacity: 0;
@@ -429,25 +481,35 @@ limitations under the License.
 
     .variant-badge {
       position: absolute;
-      left: 8px;
-      top: 8px;
+      left: 7px;
+      top: 7px;
       font-family: ui-monospace, SFMono-Regular, monospace;
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 600;
-      padding: 2px 7px;
+      padding: 2px 6.5px;
       border-radius: 999px;
-      background: rgba(9, 14, 26, 0.76);
+      background: rgba(9, 14, 26, 0.78);
       border: 1px solid rgba(148, 163, 184, 0.3);
       color: #cbd5e1;
       backdrop-filter: blur(4px);
     }
 
     .card-body {
-      padding: 11px 12px 12px;
+      padding: 10px 11px 11px;
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 4px;
       flex: 1;
+    }
+    .card-eyebrow {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--card-accent, var(--cyan));
+      opacity: 0.92;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .card-ctor {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -455,6 +517,12 @@ limitations under the License.
       font-weight: 700;
       color: #f8fafc;
       word-break: break-word;
+    }
+    .card-style-title {
+      font-size: 12.5px;
+      font-weight: 650;
+      color: #f8fafc;
+      line-height: 1.3;
     }
     .card-summary {
       margin: 0;
@@ -733,8 +801,11 @@ limitations under the License.
     @media (max-width: 560px) {
       .topbar-inner { padding: 10px 12px; }
       main { padding: 14px 12px 40px; }
-      .cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      .card-ctor { font-size: 12px; }
+      .cards-grid, .cards-grid.styles-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .card-ctor, .card-style-title { font-size: 12px; }
       .card-summary { font-size: 11px; }
     }
   </style>
@@ -748,11 +819,19 @@ limitations under the License.
           <div class="title-group">
             <h1>
               Domain Kits Visual Catalog
-              <span class="title-pill" id="total-pill">57 Primitives · 5 Kits</span>
+              <span class="title-pill" id="total-pill">153 Styles · 57 Constructors</span>
             </h1>
           </div>
         </div>
         <div class="brand-actions">
+          <div class="view-segmented" role="group" aria-label="Catalog View Mode">
+            <button type="button" class="seg-btn active" id="btn-view-styles">
+              All Styles <span class="seg-count" id="seg-styles-count">153</span>
+            </button>
+            <button type="button" class="seg-btn" id="btn-view-ctors">
+              Constructors <span class="seg-count" id="seg-ctors-count">57</span>
+            </button>
+          </div>
           <a class="back-link" href="../three/index.html">&lt;three-live&gt; Studio &#8599;</a>
           <a class="back-link" href="https://github.com/google/three-live/blob/main/docs/kits-gallery.md" target="_blank" rel="noopener">Markdown Docs &#8599;</a>
         </div>
@@ -760,16 +839,18 @@ limitations under the License.
 
       <div class="controls-row">
         <div class="filter-pills" id="filter-pills" role="tablist" aria-label="Filter by Domain Kit"></div>
-        <div class="search-wrap">
-          <span class="search-icon">&#128269;</span>
-          <input
-            type="search"
-            id="search-input"
-            class="search-input"
-            placeholder="Search 57 parts (e.g. gear, arched, gyroid, usb-c)..."
-            aria-label="Search domain kit constructors"
-          >
-          <span class="search-kbd" id="search-kbd" title="Press / to search">/</span>
+        <div class="right-controls">
+          <div class="search-wrap">
+            <span class="search-icon">&#128269;</span>
+            <input
+              type="search"
+              id="search-input"
+              class="search-input"
+              placeholder="Search styles &amp; constructors (e.g. barn, rj45, gyroid, bevel)..."
+              aria-label="Search domain kit styles and constructors"
+            >
+            <span class="search-kbd" id="search-kbd" title="Press / to search">/</span>
+          </div>
         </div>
       </div>
     </div>
@@ -778,7 +859,7 @@ limitations under the License.
   <main>
     <div class="intro-banner">
       <div>
-        Every geometry below is <strong>watertight 2-manifold</strong>, indexed, UV-mapped, and compiles identically to WebGL2/WebGPU, Android Filament (<code>.glb</code>), and Apple RealityKit (<code>.usdz</code>). Click any card to orbit in live 3D, switch variants, or export.
+        Every geometry below is <strong>watertight 2-manifold</strong>, indexed, UV-mapped, and compiles identically to WebGL2/WebGPU, Android Filament (<code>.glb</code>), and Apple RealityKit (<code>.usdz</code>). Click any card to orbit in live 3D, edit parameters, or export.
       </div>
       <div class="all-kits-badge">
         All 5 Kits: <code>three-live-kits.min.js</code> (<span data-bundle-size="three-live-kits.min.js">81.5 KB gz</span>)
@@ -787,7 +868,7 @@ limitations under the License.
 
     <div id="sections-root"></div>
     <div id="empty-state" class="empty-state" hidden>
-      No constructors match your search. Press <strong>Esc</strong> or clear the filter to view all 57 parts.
+      No parts match your search. Press <strong>Esc</strong> or clear the filter to view the full catalog.
     </div>
   </main>
 
@@ -799,8 +880,8 @@ limitations under the License.
           <h3 id="modal-ctor">SpurGearGeometry</h3>
         </div>
         <div class="modal-nav">
-          <button type="button" class="icon-btn" id="btn-prev" title="Previous part (Left arrow)">&#8592; Prev</button>
-          <button type="button" class="icon-btn" id="btn-next" title="Next part (Right arrow)">Next &#8594;</button>
+          <button type="button" class="icon-btn" id="btn-prev" title="Previous (Left arrow)">&#8592; Prev</button>
+          <button type="button" class="icon-btn" id="btn-next" title="Next (Right arrow)">Next &#8594;</button>
           <button type="button" class="icon-btn" id="btn-close" title="Close (Esc)">&#10005; Close</button>
         </div>
       </div>
@@ -861,6 +942,19 @@ limitations under the License.
       const catalog = window.THREE_LIVE_KITS_CATALOG;
       if (!catalog) return;
 
+      const totalStylesCount = catalog.ITEMS.reduce((s, it) => s + it.variants.length, 0);
+      document.getElementById('total-pill').textContent =
+        `${totalStylesCount} Styles · ${catalog.ITEMS.length} Constructors`;
+      document.getElementById('seg-styles-count').textContent = String(totalStylesCount);
+      document.getElementById('seg-ctors-count').textContent = String(catalog.ITEMS.length);
+
+      function thumbFileFor(slug, vIdx) {
+        if (typeof catalog.thumbFile === 'function') {
+          return catalog.thumbFile(slug, vIdx);
+        }
+        return (!vIdx || vIdx === 0 ? slug : `${slug}-v${vIdx}`) + '.webp';
+      }
+
       const domainsById = new Map(catalog.DOMAINS.map((d) => [d.id, d]));
       const sectionsRoot = document.getElementById('sections-root');
       const filterPillsEl = document.getElementById('filter-pills');
@@ -868,10 +962,13 @@ limitations under the License.
       const searchKbd = document.getElementById('search-kbd');
       const emptyState = document.getElementById('empty-state');
       const toastEl = document.getElementById('toast');
+      const btnViewStyles = document.getElementById('btn-view-styles');
+      const btnViewCtors = document.getElementById('btn-view-ctors');
 
+      let viewMode = 'styles'; // 'styles' (expanded default) | 'constructors'
       let activeDomain = 'all';
       let searchQuery = '';
-      let visibleItems = catalog.ITEMS.slice();
+      let visibleTargets = []; // Array of { item, vIdx }
       let currentItem = null;
       let currentVariantIdx = 0;
       let currentGlbBytes = null;
@@ -906,18 +1003,23 @@ limitations under the License.
         return el && el.textContent ? el.textContent.trim() : fallback;
       }
 
-      // Build filter pills
       function renderFilterPills() {
         filterPillsEl.textContent = '';
+        const isStyles = viewMode === 'styles';
+        const allCount = isStyles ? totalStylesCount : catalog.ITEMS.length;
+
         const allBtn = document.createElement('button');
         allBtn.type = 'button';
         allBtn.className = 'pill-btn' + (activeDomain === 'all' ? ' active' : '');
-        allBtn.innerHTML = `All <span class="pill-count">${catalog.ITEMS.length}</span>`;
+        allBtn.innerHTML = `All <span class="pill-count">${allCount}</span>`;
         allBtn.addEventListener('click', () => setDomainFilter('all', true));
         filterPillsEl.appendChild(allBtn);
 
         for (const dom of catalog.DOMAINS) {
-          const count = catalog.ITEMS.filter((it) => it.domain === dom.id).length;
+          const domItems = catalog.ITEMS.filter((it) => it.domain === dom.id);
+          const count = isStyles
+            ? domItems.reduce((s, it) => s + it.variants.length, 0)
+            : domItems.length;
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.dataset.domain = dom.id;
@@ -928,9 +1030,9 @@ limitations under the License.
         }
       }
 
-      // Build sections & cards once, then toggle visibility fast on filter/search
-      const cardElements = new Map();
-      const sectionElements = new Map();
+      const ctorCards = new Map(); // slug -> button
+      const styleCards = new Map(); // `${slug}::${vIdx}` -> button
+      const domainGrids = new Map(); // domId -> { section, stylesGrid, ctorsGrid }
 
       function buildCatalogDOM() {
         sectionsRoot.textContent = '';
@@ -942,7 +1044,10 @@ limitations under the License.
           const header = document.createElement('div');
           header.className = 'domain-header';
 
+          const domItems = catalog.ITEMS.filter((it) => it.domain === dom.id);
+          const domStyleCount = domItems.reduce((s, it) => s + it.variants.length, 0);
           const sizeText = getStampedSize(dom.id, dom.budgetLabel);
+
           const titleRow = document.createElement('div');
           titleRow.className = 'domain-title-row';
           titleRow.innerHTML = `
@@ -950,6 +1055,7 @@ limitations under the License.
               <span style="font-size:20px">${dom.icon}</span>
               <h2>${dom.title}</h2>
               <span class="ns-badge" style="border-color:${dom.accent}55;color:${dom.accent}">THREE.${dom.namespace}</span>
+              <span class="ns-badge" style="color:#94a3b8">${domItems.length} ctors · ${domStyleCount} styles</span>
             </div>
             <span class="bundle-badge">${dom.bundle} · ${sizeText}</span>
           `;
@@ -957,7 +1063,6 @@ limitations under the License.
           const desc = document.createElement('p');
           desc.className = 'domain-desc';
           desc.textContent = dom.description;
-
           header.append(titleRow, desc);
 
           if (dom.helpers && dom.helpers.length > 0) {
@@ -979,25 +1084,28 @@ limitations under the License.
             header.appendChild(helpersRow);
           }
 
-          const grid = document.createElement('div');
-          grid.className = 'cards-grid';
+          // 1. Expanded All-Styles Grid (Default)
+          const stylesGrid = document.createElement('div');
+          stylesGrid.className = 'cards-grid styles-grid';
 
-          const domItems = catalog.ITEMS.filter((it) => it.domain === dom.id);
+          // 2. Compact 57-Constructors Grid
+          const ctorsGrid = document.createElement('div');
+          ctorsGrid.className = 'cards-grid';
+          ctorsGrid.hidden = true;
+
           for (const item of domItems) {
-            const card = document.createElement('button');
-            card.type = 'button';
-            card.className = 'part-card';
-            card.style.setProperty('--card-accent', dom.accent);
-            card.dataset.slug = item.slug;
-
+            // Constructor card
+            const cCard = document.createElement('button');
+            cCard.type = 'button';
+            cCard.className = 'part-card';
+            cCard.style.setProperty('--card-accent', dom.accent);
             const variantTag =
               item.variants.length > 1
-                ? `<span class="variant-badge">${item.variants.length} variants</span>`
+                ? `<span class="variant-badge">${item.variants.length} styles</span>`
                 : '';
-
-            card.innerHTML = `
+            cCard.innerHTML = `
               <div class="thumb-wrap">
-                <img src="./thumbs/${item.slug}.webp" width="480" height="360" loading="lazy" decoding="async" alt="${dom.namespace}.${item.ctor}">
+                <img src="./thumbs/${thumbFileFor(item.slug, 0)}" width="480" height="360" loading="lazy" decoding="async" alt="${dom.namespace}.${item.ctor}">
                 ${variantTag}
                 <span class="inspect-pill">Inspect 3D &#8599;</span>
               </div>
@@ -1006,68 +1114,139 @@ limitations under the License.
                 <p class="card-summary"></p>
               </div>
             `;
-            card.querySelector('.card-summary').textContent = item.summary;
-            card.addEventListener('click', () => openInspector(item));
-            grid.appendChild(card);
-            cardElements.set(item.slug, card);
+            cCard.querySelector('.card-summary').textContent = item.summary;
+            cCard.addEventListener('click', () => openInspector(item, 0));
+            ctorsGrid.appendChild(cCard);
+            ctorCards.set(item.slug, cCard);
+
+            // Expanded per-style cards
+            item.variants.forEach((v, vIdx) => {
+              const sCard = document.createElement('button');
+              sCard.type = 'button';
+              sCard.className = 'part-card';
+              sCard.style.setProperty('--card-accent', dom.accent);
+              const idxBadge =
+                item.variants.length > 1
+                  ? `<span class="variant-badge">${vIdx + 1}/${item.variants.length}</span>`
+                  : '';
+              const imgFile = thumbFileFor(item.slug, vIdx);
+              sCard.innerHTML = `
+                <div class="thumb-wrap">
+                  <img src="./thumbs/${imgFile}" width="480" height="360" loading="lazy" decoding="async" alt="${item.ctor} — ${v.label}">
+                  ${idxBadge}
+                  <span class="inspect-pill">3D &#8599;</span>
+                </div>
+                <div class="card-body">
+                  <div class="card-eyebrow">${item.ctor}</div>
+                  <div class="card-style-title"></div>
+                </div>
+              `;
+              sCard.querySelector('.card-style-title').textContent = v.label;
+              sCard.addEventListener('click', () => openInspector(item, vIdx));
+              stylesGrid.appendChild(sCard);
+              styleCards.set(`${item.slug}::${vIdx}`, sCard);
+            });
           }
 
-          section.append(header, grid);
+          section.append(header, stylesGrid, ctorsGrid);
           sectionsRoot.appendChild(section);
-          sectionElements.set(dom.id, section);
+          domainGrids.set(dom.id, { section, stylesGrid, ctorsGrid });
         }
       }
 
       function applyFilters() {
         const q = searchQuery.trim().toLowerCase();
-        visibleItems = [];
+        const isStyles = viewMode === 'styles';
+        visibleTargets = [];
+
+        btnViewStyles.classList.toggle('active', isStyles);
+        btnViewCtors.classList.toggle('active', !isStyles);
 
         for (const dom of catalog.DOMAINS) {
-          const sec = sectionElements.get(dom.id);
+          const entry = domainGrids.get(dom.id);
+          if (!entry) continue;
           const domainMatch = activeDomain === 'all' || activeDomain === dom.id;
-          let sectionCount = 0;
+          entry.stylesGrid.hidden = !isStyles;
+          entry.ctorsGrid.hidden = isStyles;
 
+          let sectionCount = 0;
           const domItems = catalog.ITEMS.filter((it) => it.domain === dom.id);
-          for (const item of domItems) {
-            const haystack = [
-              item.ctor,
-              dom.namespace,
-              dom.title,
-              item.summary,
-              item.tags || '',
-              ...item.variants.map((v) => v.label),
-            ]
-              .join(' ')
-              .toLowerCase();
-            const match = domainMatch && (!q || haystack.includes(q));
-            const card = cardElements.get(item.slug);
-            if (card) card.hidden = !match;
-            if (match) {
-              sectionCount++;
-              visibleItems.push(item);
+
+          if (isStyles) {
+            for (const item of domItems) {
+              const baseHay = [item.ctor, dom.namespace, dom.title, item.summary, ...(item.tags || [])]
+                .join(' ')
+                .toLowerCase();
+              item.variants.forEach((v, vIdx) => {
+                const hay = baseHay + ' ' + v.label.toLowerCase();
+                const match = domainMatch && (!q || hay.includes(q));
+                const card = styleCards.get(`${item.slug}::${vIdx}`);
+                if (card) card.hidden = !match;
+                if (match) {
+                  sectionCount++;
+                  visibleTargets.push({ item, vIdx });
+                }
+              });
+            }
+          } else {
+            for (const item of domItems) {
+              const hay = [
+                item.ctor,
+                dom.namespace,
+                dom.title,
+                item.summary,
+                ...(item.tags || []),
+                ...item.variants.map((v) => v.label),
+              ]
+                .join(' ')
+                .toLowerCase();
+              const match = domainMatch && (!q || hay.includes(q));
+              const card = ctorCards.get(item.slug);
+              if (card) card.hidden = !match;
+              if (match) {
+                sectionCount++;
+                visibleTargets.push({ item, vIdx: 0 });
+              }
             }
           }
-          if (sec) sec.hidden = sectionCount === 0;
+
+          entry.section.hidden = sectionCount === 0;
         }
 
-        emptyState.hidden = visibleItems.length > 0;
+        emptyState.hidden = visibleTargets.length > 0;
         searchKbd.textContent = q ? '✕' : '/';
       }
 
-      function setDomainFilter(domainId, updateHash) {
+      function syncUrlState() {
+        const params = new URLSearchParams(location.search);
+        if (viewMode === 'constructors') {
+          params.set('view', 'constructors');
+        } else {
+          params.delete('view');
+        }
+        const qs = params.toString();
+        const hash = activeDomain === 'all' ? '' : '#' + activeDomain;
+        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + hash);
+      }
+
+      function setViewMode(mode, updateUrl) {
+        viewMode = mode === 'constructors' ? 'constructors' : 'styles';
+        renderFilterPills();
+        applyFilters();
+        if (updateUrl) syncUrlState();
+      }
+
+      function setDomainFilter(domainId, updateUrl) {
         activeDomain = domainId === 'all' || domainsById.has(domainId) ? domainId : 'all';
         renderFilterPills();
         applyFilters();
-        if (updateHash) {
-          if (activeDomain === 'all') {
-            history.replaceState(null, '', location.pathname + location.search);
-          } else {
-            history.replaceState(null, '', '#' + activeDomain);
-          }
-        }
+        if (updateUrl) syncUrlState();
       }
 
-      // Dynamic 3D Engine Loader (supports GitHub Pages ../dist & ../three, /x20 ../three, and local repo)
+      btnViewStyles.addEventListener('click', () => setViewMode('styles', true));
+      btnViewCtors.addEventListener('click', () => setViewMode('constructors', true));
+
+      // Dynamic 3D Engine Loader
       function loadScriptChain(candidates) {
         return new Promise((resolve, reject) => {
           let idx = 0;
@@ -1126,7 +1305,6 @@ limitations under the License.
         return engineReadyPromise;
       }
 
-      // Warm up engine quietly during browser idle time after thumbnails start loading
       if ('requestIdleCallback' in window) {
         window.requestIdleCallback(() => ensureThreeLiveEngine().catch(() => {}), { timeout: 2500 });
       } else {
@@ -1232,15 +1410,15 @@ limitations under the License.
             currentVariantIdx = idx;
             renderVariantButtons();
             modalCode.value = v.code;
-            compileIntoModal(v.code, currentItem.orbit);
+            compileIntoModal(v.code, v.orbit || currentItem.orbit);
           });
           modalVariants.appendChild(btn);
         });
       }
 
-      function openInspector(item) {
+      function openInspector(item, variantIdx) {
         currentItem = item;
-        currentVariantIdx = 0;
+        currentVariantIdx = variantIdx && item.variants[variantIdx] ? variantIdx : 0;
         const dom = domainsById.get(item.domain);
         modalNs.textContent = `THREE.${dom.namespace}`;
         modalNs.style.color = dom.accent;
@@ -1248,24 +1426,30 @@ limitations under the License.
         modalCtor.textContent = item.ctor;
         modalSummary.textContent = item.summary;
 
-        const coreSz = getStampedSize('core', '77.0 KB gz');
+        const coreSz = getStampedSize('core', '77.7 KB gz');
         const kitSz = getStampedSize(dom.id, dom.budgetLabel);
         modalBundleHint.textContent =
           `<script src="three-live.min.js"><\/script> (${coreSz}) + <script src="${dom.bundle}"><\/script> (${kitSz})`;
 
         renderVariantButtons();
-        const v0 = item.variants[0];
-        modalCode.value = v0.code;
+        const chosen = item.variants[currentVariantIdx];
+        modalCode.value = chosen.code;
 
         if (!dialog.open) dialog.showModal();
-        compileIntoModal(v0.code, item.orbit);
+        compileIntoModal(chosen.code, chosen.orbit || item.orbit);
       }
 
       function stepInspector(delta) {
-        if (!currentItem || visibleItems.length === 0) return;
-        const idx = visibleItems.findIndex((it) => it.slug === currentItem.slug);
-        const nextIdx = idx < 0 ? 0 : (idx + delta + visibleItems.length) % visibleItems.length;
-        openInspector(visibleItems[nextIdx]);
+        if (!currentItem || visibleTargets.length === 0) return;
+        let idx = visibleTargets.findIndex(
+          (t) => t.item.slug === currentItem.slug && t.vIdx === currentVariantIdx,
+        );
+        if (idx < 0) {
+          idx = visibleTargets.findIndex((t) => t.item.slug === currentItem.slug);
+        }
+        const nextIdx = idx < 0 ? 0 : (idx + delta + visibleTargets.length) % visibleTargets.length;
+        const next = visibleTargets[nextIdx];
+        openInspector(next.item, next.vIdx);
       }
 
       document.getElementById('btn-close').addEventListener('click', () => dialog.close());
@@ -1281,12 +1465,9 @@ limitations under the License.
 
       document.getElementById('btn-reset-cam').addEventListener('click', () => {
         if (currentItem && viewerEl && viewerEl.viewer) {
-          viewerEl.viewer.setInitialCamera(
-            currentItem.orbit.theta,
-            currentItem.orbit.phi,
-            undefined,
-            currentItem.orbit.zoom,
-          );
+          const v = currentItem.variants[currentVariantIdx];
+          const orb = (v && v.orbit) || currentItem.orbit;
+          viewerEl.viewer.setInitialCamera(orb.theta, orb.phi, undefined, orb.zoom);
           viewerEl.jumpCameraToGoal?.();
           viewerEl.viewer.render?.();
         }
@@ -1332,9 +1513,10 @@ limitations under the License.
           showToast('Model is still compiling…');
           return;
         }
+        const suffix = currentVariantIdx > 0 ? `-v${currentVariantIdx}` : '';
         triggerDownload(
           new Blob([currentGlbBytes], { type: 'model/gltf-binary' }),
-          `${currentItem.slug}.glb`,
+          `${currentItem.slug}${suffix}.glb`,
         );
       });
 
@@ -1348,12 +1530,13 @@ limitations under the License.
           showToast('USDZ exporter unavailable');
           return;
         }
+        const suffix = currentVariantIdx > 0 ? `-v${currentVariantIdx}` : '';
         const usdz = tl.glbToUSDZ(currentGlbBytes);
         const blob =
           usdz instanceof Blob
             ? usdz
             : new Blob([usdz], { type: 'model/vnd.usdz+zip' });
-        triggerDownload(blob, `${currentItem.slug}.usdz`);
+        triggerDownload(blob, `${currentItem.slug}${suffix}.usdz`);
       });
 
       // Search & keyboard shortcuts
@@ -1386,11 +1569,14 @@ limitations under the License.
         }
       });
 
-      // Initialize from URL hash or ?kit= query
+      // Initialize from URL hash or ?kit= / ?view= query
       buildCatalogDOM();
       const params = new URLSearchParams(location.search);
       const initialHash = location.hash.replace(/^#/, '').toLowerCase();
       const initialKit = (params.get('kit') || initialHash || 'all').toLowerCase();
+      if (params.get('view') === 'constructors') {
+        viewMode = 'constructors';
+      }
       if (params.get('q')) {
         searchInput.value = params.get('q');
         searchQuery = params.get('q');
