@@ -637,15 +637,29 @@ function buildThreeLive() {
     });
   }
 
-  // 11d. Domain Kits (a la carte, NOT included in three-live-full / xr-live-full):
-  // - three-live-kit-{mechanical,architecture,industrial,science,electronics} (ESM, CJS, IIFE min)
+  // 11d. Domain Kits (a la carte, NOT included in three-live-full /
+  // xr-live-full):
+  // - three-live-kit-{mechanical,architecture,industrial,science,electronics}
+  // (ESM, CJS, IIFE min)
   // - three-live-kits roll-up bundle (ESM, CJS, IIFE min)
   const kitTargets = [
-    ['src/kit-mechanical.ts', 'three-live-kit-mechanical', 'ThreeLiveKitMechanical'],
-    ['src/kit-architecture.ts', 'three-live-kit-architecture', 'ThreeLiveKitArchitecture'],
-    ['src/kit-industrial.ts', 'three-live-kit-industrial', 'ThreeLiveKitIndustrial'],
+    [
+      'src/kit-mechanical.ts', 'three-live-kit-mechanical',
+      'ThreeLiveKitMechanical'
+    ],
+    [
+      'src/kit-architecture.ts', 'three-live-kit-architecture',
+      'ThreeLiveKitArchitecture'
+    ],
+    [
+      'src/kit-industrial.ts', 'three-live-kit-industrial',
+      'ThreeLiveKitIndustrial'
+    ],
     ['src/kit-science.ts', 'three-live-kit-science', 'ThreeLiveKitScience'],
-    ['src/kit-electronics.ts', 'three-live-kit-electronics', 'ThreeLiveKitElectronics'],
+    [
+      'src/kit-electronics.ts', 'three-live-kit-electronics',
+      'ThreeLiveKitElectronics'
+    ],
     ['src/kits.ts', 'three-live-kits', 'ThreeLiveKits'],
   ];
   for (const [entry, outBase, globalName] of kitTargets) {
@@ -1040,17 +1054,16 @@ function buildXRLive() {
     fs.copyFileSync(
         path.join(DIST_DIR, 'three-live-cad.min.js'),
         path.join(xrExampleDir, 'three-live-cad.min.js'));
-    for (const kitBundle of [
-             'three-live-kit-mechanical.min.js',
-             'three-live-kit-architecture.min.js',
-             'three-live-kit-industrial.min.js',
-             'three-live-kit-science.min.js',
-             'three-live-kit-electronics.min.js',
-             'three-live-kits.min.js',
+    for (const kitBundle
+             of ['three-live-kit-mechanical.min.js',
+                 'three-live-kit-architecture.min.js',
+                 'three-live-kit-industrial.min.js',
+                 'three-live-kit-science.min.js',
+                 'three-live-kit-electronics.min.js',
+                 'three-live-kits.min.js',
     ]) {
       fs.copyFileSync(
-          path.join(DIST_DIR, kitBundle),
-          path.join(xrExampleDir, kitBundle));
+          path.join(DIST_DIR, kitBundle), path.join(xrExampleDir, kitBundle));
     }
     fs.copyFileSync(
         path.join(DIST_DIR, 'three-live-animation.min.js'),
@@ -1104,9 +1117,9 @@ function reportSizes() {
     {name: 'three-live-kit-mechanical.min.js', budgetKb: '18'},
     {name: 'three-live-kit-architecture.min.js', budgetKb: '16'},
     {name: 'three-live-kit-industrial.min.js', budgetKb: '14'},
-    {name: 'three-live-kit-science.min.js', budgetKb: '27'},
+    {name: 'three-live-kit-science.min.js', budgetKb: '31'},
     {name: 'three-live-kit-electronics.min.js', budgetKb: '14'},
-    {name: 'three-live-kits.min.js', budgetKb: '77'},
+    {name: 'three-live-kits.min.js', budgetKb: '82'},
     {name: 'three-live-procedural.min.js', budgetKb: '30'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-ai.min.js', budgetKb: '32'},
@@ -1191,7 +1204,8 @@ function reportSizes() {
     }
   }
   // Domain kits are strictly a la carte: core, studio, CAD, AND full bundles
-  // must NOT bundle domain kit classes unless three-live-kits / three-live-kit-* is loaded.
+  // must NOT bundle domain kit classes unless three-live-kits /
+  // three-live-kit-* is loaded.
   for (const name
            of ['three-live-viewer.min.js',
                'three-live.min.js',
@@ -1205,15 +1219,16 @@ function reportSizes() {
     const filePath = path.join(DIST_DIR, name);
     if (!fs.existsSync(filePath)) continue;
     const text = fs.readFileSync(filePath, 'utf8');
-    for (const sentinel of [
-             'MAX_PART_TEETH',
-             'MAX_ARCH_STEPS',
-             'MAX_IND_WAYPOINTS',
-             'MAX_SCI_ATOMS',
-             'MAX_ECAD_PINS',
+    for (const sentinel
+             of ['MAX_PART_TEETH',
+                 'MAX_ARCH_STEPS',
+                 'MAX_IND_WAYPOINTS',
+                 'MAX_SCI_ATOMS',
+                 'MAX_ECAD_PINS',
     ]) {
       if (text.includes(sentinel)) {
-        failures.push(`dist/${name} unexpectedly bundles domain kit classes (${sentinel})`);
+        failures.push(`dist/${name} unexpectedly bundles domain kit classes (${
+            sentinel})`);
       }
     }
   }

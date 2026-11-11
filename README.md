@@ -113,16 +113,15 @@ spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
 `three-live-cli mcp` as a zero-dependency **Model Context Protocol (MCP)** stdio
 server (`three_live_validate`, `three_live_render`, `three_live_convert`,
 `three_live_from_image`, `three_live_bake_textures`, `three_live_sim`,
-`three_live_link`, and the
-`three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close` agent
-gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. The
-agent gym lets an agent play a scene step by step (act, observe, react) to check
-a level is winnable; "gym" is the reinforcement-learning term for such a
-reset/step environment, and no ML is involved. Not using MCP?
-`three-live-cli gym reset level.js --session ep.json` and
-`three-live-cli gym step --session ep.json --actions '[...]'` do the same, one
-command per step. `three-live-cli link scene.js --qr` prints a playground link
-(and a terminal QR code) that opens the scene on a phone, one tap from AR.
+`three_live_link`, and the `three_live_gym_reset` / `three_live_gym_step` /
+`three_live_gym_close` agent gym) in Gemini CLI, Google Antigravity, Claude
+Code, or any MCP client. The agent gym lets an agent play a scene step by step
+(act, observe, react) to check a level is winnable; "gym" is the
+reinforcement-learning term for such a reset/step environment, and no ML is
+involved. Not using MCP? `three-live-cli gym reset level.js --session ep.json`
+and `three-live-cli gym step --session ep.json --actions '[...]'` do the same,
+one command per step. `three-live-cli link scene.js --qr` prints a playground
+link (and a terminal QR code) that opens the scene on a phone, one tap from AR.
 Building from a photo, mockup, sketch, or blueprint? Pass `--reference` (or
 `reference` in MCP) to get a side-by-side + aligned-overlay + silhouette-diff
 sheet with IoU and proportion guidance, or run `from-image` to synthesize and
@@ -233,23 +232,22 @@ a live procedural Three.js scene across Web
 (`await el.compileFromImage(image, {prompt, priors, visualTurns: 2})`), Android
 (`editor.compileFromImage(bitmap, prompt, priors)`), iOS
 (`await editor.compileFromImage(imageData: ...)`), CLI
-(`three-live-cli from-image --visual-turns 2`), and MCP
-(`three_live_from_image` with `visualTurns`). Images are
-automatically downscaled and JPEG-normalized, compiled in the sandbox, verified
-against spatial quality gates (minimum 2 meshes, finite bounds, non-empty
-frustum coverage, and zero critical overlap errors) with one-turn auto-repair,
-optionally refined closed-loop against rendered `REFERENCE | RENDER | OVERLAY 50/50`
-(+ 4-up orthographic/iso) sheets (`visualTurns`: `0..5`), and hot-swapped into
-the scene (`el.undoEdit()` reverts). Optional metric
-spatial priors (`userHeight`, `floorNormal`, and 3D detected object bounding
-boxes from ARCore / ARKit / `world-understanding`, or a whole RoomPlan scan on
-iOS via `AISpatialPriors.fromCapturedRoom(room)`, or any room scan via
-`AISpatialPriors.fromRoomScan` on Android) anchor real-world scale and
-placement.
+(`three-live-cli from-image --visual-turns 2`), and MCP (`three_live_from_image`
+with `visualTurns`). Images are automatically downscaled and JPEG-normalized,
+compiled in the sandbox, verified against spatial quality gates (minimum 2
+meshes, finite bounds, non-empty frustum coverage, and zero critical overlap
+errors) with one-turn auto-repair, optionally refined closed-loop against
+rendered `REFERENCE | RENDER | OVERLAY 50/50` (+ 4-up orthographic/iso) sheets
+(`visualTurns`: `0..5`), and hot-swapped into the scene (`el.undoEdit()`
+reverts). Optional metric spatial priors (`userHeight`, `floorNormal`, and 3D
+detected object bounding boxes from ARCore / ARKit / `world-understanding`, or a
+whole RoomPlan scan on iOS via `AISpatialPriors.fromCapturedRoom(room)`, or any
+room scan via `AISpatialPriors.fromRoomScan` on Android) anchor real-world scale
+and placement.
 
 **AI textures (`userData.xr.material.prompt`):** add a texture prompt next to a
-material preset. The preset is the offline fallback, so the scene always
-renders the same way without a network:
+material preset. The preset is the offline fallback, so the scene always renders
+the same way without a network:
 
 ```html
 <three-live allow-client-scripts texture-pack="scene.textures.json"
@@ -267,14 +265,13 @@ renders the same way without a network:
 
 *   The compiler never calls an image model. Textures come from a **texture
     pack** (`texture-pack="…json"`, `el.texturePack = json`, or an inline
-    `<script type="application/three-live-texture-pack">`), keyed by the
-    prompt, size (256, 512, or 1024), and seed. Normal and roughness maps (up
-    to 512) are derived on-device.
-*   With an OpenAI-compatible Images endpoint configured (`ai-image-endpoint`
-    / `ai-image-model`, or `el.aiImageProvider`), missing textures are
-    generated, cached in IndexedDB, and hot-swapped in. Set
-    `ai-textures="manual"` to generate only when you call
-    `await el.generateTextures()`.
+    `<script type="application/three-live-texture-pack">`), keyed by the prompt,
+    size (256, 512, or 1024), and seed. Normal and roughness maps (up to 512)
+    are derived on-device.
+*   With an OpenAI-compatible Images endpoint configured (`ai-image-endpoint` /
+    `ai-image-model`, or `el.aiImageProvider`), missing textures are generated,
+    cached in IndexedDB, and hot-swapped in. Set `ai-textures="manual"` to
+    generate only when you call `await el.generateTextures()`.
 *   Runtime generation gives each visitor different textures. For consistent
     results, save `await el.exportTexturePack()` and ship it with the scene.
     Exported `.glb` / `.usdz` files already contain the final textures; GLB
@@ -282,8 +279,8 @@ renders the same way without a network:
     `extras.xr.material.textureKey`.
 *   Android (`ThreeLiveAITextures`), iOS (`AITextures`), the CLI
     (`three-live-cli textures bake`), and MCP (`three_live_bake_textures`) use
-    the same packs and give the same pixels. On Android and iOS, auto
-    generation works like the Web once a provider is set (`sceneLoaded`, or
+    the same packs and give the same pixels. On Android and iOS, auto generation
+    works like the Web once a provider is set (`sceneLoaded`, or
     `editor.textures`).
 
 --------------------------------------------------------------------------------
@@ -461,17 +458,18 @@ live Three.js scenes:
     (`shadow-maps` / `shadowMapsPlugin`), 3D hotspots, post-processing (`bloom`
     and `outline`), automatic multi-tier Level-of-Detail (`lod` / `THREE.LOD` /
     `MSFT_lod`), 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` Booleans, 3D vector
-    `TextGeometry`, 64-joint GPU skeletal skinning, morph targets,
-    keyframe cross-fading, two-bone / FABRIK inverse kinematics (`ik`),
-    loop-free `THREE.TSL` procedural node materials (`tslPlugin` / `extras.tsl`),
-    LLM scene editing, and `GPURenderBundle` WebGPU scene acceleration
+    `TextGeometry`, 64-joint GPU skeletal skinning, morph targets, keyframe
+    cross-fading, two-bone / FABRIK inverse kinematics (`ik`), loop-free
+    `THREE.TSL` procedural node materials (`tslPlugin` / `extras.tsl`), LLM
+    scene editing, and `GPURenderBundle` WebGPU scene acceleration
     (`renderer="auto | webgpu | webgl2"`). Five optional a la carte **domain
-    kits** (`three-live-kit-{mechanical,architecture,industrial,science,electronics}.min.js`,
-    `12–19 KB gz` each, or the all-in-one `three-live-kits.min.js`, `< 70 KB gz`,
-    intentionally excluded from `three-live-full.min.js`) add 53 watertight
-    2-manifold parametric parts across `THREE.Mechanical`,
-    `THREE.Architecture`, `THREE.Industrial`, `THREE.Science`,
-    and `THREE.Electronics`.
+    kits**
+    (`three-live-kit-{mechanical,architecture,industrial,science,electronics}.min.js`,
+    `12–19 KB gz` each, or the all-in-one `three-live-kits.min.js`,
+    `< 70 KB gz`, intentionally excluded from `three-live-full.min.js`) add 53
+    watertight 2-manifold parametric parts across `THREE.Mechanical`,
+    `THREE.Architecture`, `THREE.Industrial`, `THREE.Science`, and
+    `THREE.Electronics`.
 *   **Hardware XR sensors (`xr-live-sensors.min.js`, `< 10 KB gz`):** Adds
     hardware XR depth occlusion (`XRDepthManager`), analytical heightfield
     physics (`XRHeightfieldPhysics`), 25-joint hand gesture classification
@@ -520,7 +518,7 @@ plugins:
 | **`kit-mechanical`** | `THREE.Mechanical.*`, `SpurGearGeometry`, `BevelGearGeometry`, `BoltGeometry`, `PillowBlockGeometry`, `metricFastener` | A la carte domain kit (`three-live-kit-mechanical.min.js` / `three-live-kits.min.js`): 15 watertight 2-manifold parametric mechanical CAD parts (`SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry` (`v-belt`/`flat`/`timing`), ISO metric `BoltGeometry`, `NutGeometry`, `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`, `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`, `FlangePlateGeometry`, `ProfileExtrusionGeometry`, `metricFastener('M8x25')`, `gearMeshDistance(g1, g2)`). |
 | **`kit-architecture`** | `THREE.Architecture.*`, `WallGeometry`, `SlabGeometry`, `StaircaseGeometry`, `DoorGeometry`, `WindowGeometry`, `codeStairSpec` | A la carte domain kit (`three-live-kit-architecture.min.js` / `three-live-kits.min.js`): 9 watertight 2-manifold building & AEC elements (`WallGeometry` with rectangular/semicircular/segmental/Gothic `openings`, `SlabGeometry` with stairwell/skylight openings, `StaircaseGeometry` in `straight`, `l-shape`, `u-shape`, and `spiral` modes, `RoofGeometry` in 6 roof styles, 10-style `DoorGeometry` across 5 operations, 10-style `WindowGeometry`, `RailingGeometry`, `ColumnGeometry`, `ArchwayGeometry`, `codeStairSpec`). |
 | **`kit-industrial`** | `THREE.Industrial.*`, `PipeRunGeometry`, `ValveGeometry`, `CentrifugalPumpGeometry`, `PalletRackGeometry`, `nominalPipeSpec` | A la carte domain kit (`three-live-kit-industrial.min.js` / `three-live-kits.min.js`): 10 watertight 2-manifold process plant, factory & warehouse assets (`PipeRunGeometry` with 3D Bishop-frame routing & weld-neck flanges, `PipeFittingGeometry`, `ValveGeometry`, `CentrifugalPumpGeometry`, `PalletRackGeometry`, `ConveyorGeometry`, `IndustrialLadderGeometry` with OSHA safety cage, `CatwalkPlatformGeometry`, `SafetyBarrierGeometry`, `StorageTankGeometry`, `nominalPipeSpec('DN100')`). |
-| **`kit-science`** | `THREE.Science.*`, `MoleculeGeometry`, `RibbonGeometry`, `CrystalLatticeGeometry`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `elementSpec`, `ribbonColorMap` | A la carte domain kit (`three-live-kit-science.min.js` / `three-live-kits.min.js`): 10 watertight 2-manifold chemistry, structural biology, physics, optics & math primitives (`MoleculeGeometry` with presets, covalent auto-bonding & CPK vertex colors, `RibbonGeometry` continuous polypeptide/biopolymer cartoon lofts across `'coil'`, `'helix'`, and arrow-tipped `'sheet'` spans + `ribbonColorMap`, `CrystalLatticeGeometry` for `sc`/`bcc`/`fcc`/`hcp`/`diamond`/`graphene`/`nacl`/`perovskite`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `SurfacePlotGeometry`, `ParametricSurfaceGeometry`, `VectorFieldGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`, 44-element `elementSpec`). |
+| **`kit-science`** | `THREE.Science.*`, `MoleculeGeometry`, `RibbonGeometry`, `CrystalLatticeGeometry`, `IsoSurfaceGeometry`, `StreamlineGeometry`, `DashedLineGeometry`, `AngleArcGeometry`, `sampleColormap`, `elementSpec`, `ribbonColorMap` | A la carte domain kit (`three-live-kit-science.min.js` / `three-live-kits.min.js`): 14 watertight 2-manifold chemistry, structural biology, physics, optics & math primitives (`MoleculeGeometry` with presets, covalent auto-bonding & CPK vertex colors, `RibbonGeometry` continuous polypeptide/biopolymer cartoon lofts across `'coil'`, `'helix'`, and arrow-tipped `'sheet'` spans + `ribbonColorMap`, `CrystalLatticeGeometry` for `sc`/`bcc`/`fcc`/`hcp`/`diamond`/`graphene`/`nacl`/`perovskite` + custom Bravais `vectors`/`basis`/`vacancies`/`millerPlanes`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `SurfacePlotGeometry`, `ParametricSurfaceGeometry`, `VectorFieldGeometry`, `IsoSurfaceGeometry` Marching Tetrahedra scalar fields, `StreamlineGeometry` RK4 field curves, `Axes3DGeometry`, `DoubleHelixGeometry`, `DashedLineGeometry`, `AngleArcGeometry`, scientific colormaps `sampleColormap`/`colormapTexture`/`applyVertexColormap`, 44-element `elementSpec`). |
 | **`kit-electronics`** | `THREE.Electronics.*`, `PcbBoardGeometry`, `EnclosureGeometry`, `IcPackageGeometry`, `DiscreteComponentGeometry`, `jedecPackageSpec` | A la carte domain kit (`three-live-kit-electronics.min.js` / `three-live-kits.min.js`): 9 watertight 2-manifold ECAD & hardware parts (`PcbBoardGeometry`, `EnclosureGeometry` with bosses/vents/flanges/`panelCutouts`, `HeatsinkGeometry`, `DinRailGeometry`, `IcPackageGeometry` for `dip`/`soic`/`qfp`/`qfn`/`bga`/`to220`/`sot23`/`d2pak`, `PinHeaderGeometry`, `ConnectorGeometry`, `StandoffSpacerGeometry`, `DiscreteComponentGeometry`, `jedecPackageSpec`). |
 | **`procedural`** | `THREE.Box3`, `THREE.Sphere`, `THREE.CanvasTexture`, `THREE.ProceduralTexture`, `THREE.SimplexNoise`, `THREE.ImprovedNoise`, `THREE.Sprite`, `THREE.SplineCurve`, `THREE.GridHelper` | Extended 3D bounding-volume helpers (`Box3`, `Sphere`, `setFromObject`, `expandByObject`, `InstancedMesh` bounds), `CanvasTexture` with a zero-DOM headless 2D `<canvas>` rasterizer (`document.createElement('canvas').getContext('2d')`), deterministic `ImprovedNoise` and `SimplexNoise` heightmap/field generators, camera-facing `Sprite` / `SpriteMaterial` billboards, 2D curves (`LineCurve`, `QuadraticBezierCurve`, `CubicBezierCurve`, `SplineCurve`, `EllipseCurve`, `ArcCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
 | **`skinning`** | `animation-name`, `autoplay` | 64-joint GPU vertex skinning and skeletal hierarchy evaluation. |
@@ -598,9 +596,9 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live-kit-mechanical.min.js`** | **`< 18 KB gz`** | A la carte domain kit (`THREE.Mechanical`, NOT included in `three-live-full`): 15 watertight 2-manifold parametric mechanical machine parts (`SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`, `BoltGeometry`, `NutGeometry`, `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`, `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`, `FlangePlateGeometry`, `ProfileExtrusionGeometry`) plus `metricFastener` and `gearMeshDistance`. |
 |  | **`three-live-kit-architecture.min.js`** | **`< 16 KB gz`** | A la carte domain kit (`THREE.Architecture`, NOT included in `three-live-full`): 9 watertight 2-manifold building & AEC parts (`WallGeometry`, `SlabGeometry`, `StaircaseGeometry`, `RoofGeometry`, `DoorGeometry`, `WindowGeometry`, `RailingGeometry`, `ColumnGeometry`, `ArchwayGeometry`) plus IBC `codeStairSpec`. |
 |  | **`three-live-kit-industrial.min.js`** | **`< 14 KB gz`** | A la carte domain kit (`THREE.Industrial`, NOT included in `three-live-full`): 10 watertight 2-manifold process, factory & warehouse parts (`PipeRunGeometry`, `PipeFittingGeometry`, `ValveGeometry`, `CentrifugalPumpGeometry`, `PalletRackGeometry`, `ConveyorGeometry`, `IndustrialLadderGeometry`, `CatwalkPlatformGeometry`, `SafetyBarrierGeometry`, `StorageTankGeometry`) plus ASME `nominalPipeSpec`. |
-|  | **`three-live-kit-science.min.js`** | **`< 20 KB gz`** | A la carte domain kit (`THREE.Science`, NOT included in `three-live-full`): 10 watertight 2-manifold chemistry, structural biology, physics, optics & math primitives (`MoleculeGeometry`, `RibbonGeometry`, `CrystalLatticeGeometry`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `SurfacePlotGeometry`, `ParametricSurfaceGeometry`, `VectorFieldGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`) plus `ribbonColorMap` and 44-element IUPAC `elementSpec`. |
+|  | **`three-live-kit-science.min.js`** | **`< 31 KB gz`** | A la carte domain kit (`THREE.Science`, NOT included in `three-live-full`): 14 watertight 2-manifold chemistry, structural biology, physics, optics & math primitives (`MoleculeGeometry`, `RibbonGeometry`, `CrystalLatticeGeometry`, `AtomicOrbitalGeometry`, `OpticalElementGeometry`, `SurfacePlotGeometry`, `ParametricSurfaceGeometry`, `VectorFieldGeometry`, `IsoSurfaceGeometry`, `StreamlineGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`, `DashedLineGeometry`, `AngleArcGeometry`) plus `sampleColormap`, `colormapTexture`, `applyVertexColormap`, `ribbonColorMap`, and 44-element IUPAC `elementSpec`. |
 |  | **`three-live-kit-electronics.min.js`** | **`< 14 KB gz`** | A la carte domain kit (`THREE.Electronics`, NOT included in `three-live-full`): 9 watertight 2-manifold ECAD & hardware parts (`PcbBoardGeometry`, `EnclosureGeometry`, `HeatsinkGeometry`, `DinRailGeometry`, `IcPackageGeometry`, `PinHeaderGeometry`, `ConnectorGeometry`, `StandoffSpacerGeometry`, `DiscreteComponentGeometry`) plus `jedecPackageSpec`. |
-|  | **`three-live-kits.min.js`** | **`< 70 KB gz`** | All-in-one domain kits roll-up bundle registering all 5 domain kits (`mechanical`, `architecture`, `industrial`, `science`, `electronics`; 53 manifold geometries; a la carte, NOT included in `three-live-full`). |
+|  | **`three-live-kits.min.js`** | **`< 82 KB gz`** | All-in-one domain kits roll-up bundle registering all 5 domain kits (`mechanical`, `architecture`, `industrial`, `science`, `electronics`; 57 manifold geometries; a la carte, NOT included in `three-live-full`). |
 |  | **`three-live-procedural.min.js`** | **`< 31 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
 |  | **`three-live-ai.min.js`** | **`< 32 KB gz`** | Opt-in bring-your-own-LLM scene editing & image-to-scene synthesis: `el.editScene(instruction)` and `el.compileFromImage(image, {prompt, priors})` with sandbox validation, spatial lint checks, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak and Talk-to-Select voice editing: tap/voice selection, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. AI textures (`userData.xr.material.prompt`) from texture packs or an OpenAI-compatible Images endpoint. Also included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |

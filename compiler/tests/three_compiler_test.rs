@@ -5644,3 +5644,80 @@ fn test_stage2_science_colormaps_isosurface_and_streamlines() {
     let usda = String::from_utf8_lossy(&usdz);
     assert!(usda.contains("color3f[] primvars:displayColor = ["));
 }
+
+#[test]
+fn test_stage3_science_crystal_miller_planes_and_callouts() {
+    let script = r#"
+        const crystal = new THREE.Mesh(
+            new THREE.Science.CrystalLatticeGeometry({
+                lattice: "perovskite",
+                cells: [1, 1, 1],
+                vacancies: [[0.5, 0.5, 0.5]],
+                millerPlanes: [{ hkl: [1, 1, 1], intercept: 1, thickness: 0.025 }]
+            }),
+            new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.1 })
+        );
+        crystal.name = "DefectPerovskite111";
+        crystal.position.set(-0.8, 0, 0);
+        scene.add(crystal);
+
+        const hBonds = new THREE.Mesh(
+            new THREE.Science.DashedLineGeometry({
+                segments: [
+                    [[-0.3, 0, 0], [0.3, 0.3, 0]],
+                    [[-0.3, 0, 0], [0.3, -0.3, 0]]
+                ],
+                dashLength: 0.08,
+                gapLength: 0.04,
+                radius: 0.015,
+                capStyle: "capsule",
+                color: 0x38bdf8
+            }),
+            new THREE.MeshStandardMaterial({ roughness: 0.35 })
+        );
+        hBonds.name = "HydrogenBondDashes";
+        scene.add(hBonds);
+
+        const bondArc = new THREE.Mesh(
+            new THREE.Science.AngleArcGeometry({
+                vertex: [-0.3, 0, 0],
+                from: [0.3, 0.3, 0],
+                to: [0.3, -0.3, 0],
+                radius: 0.25,
+                arrowEnds: true,
+                color: 0xfacc15
+            }),
+            new THREE.MeshStandardMaterial({ roughness: 0.35 })
+        );
+        bondArc.name = "BondAngleArc";
+        scene.add(bondArc);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(2, 4, 3);
+        scene.add(sun);
+        camera.position.set(0, 1.2, 3.2);
+        camera.lookAt(0, 0, 0);
+    "#;
+
+    let scene = validate_three_script(script).expect(
+        "Stage 3 Crystal Miller plane + DashedLine + AngleArc script should compile cleanly",
+    );
+    assert_eq!(scene.meshes.len(), 3);
+    for m in &scene.meshes {
+        assert!(
+            m.positions.len() >= 90 && m.colors.len() == m.positions.len(),
+            "Stage 3 mesh {} must populate positions and vertex colors",
+            m.name
+        );
+    }
+
+    let glb = transcode_three_to_glb(script).expect("Stage 3 GLB export should succeed");
+    assert!(glb.len() > 2048);
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("Stage 3 USDZ export should succeed");
+    let usda = String::from_utf8_lossy(&usdz);
+    assert!(usda.contains("DefectPerovskite111"));
+    assert!(usda.contains("HydrogenBondDashes"));
+    assert!(usda.contains("BondAngleArc"));
+}
