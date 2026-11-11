@@ -700,6 +700,55 @@ for (const [name, fn] of [
     usdzBytes[0] === 0x50 && usdzBytes[1] === 0x4b && usdzBytes.byteLength > 1000,
     `Scientific assembly exports valid Apple USDZ (${usdzBytes.byteLength} bytes)`,
   );
+
+  // Stage 1: Verify MoleculeGeometry (CPK colors) and AtomicOrbitalGeometry (phase-lobe colors) export COLOR_0 in GLB and primvars:displayColor in USDZ
+  const cpkScene = new Scene();
+  const cpkMol = new Mesh(
+    new Sci.MoleculeGeometry({preset: 'caffeine'}),
+    new MeshStandardMaterial({roughness: 0.3, metalness: 0.1}),
+  );
+  cpkMol.name = 'CaffeineCPK';
+  cpkScene.add(cpkMol);
+  const orbMesh = new Mesh(
+    new Sci.AtomicOrbitalGeometry({orbital: '2pz'}),
+    new MeshStandardMaterial({vertexColors: true, roughness: 0.35}),
+  );
+  orbMesh.name = 'Orbital2pz';
+  orbMesh.position.set(1.5, 0, 0);
+  cpkScene.add(orbMesh);
+
+  const cpkGlb = parseGLB(cpkScene.toGLB());
+  const molColorAccIdx = cpkGlb.gltf.meshes[0]?.primitives?.[0]?.attributes?.COLOR_0;
+  const orbColorAccIdx = cpkGlb.gltf.meshes[1]?.primitives?.[0]?.attributes?.COLOR_0;
+  assert(
+    typeof molColorAccIdx === 'number' && typeof orbColorAccIdx === 'number',
+    'MoleculeGeometry and AtomicOrbitalGeometry export COLOR_0 accessors in GLB',
+  );
+  const molAcc = cpkGlb.gltf.accessors[molColorAccIdx];
+  const molBv = cpkGlb.gltf.bufferViews[molAcc.bufferView];
+  const molColors = new Float32Array(
+    cpkGlb.bin,
+    (molBv.byteOffset || 0) + (molAcc.byteOffset || 0),
+    molAcc.count * 3,
+  );
+  const distinctRgb = new Set<string>();
+  for (let i = 0; i < molAcc.count; i++) {
+    distinctRgb.add(
+      `${molColors[i * 3].toFixed(2)},${molColors[i * 3 + 1].toFixed(2)},${molColors[i * 3 + 2].toFixed(2)}`,
+    );
+  }
+  assert(
+    distinctRgb.size >= 4,
+    `Caffeine MoleculeGeometry COLOR_0 contains >= 4 distinct CPK element/bond colors (got ${distinctRgb.size})`,
+  );
+
+  const cpkUsdzText = new TextDecoder().decode(cpkScene.toUSDZ());
+  assert(
+    cpkUsdzText.includes('color3f[] primvars:displayColor = [') &&
+      cpkUsdzText.includes('UsdPrimvarReader_float3') &&
+      cpkUsdzText.includes('DisplayColorReader'),
+    'MoleculeGeometry and AtomicOrbitalGeometry export primvars:displayColor and UsdPrimvarReader_float3 in USDZ',
+  );
 }
 
 console.log(

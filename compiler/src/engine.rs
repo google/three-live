@@ -902,6 +902,17 @@ impl ThreeEngine {
                 uvs.push([chunk[0], chunk[1]]);
             }
 
+            // Raw Vertex Colors (RGB)
+            let raw_col_val = mesh_obj
+                .get(js_string!("raw_colors"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let raw_colors = extract_float_buffer(&raw_col_val, &mut self.context)
+                .map_err(RawExtractionError::Format)?;
+            let mut colors = Vec::with_capacity(raw_colors.len() / 3);
+            for chunk in raw_colors.as_chunks::<3>().0 {
+                colors.push([chunk[0], chunk[1], chunk[2]]);
+            }
+
             // Raw indices
             let raw_idx_val = mesh_obj
                 .get(js_string!("raw_indices"), &mut self.context)
@@ -965,6 +976,7 @@ impl ThreeEngine {
                 positions,
                 normals,
                 uvs,
+                colors,
                 indices,
                 material_index,
                 variant_mappings,

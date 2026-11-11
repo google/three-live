@@ -2101,6 +2101,7 @@ export class Material {
   public aoMapIntensity: number;
   public bumpMap: Texture | string | null;
   public bumpScale: number;
+  public vertexColors?: boolean;
   public _em: boolean;
 
   // Luxury PBR / Physical Material extensions
@@ -2147,6 +2148,9 @@ export class Material {
     this.aoMapIntensity = numberOr(params.aoMapIntensity, 1);
     this.bumpMap = params.bumpMap || null;
     this.bumpScale = numberOr(params.bumpScale, 1);
+    if (params.vertexColors !== undefined) {
+      this.vertexColors = Boolean(params.vertexColors);
+    }
 
     this.clearcoat = numberOr(params.clearcoat, 0);
     this.clearcoatRoughness = numberOr(params.clearcoatRoughness, 0);
@@ -5689,6 +5693,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       if (posAttr && posAttr.array && posAttr.count > 0) {
         meshIdx = rawMeshes.length;
         let variantMappingsJson: string | null = null;
+        let variantWantsVertexColors = false;
         const rawVariants = node.userData?.variants;
         if (rawVariants && typeof rawVariants === 'object') {
           const matToVarIndices = new Map<number, number[]>();
@@ -5709,6 +5714,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                   ? new MeshStandardMaterial(vMat)
                   : null;
             if (!matObj) continue;
+            if ((vMat as {vertexColors?: boolean})?.vertexColors === true) {
+              variantWantsVertexColors = true;
+            }
             let vIdx = variantNames.indexOf(k);
             if (vIdx === -1 && variantNames.length < 256) {
               vIdx = variantNames.length;
@@ -5733,6 +5741,50 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             variantMappingsJson = JSON.stringify({mappings});
           }
         }
+        const rawMat = Array.isArray((node as any).material)
+          ? (node as any).material[0]
+          : (node as any).material;
+        let rawColors: Float32Array | null = null;
+        const colAttr = geo.attributes.color;
+        if (
+          colAttr &&
+          colAttr.array &&
+          colAttr.count >= posAttr.count &&
+          colAttr.array.length >=
+            posAttr.count * (colAttr.itemSize === 4 ? 4 : 3)
+        ) {
+          const exportColor =
+            variantWantsVertexColors ||
+            !rawMat ||
+            rawMat.vertexColors === true ||
+            (rawMat.vertexColors !== false &&
+              !rawMat.map &&
+              (!rawMat.color ||
+                ((rawMat.color.r ?? 1) >= 0.999 &&
+                  (rawMat.color.g ?? 1) >= 0.999 &&
+                  (rawMat.color.b ?? 1) >= 0.999)));
+          if (exportColor) {
+            const cSrc = colAttr.array as ArrayLike<number>;
+            const cStep = colAttr.itemSize === 4 ? 4 : 3;
+            const cNorm =
+              cSrc instanceof Uint8Array
+                ? 1 / 255
+                : cSrc instanceof Uint16Array
+                  ? 1 / 65535
+                  : 1;
+            rawColors = new Float32Array(posAttr.count * 3);
+            for (let i = 0; i < posAttr.count; i++) {
+              const si = i * cStep;
+              const di = i * 3;
+              const r = cSrc[si]! * cNorm;
+              const g = cSrc[si + 1]! * cNorm;
+              const b = cSrc[si + 2]! * cNorm;
+              rawColors[di] = Number.isFinite(r) ? Math.max(0, r) : 1;
+              rawColors[di + 1] = Number.isFinite(g) ? Math.max(0, g) : 1;
+              rawColors[di + 2] = Number.isFinite(b) ? Math.max(0, b) : 1;
+            }
+          }
+        }
         rawMeshes.push({
           name: node.name || `Mesh_${rawMeshes.length}`,
           raw_positions: posAttr.array,
@@ -5740,12 +5792,11 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             ? geo.attributes.normal.array
             : null,
           raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
+          raw_colors: rawColors,
           raw_indices: geo.index ? geo.index.array : null,
           vertex_count: posAttr.count,
           material_index: getMaterialIndex(
-            (node as any).material instanceof Material
-              ? (node as any).material
-              : null,
+            rawMat instanceof Material ? rawMat : null,
           ),
           variant_mappings_json: variantMappingsJson,
         });

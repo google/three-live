@@ -239,6 +239,7 @@ export interface USDAMeshData {
   indices: Uint16Array | Uint32Array;
   normals?: Float32Array;
   uvs?: Float32Array;
+  colors?: Float32Array;
   materialName?: string;
   color?: [number, number, number];
   roughness?: number;
@@ -1072,6 +1073,7 @@ function serializeScene(
         }
 
         const rawVariants = obj.userData?.variants;
+        let variantWantsVertexColors = false;
         if (rawVariants && typeof rawVariants === 'object') {
           const matToVarIndices = new Map<number, number[]>();
           for (const k of Object.keys(rawVariants)) {
@@ -1085,6 +1087,9 @@ function serializeScene(
             }
             const vMat = rawVariants[k];
             if (!vMat || typeof vMat !== 'object') continue;
+            if ((vMat as {vertexColors?: boolean}).vertexColors === true) {
+              variantWantsVertexColors = true;
+            }
             let vIdx = variantNames.indexOf(k);
             if (vIdx === -1 && variantNames.length < 256) {
               vIdx = variantNames.length;
@@ -1109,6 +1114,52 @@ function serializeScene(
               KHR_materials_variants: {mappings},
             };
             nodeExtensionsUsed.add('KHR_materials_variants');
+          }
+        }
+
+        const colAttr = geo.attributes.color;
+        const cStep = colAttr?.itemSize === 4 ? 4 : 3;
+        if (
+          colAttr?.array &&
+          colAttr.count >= posAttr.count &&
+          colAttr.array.length >= posAttr.count * cStep
+        ) {
+          const m = rawMat as
+            | (Material & {vertexColors?: boolean; map?: unknown})
+            | undefined;
+          const mc = m?.color;
+          if (
+            variantWantsVertexColors ||
+            !m ||
+            m.vertexColors === true ||
+            (m.vertexColors !== false &&
+              !m.map &&
+              (!mc ||
+                ((mc.r ?? 1) >= 0.999 &&
+                  (mc.g ?? 1) >= 0.999 &&
+                  (mc.b ?? 1) >= 0.999)))
+          ) {
+            const cSrc = colAttr.array as ArrayLike<number>;
+            const cNorm =
+              cSrc instanceof Uint8Array
+                ? 1 / 255
+                : cSrc instanceof Uint16Array
+                  ? 1 / 65535
+                  : 1;
+            const colorArr = new Float32Array(posAttr.count * 3);
+            for (let i = 0; i < posAttr.count; i++) {
+              for (let k = 0; k < 3; k++) {
+                const v = cSrc[i * cStep + k]! * cNorm;
+                colorArr[i * 3 + k] = Number.isFinite(v) ? Math.max(0, v) : 1;
+              }
+            }
+            primitive.attributes.COLOR_0 = addAccessor(
+              colorArr,
+              'VEC3',
+              34962,
+              5126,
+              posAttr.count,
+            );
           }
         }
 
@@ -1771,6 +1822,37 @@ export function extractMeshesFromGLB(
         uvs = new Float32Array(uvBuf, 0, uvAcc.count * 2);
       }
 
+      let colors: Float32Array | undefined;
+      const colAccIdx = prim.attributes?.COLOR_0;
+      if (colAccIdx !== undefined) {
+        const {acc: colAcc, buffer: colBuf} = getBufferSlice(colAccIdx);
+        const comps = colAcc.type === 'VEC4' ? 4 : 3;
+        const vCount = Math.min(posAcc.count, Number(colAcc.count ?? 0));
+        if (vCount > 0) {
+          const ct = colAcc.componentType ?? 5126;
+          const raw =
+            ct === 5121
+              ? new Uint8Array(colBuf, 0, vCount * comps)
+              : ct === 5123
+                ? new Uint16Array(colBuf, 0, vCount * comps)
+                : new Float32Array(colBuf, 0, vCount * comps);
+          const s =
+            colAcc.normalized === false
+              ? 1
+              : ct === 5121
+                ? 1 / 255
+                : ct === 5123
+                  ? 1 / 65535
+                  : 1;
+          colors = new Float32Array(vCount * 3);
+          for (let i = 0; i < vCount; i++) {
+            for (let k = 0; k < 3; k++) {
+              colors[i * 3 + k] = finUsd(raw[i * comps + k]! * s, 1);
+            }
+          }
+        }
+      }
+
       let indices: Uint16Array | Uint32Array;
       if (prim.indices !== undefined) {
         const {acc: idxAcc, buffer: idxBuf} = getBufferSlice(prim.indices);
@@ -1899,12 +1981,26 @@ export function extractMeshesFromGLB(
           baseOp * (1 - (ext.KHR_materials_transmission?.transmissionFactor ?? 0));
       }
 
+      if (colors) {
+        if (color[0] !== 1 || color[1] !== 1 || color[2] !== 1) {
+          for (let i = 0; i < colors.length; i += 3) {
+            colors[i] = colors[i]! * color[0];
+            colors[i + 1] = colors[i + 1]! * color[1];
+            colors[i + 2] = colors[i + 2]! * color[2];
+          }
+        }
+        if (!textures?.[0]) {
+          materialName = `${materialName}_vc`;
+        }
+      }
+
       out.push({
         name: prims.length > 1 ? `${instanceName}_p${pIdx}` : instanceName,
         positions,
         indices,
         normals,
         uvs,
+        ...(colors ? {colors} : {}),
         materialName,
         color,
         roughness,
@@ -2144,6 +2240,18 @@ export function extractMeshesFromGLB(
               for (const pm of primMeshes) {
                 const baseCol = pm.color || [0.8, 0.8, 0.8];
                 const hasCol = cData && cData.length >= (inst + 1) * 3;
+                const cr = hasCol ? cData![inst * 3]! : 1;
+                const cg = hasCol ? cData![inst * 3 + 1]! : 1;
+                const cb = hasCol ? cData![inst * 3 + 2]! : 1;
+                let instColors = pm.colors;
+                if (hasCol && pm.colors) {
+                  instColors = new Float32Array(pm.colors.length);
+                  for (let ci = 0; ci < pm.colors.length; ci += 3) {
+                    instColors[ci] = pm.colors[ci]! * cr;
+                    instColors[ci + 1] = pm.colors[ci + 1]! * cg;
+                    instColors[ci + 2] = pm.colors[ci + 2]! * cb;
+                  }
+                }
                 children.push({
                   ...pm,
                   name: `${pm.name}_${inst}`,
@@ -2151,12 +2259,9 @@ export function extractMeshesFromGLB(
                     ? `${pm.materialName}_inst_${inst}`
                     : pm.materialName,
                   color: hasCol
-                    ? [
-                        baseCol[0] * cData![inst * 3]!,
-                        baseCol[1] * cData![inst * 3 + 1]!,
-                        baseCol[2] * cData![inst * 3 + 2]!,
-                      ]
+                    ? [baseCol[0] * cr, baseCol[1] * cg, baseCol[2] * cb]
                     : pm.color,
+                  colors: instColors,
                   translation: t,
                   rotation: r,
                   scale: s,
@@ -2347,6 +2452,7 @@ export function generateUSDAFromMeshes(
       emissiveColor: [number, number, number];
       textures?: Array<USDAMeshTexture | undefined>;
       tslGraph?: unknown;
+      useDisplayColor?: boolean;
     }
   >();
 
@@ -2358,7 +2464,11 @@ export function generateUSDAFromMeshes(
     const hasMeshGeo = !m.isXform && m.positions && m.positions.length > 0;
     if (hasMeshGeo) {
       const matName = sanitizeUsdIdentifier(m.materialName, 'DefaultMaterial');
-      if (!materialsMap.has(matName)) {
+      const hasVCol = Boolean(
+        m.colors && m.colors.length === m.positions.length && !m.textures?.[0],
+      );
+      const existingMat = materialsMap.get(matName);
+      if (!existingMat) {
         materialsMap.set(matName, {
           color: m.color || [1, 1, 1],
           roughness: m.roughness ?? 0.5,
@@ -2370,7 +2480,10 @@ export function generateUSDAFromMeshes(
           emissiveColor: m.emissiveColor || [0, 0, 0],
           textures: m.textures,
           tslGraph: m.tslGraph,
+          useDisplayColor: hasVCol,
         });
+      } else if (hasVCol) {
+        existingMat.useDisplayColor = true;
       }
     }
     if (m.timeSamples && m.timeSamples.times.length > 0) {
@@ -2427,9 +2540,12 @@ ${rootAnchorAttrs}def Scope "Materials"
     const matPath = `/Root/Materials/${matName}`;
     const [dt, mrt, nt, et, ot] = matProps.textures || [];
     const conn = (n: string, o: string) => `.connect = <${matPath}/${n}.outputs:${o}>`;
+    const useVCol = Boolean(matProps.useDisplayColor && !dt);
     const diffuseLine = dt
       ? `color3f inputs:diffuseColor${conn('DiffuseTexture', 'rgb')}`
-      : `color3f inputs:diffuseColor = ${f3(r, g, b)}`;
+      : useVCol
+        ? `color3f inputs:diffuseColor${conn('DisplayColorReader', 'result')}`
+        : `color3f inputs:diffuseColor = ${f3(r, g, b)}`;
     const mrLines = mrt
       ? `float inputs:metallic${conn('MetallicRoughnessTexture', 'b')}\nfloat inputs:roughness${conn('MetallicRoughnessTexture', 'g')}`
       : `float inputs:metallic = ${formatNum(matProps.metallic)}\nfloat inputs:roughness = ${formatNum(matProps.roughness)}`;
@@ -2483,6 +2599,9 @@ ${rootAnchorAttrs}def Scope "Materials"
       emitTex('NormalTexture', nt, 'raw', 'float3 outputs:rgb\n');
       emitTex('EmissiveTexture', et, 'sRGB', 'float3 outputs:rgb\n');
       emitTex('OcclusionTexture', ot, 'raw', 'float outputs:r\n');
+    }
+    if (useVCol) {
+      texShaders += `def Shader "DisplayColorReader"\n{\nuniform token info:id = "UsdPrimvarReader_float3"\nstring inputs:varname = "displayColor"\nfloat3 inputs:fallback = ${f3(r, g, b)}\nfloat3 outputs:result\n}\n`;
     }
     let pbrInputs = `${diffuseLine}\n${mrLines}\n${extraInputs}`;
     const tslUsd =
@@ -2697,6 +2816,12 @@ interpolation = "vertex"
     }
     if (mesh.uvs && mesh.uvs.length === posCount * 2) {
       body += `texCoord2f[] primvars:st = [${formatUVsArray(mesh.uvs, posCount)}] (
+interpolation = "vertex"
+)
+`;
+    }
+    if (mesh.colors && mesh.colors.length === mesh.positions.length) {
+      body += `color3f[] primvars:displayColor = [${formatPointsArray(mesh.colors)}] (
 interpolation = "vertex"
 )
 `;

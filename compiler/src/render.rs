@@ -462,6 +462,7 @@ struct ClipVertex {
     local_pos: [f32; 3],
     local_norm: [f32; 3],
     uv: [f32; 2],
+    color: [f32; 3],
 }
 
 impl ClipVertex {
@@ -494,6 +495,11 @@ impl ClipVertex {
                 a.local_norm[2] + t * (b.local_norm[2] - a.local_norm[2]),
             ]),
             uv: [a.uv[0] + t * (b.uv[0] - a.uv[0]), a.uv[1] + t * (b.uv[1] - a.uv[1])],
+            color: [
+                a.color[0] + t * (b.color[0] - a.color[0]),
+                a.color[1] + t * (b.color[1] - a.color[1]),
+                a.color[2] + t * (b.color[2] - a.color[2]),
+            ],
         }
     }
 }
@@ -1133,35 +1139,42 @@ fn render_viewport_impl(
                 let ln1_raw = mesh.normals.get(i1).copied().unwrap_or([0.0, 1.0, 0.0]);
                 let ln2_raw = mesh.normals.get(i2).copied().unwrap_or([0.0, 1.0, 0.0]);
 
-                let eval_vtx_pos = |vi: usize, uv_v: [f32; 2], ln_v: [f32; 3]| -> [f32; 3] {
-                    let lp = mesh.positions[vi];
-                    if let Some(tg) = tsl_opt.filter(|g| g.uses_vertex_position) {
-                        let wp_init = mat4_transform_point(&model_mat, lp);
-                        let wn_init = mat3_transform_normal(&normal_mat, ln_v);
-                        let v_col = inst_tint
-                            .map(|ic| [ic[0], ic[1], ic[2], 1.0])
-                            .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-                        let vctx = crate::tsl::TslEvalContext {
-                            position_local: lp,
-                            position_world: wp_init,
-                            normal_local: ln_v,
-                            normal_world: wn_init,
-                            view_direction: [0.0, 0.0, 1.0],
-                            uv: uv_v,
-                            vertex_color: v_col,
-                            instance_index: inst as f32,
-                            time: time_sec,
-                            uniform_overrides: None,
-                        };
-                        crate::tsl::evaluate_tsl_graph(tg, &vctx, true).position.unwrap_or(lp)
-                    } else {
-                        lp
-                    }
+                let it = inst_tint.unwrap_or([1.0, 1.0, 1.0]);
+                let vtx_col = |vi: usize| -> [f32; 3] {
+                    let c = mesh.colors.get(vi).copied().unwrap_or([1.0, 1.0, 1.0]);
+                    [c[0] * it[0], c[1] * it[1], c[2] * it[2]]
                 };
+                let vc0 = vtx_col(i0);
+                let vc1 = vtx_col(i1);
+                let vc2 = vtx_col(i2);
 
-                let lp0 = eval_vtx_pos(i0, uv0, ln0_raw);
-                let lp1 = eval_vtx_pos(i1, uv1, ln1_raw);
-                let lp2 = eval_vtx_pos(i2, uv2, ln2_raw);
+                let eval_vtx_pos =
+                    |vi: usize, uv_v: [f32; 2], ln_v: [f32; 3], vc_v: [f32; 3]| -> [f32; 3] {
+                        let lp = mesh.positions[vi];
+                        if let Some(tg) = tsl_opt.filter(|g| g.uses_vertex_position) {
+                            let wp_init = mat4_transform_point(&model_mat, lp);
+                            let wn_init = mat3_transform_normal(&normal_mat, ln_v);
+                            let vctx = crate::tsl::TslEvalContext {
+                                position_local: lp,
+                                position_world: wp_init,
+                                normal_local: ln_v,
+                                normal_world: wn_init,
+                                view_direction: [0.0, 0.0, 1.0],
+                                uv: uv_v,
+                                vertex_color: [vc_v[0], vc_v[1], vc_v[2], 1.0],
+                                instance_index: inst as f32,
+                                time: time_sec,
+                                uniform_overrides: None,
+                            };
+                            crate::tsl::evaluate_tsl_graph(tg, &vctx, true).position.unwrap_or(lp)
+                        } else {
+                            lp
+                        }
+                    };
+
+                let lp0 = eval_vtx_pos(i0, uv0, ln0_raw, vc0);
+                let lp1 = eval_vtx_pos(i1, uv1, ln1_raw, vc1);
+                let lp2 = eval_vtx_pos(i2, uv2, ln2_raw, vc2);
 
                 let wp0 = mat4_transform_point(&model_mat, lp0);
                 let wp1 = mat4_transform_point(&model_mat, lp1);
@@ -1215,6 +1228,7 @@ fn render_viewport_impl(
                     local_pos: lp0,
                     local_norm: normalize3(ln0_raw),
                     uv: uv0,
+                    color: vc0,
                 };
                 let v1 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp1),
@@ -1223,6 +1237,7 @@ fn render_viewport_impl(
                     local_pos: lp1,
                     local_norm: normalize3(ln1_raw),
                     uv: uv1,
+                    color: vc1,
                 };
                 let v2 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp2),
@@ -1231,6 +1246,7 @@ fn render_viewport_impl(
                     local_pos: lp2,
                     local_norm: normalize3(ln2_raw),
                     uv: uv2,
+                    color: vc2,
                 };
 
                 clipped_tris.clear();
@@ -1346,7 +1362,7 @@ fn render_viewport_impl(
                                 ctri[0].world_norm,
                                 eye_pos,
                                 mat,
-                                inst_tint,
+                                Some(ctri[0].color),
                                 &scene.lights,
                             ),
                             shade_pbr(
@@ -1354,7 +1370,7 @@ fn render_viewport_impl(
                                 ctri[1].world_norm,
                                 eye_pos,
                                 mat,
-                                inst_tint,
+                                Some(ctri[1].color),
                                 &scene.lights,
                             ),
                             shade_pbr(
@@ -1362,7 +1378,7 @@ fn render_viewport_impl(
                                 ctri[2].world_norm,
                                 eye_pos,
                                 mat,
-                                inst_tint,
+                                Some(ctri[2].color),
                                 &scene.lights,
                             ),
                         )
@@ -1466,6 +1482,17 @@ fn render_viewport_impl(
                                                 ts[3] as f32 / 255.0,
                                             ]
                                         });
+                                        let vc_interp = [
+                                            b0 * ctri[0].color[0]
+                                                + b1 * ctri[1].color[0]
+                                                + b2 * ctri[2].color[0],
+                                            b0 * ctri[0].color[1]
+                                                + b1 * ctri[1].color[1]
+                                                + b2 * ctri[2].color[1],
+                                            b0 * ctri[0].color[2]
+                                                + b1 * ctri[1].color[2]
+                                                + b2 * ctri[2].color[2],
+                                        ];
                                         let mut pixel_mat;
                                         let active_mat = if let Some(tg) =
                                             tsl_opt.filter(|_| has_tsl_frag)
@@ -1497,9 +1524,8 @@ fn render_viewport_impl(
                                                 eye_pos[1] - wp[1],
                                                 eye_pos[2] - wp[2],
                                             ]);
-                                            let v_col = inst_tint
-                                                .map(|ic| [ic[0], ic[1], ic[2], 1.0])
-                                                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                                            let v_col =
+                                                [vc_interp[0], vc_interp[1], vc_interp[2], 1.0];
                                             let fctx = crate::tsl::TslEvalContext {
                                                 position_local: lp_interp,
                                                 position_world: wp,
@@ -1554,7 +1580,7 @@ fn render_viewport_impl(
                                             metal_scale,
                                             ao_factor,
                                             emissive_add,
-                                            inst_tint,
+                                            Some(vc_interp),
                                             &scene.lights,
                                         )
                                     } else {

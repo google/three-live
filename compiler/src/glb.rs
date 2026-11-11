@@ -648,6 +648,36 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             attributes.as_object_mut().unwrap().insert("TEXCOORD_0".to_string(), json!(uv_acc_idx));
         }
 
+        // Vertex Colors (COLOR_0)
+        if mesh.colors.len() >= vertex_count {
+            align_bin_data(bin_data);
+            let col_offset = bin_data.len();
+            for i in 0..vertex_count {
+                let c = mesh.colors[i];
+                for val in c {
+                    let v = if val.is_finite() { val.max(0.0) } else { 1.0 };
+                    bin_data.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            let col_len = bin_data.len() - col_offset;
+            let col_bv_idx = buffer_views.len();
+            buffer_views.push(json!({
+                "buffer": 0,
+                "byteOffset": col_offset,
+                "byteLength": col_len,
+                "target": TARGET_ARRAY_BUFFER,
+            }));
+            let col_acc_idx = accessors.len();
+            accessors.push(json!({
+                "bufferView": col_bv_idx,
+                "byteOffset": 0,
+                "componentType": COMPONENT_FLOAT,
+                "count": vertex_count,
+                "type": "VEC3",
+            }));
+            attributes.as_object_mut().unwrap().insert("COLOR_0".to_string(), json!(col_acc_idx));
+        }
+
         // Indices
         let mut primitive = json!({
             "attributes": attributes,
@@ -1494,6 +1524,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                     positions: Vec::new(),
                     normals: Vec::new(),
                     uvs: Vec::new(),
+                    colors: Vec::new(),
                     indices: Vec::new(),
                     material_index: None,
                     variant_mappings: None,
@@ -1533,6 +1564,18 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 uvs.push([chunk[0], chunk[1]]);
             }
 
+            let col_acc_idx = prim["attributes"]["COLOR_0"].as_u64().map(|idx| idx as usize);
+            let col_comps = col_acc_idx
+                .and_then(|idx| accessors.get(idx))
+                .and_then(|a| a["type"].as_str())
+                .map(|t| if t == "VEC4" { 4 } else { 3 })
+                .unwrap_or(3);
+            let col_flat = col_acc_idx.map(|idx| read_acc_f32(idx, col_comps)).unwrap_or_default();
+            let mut colors = Vec::with_capacity(col_flat.len() / col_comps);
+            for chunk in col_flat.chunks_exact(col_comps) {
+                colors.push([chunk[0], chunk[1], chunk[2]]);
+            }
+
             let indices =
                 prim["indices"].as_u64().map(|idx| read_acc_u32(idx as usize)).unwrap_or_default();
             let material_index = prim["material"].as_u64().map(|idx| idx as usize);
@@ -1542,6 +1585,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 positions,
                 normals,
                 uvs,
+                colors,
                 indices,
                 material_index,
                 variant_mappings: None,

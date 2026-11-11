@@ -1671,6 +1671,153 @@ function runCadRegressionTests(
       'ConeGeometry forwards heightSegments, openEnded, thetaStart, and thetaLength to CylinderGeometry',
     );
   }
+
+  // Coverage: Stage 1 per-vertex color (COLOR_0 in GLB, primvars:displayColor in USDZ, smart export gate, and __three_live_extract_scene_raw__).
+  {
+    const makeColoredTri = (
+      colorArr: Float32Array | Uint8Array | Uint16Array,
+      itemSize: number = 3,
+    ) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3),
+      );
+      g.setAttribute(
+        'normal',
+        new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3),
+      );
+      g.setAttribute('color', new THREE.BufferAttribute(colorArr as any, itemSize));
+      g.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
+      return g;
+    };
+
+    // 1. Default untinted MeshStandardMaterial automatically exports COLOR_0; VEC4, Uint8Array, Uint16Array, and NaN/negative sanitization work.
+    const vcScene = new Scene();
+    const gFloat3 = makeColoredTri(
+      new Float32Array([1, 0, 0, 0, 1, 0, Number.NaN, -0.5, 0.25]),
+      3,
+    );
+    const gFloat4 = makeColoredTri(
+      new Float32Array([0.2, 0.4, 0.8, 1.0, 0.8, 0.4, 0.2, 0.5, 0.1, 0.9, 0.3, 1.0]),
+      4,
+    );
+    const gU8 = makeColoredTri(new Uint8Array([255, 0, 128, 0, 255, 64, 128, 128, 255]), 3);
+    const gU16 = makeColoredTri(
+      new Uint16Array([65535, 0, 0, 0, 65535, 0, 0, 0, 65535]),
+      3,
+    );
+    // Custom tint without vertexColors: true MUST omit COLOR_0
+    const gTintedOmit = makeColoredTri(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), 3);
+    // Explicit vertexColors: false MUST omit COLOR_0
+    const gExplicitOff = makeColoredTri(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), 3);
+    // Custom tint WITH explicit vertexColors: true MUST export COLOR_0
+    const gTintedExplicitOn = makeColoredTri(
+      new Float32Array([1, 0.5, 0.25, 0.25, 1, 0.5, 0.5, 0.25, 1]),
+      3,
+    );
+
+    vcScene.add(new Mesh(gFloat3, new MeshStandardMaterial()));
+    vcScene.add(
+      new Mesh(gFloat4, new MeshStandardMaterial({vertexColors: true})),
+    );
+    vcScene.add(new Mesh(gU8, new MeshStandardMaterial({vertexColors: true})));
+    vcScene.add(new Mesh(gU16, new MeshStandardMaterial({vertexColors: true})));
+    vcScene.add(
+      new Mesh(gTintedOmit, new MeshStandardMaterial({color: 0x34d399})),
+    );
+    vcScene.add(
+      new Mesh(gExplicitOff, new MeshStandardMaterial({vertexColors: false})),
+    );
+    vcScene.add(
+      new Mesh(
+        gTintedExplicitOn,
+        new MeshStandardMaterial({color: 0x808080, vertexColors: true}),
+      ),
+    );
+
+    const {gltf: vcGltf, bin: vcBin} = vcScene.toCanvas3D();
+    const prim0 = vcGltf.meshes[0]?.primitives?.[0];
+    const prim1 = vcGltf.meshes[1]?.primitives?.[0];
+    const prim2 = vcGltf.meshes[2]?.primitives?.[0];
+    const prim3 = vcGltf.meshes[3]?.primitives?.[0];
+    const prim4 = vcGltf.meshes[4]?.primitives?.[0];
+    const prim5 = vcGltf.meshes[5]?.primitives?.[0];
+    const prim6 = vcGltf.meshes[6]?.primitives?.[0];
+
+    assert(
+      typeof prim0?.attributes?.COLOR_0 === 'number' &&
+        typeof prim1?.attributes?.COLOR_0 === 'number' &&
+        typeof prim2?.attributes?.COLOR_0 === 'number' &&
+        typeof prim3?.attributes?.COLOR_0 === 'number' &&
+        prim4?.attributes?.COLOR_0 === undefined &&
+        prim5?.attributes?.COLOR_0 === undefined &&
+        typeof prim6?.attributes?.COLOR_0 === 'number',
+      'Smart vertex color gate exports COLOR_0 for untinted or vertexColors:true meshes and omits it for custom-tinted or vertexColors:false meshes',
+    );
+
+    // Check sanitized values in prim0 (NaN -> 1, -0.5 -> 0)
+    const acc0 = vcGltf.accessors[prim0.attributes.COLOR_0];
+    const bv0 = vcGltf.bufferViews[acc0.bufferView];
+    const col0 = new Float32Array(
+      vcBin,
+      (bv0.byteOffset || 0) + (acc0.byteOffset || 0),
+      acc0.count * 3,
+    );
+    assert(
+      acc0.type === 'VEC3' &&
+        acc0.componentType === 5126 &&
+        Math.abs(col0[0] - 1) < 1e-5 &&
+        Math.abs(col0[6] - 1) < 1e-5 &&
+        Math.abs(col0[7] - 0) < 1e-5 &&
+        Math.abs(col0[8] - 0.25) < 1e-5,
+      'COLOR_0 accessor is VEC3 FLOAT (5126) and sanitizes NaN to 1.0 and negative components to 0.0',
+    );
+
+    // Check normalized Uint8Array in prim2
+    const acc2 = vcGltf.accessors[prim2.attributes.COLOR_0];
+    const bv2 = vcGltf.bufferViews[acc2.bufferView];
+    const col2 = new Float32Array(
+      vcBin,
+      (bv2.byteOffset || 0) + (acc2.byteOffset || 0),
+      acc2.count * 3,
+    );
+    assert(
+      Math.abs(col2[0] - 1) < 1e-4 &&
+        Math.abs(col2[2] - 128 / 255) < 1e-4 &&
+        Math.abs(col2[4] - 1) < 1e-4,
+      'Normalized Uint8Array color attribute converts to [0, 1] float COLOR_0 in GLB',
+    );
+
+    // Check USDZ primvars:displayColor and UsdPrimvarReader_float3
+    const vcUsdzText = new TextDecoder().decode(vcScene.toUSDZ());
+    assert(
+      vcUsdzText.includes('color3f[] primvars:displayColor = [') &&
+        vcUsdzText.includes('interpolation = "vertex"') &&
+        vcUsdzText.includes('def Shader "DisplayColorReader"') &&
+        vcUsdzText.includes('uniform token info:id = "UsdPrimvarReader_float3"') &&
+        vcUsdzText.includes('string inputs:varname = "displayColor"') &&
+        vcUsdzText.includes('DisplayColorReader.outputs:result>'),
+      'scene.toUSDZ() emits vertex-interpolated primvars:displayColor and wires UsdPrimvarReader_float3 into UsdPreviewSurface.inputs:diffuseColor',
+    );
+
+    // Check InstancedMesh with both per-vertex colors and per-instance colors in USDZ
+    const instVcScene = new Scene();
+    const instMesh = new THREE.InstancedMesh(
+      makeColoredTri(new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1]), 3),
+      new MeshStandardMaterial({vertexColors: true}),
+      2,
+    );
+    instMesh.setColorAt(0, new THREE.Color(0.5, 0.25, 0.75));
+    instMesh.setColorAt(1, new THREE.Color(0.2, 0.8, 0.4));
+    instVcScene.add(instMesh);
+    const instUsdzText = new TextDecoder().decode(instVcScene.toUSDZ());
+    assert(
+      instUsdzText.includes('(0.5, 0.25, 0.75)') &&
+        instUsdzText.includes('(0.2, 0.8, 0.4)'),
+      'InstancedMesh with per-vertex colors and instanceColor scales primvars:displayColor per instance in USDZ',
+    );
+  }
 }
 
 runThreeAuthorTests();

@@ -5456,3 +5456,119 @@ fn test_all_domain_kits_transcode_to_glb_usdz_and_render() {
         "USDZ missing expanded domain kit node ProteinRibbon"
     );
 }
+
+#[test]
+fn test_stage1_vertex_colors_glb_usdz_and_render_parity() {
+    let script = r#"
+        const geo = new THREE.PlaneGeometry(2.0, 2.0, 8, 1);
+        const pos = geo.attributes.position;
+        const colors = new Float32Array(pos.count * 3);
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            if (x < 0) {
+                colors[i * 3] = 1.0;
+                colors[i * 3 + 1] = 0.05;
+                colors[i * 3 + 2] = 0.05;
+            } else {
+                colors[i * 3] = 0.05;
+                colors[i * 3 + 1] = 0.1;
+                colors[i * 3 + 2] = 1.0;
+            }
+        }
+        geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        const quad = new THREE.Mesh(
+            geo,
+            new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0.0, vertexColors: true })
+        );
+        quad.name = "SplitColorQuad";
+        scene.add(quad);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(0.0, 0.0, 4.0);
+        scene.add(sun);
+
+        camera.position.set(0.0, 0.0, 2.2);
+        camera.lookAt(0.0, 0.0, 0.0);
+    "#;
+
+    let scene = validate_three_script(script).expect("Vertex color scene should compile");
+    assert_eq!(scene.meshes.len(), 1);
+    assert_eq!(
+        scene.meshes[0].colors.len(),
+        scene.meshes[0].positions.len(),
+        "Mesh3D.colors count must equal Mesh3D.positions count"
+    );
+
+    let glb = transcode_three_to_glb(script).expect("GLB export should succeed");
+    let glb_str = String::from_utf8_lossy(&glb);
+    assert!(
+        glb_str.contains("\"COLOR_0\""),
+        "GLB JSON chunk must contain COLOR_0 attribute"
+    );
+    let parsed_scene = three_live_compiler::glb::read_glb(&glb).expect("read_glb should succeed");
+    assert_eq!(
+        parsed_scene.meshes[0].colors.len(),
+        parsed_scene.meshes[0].positions.len(),
+        "read_glb must round-trip COLOR_0 into Mesh3D.colors"
+    );
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("USDZ export should succeed");
+    let usda = String::from_utf8_lossy(&usdz);
+    assert!(
+        usda.contains("color3f[] primvars:displayColor = [")
+            && usda.contains("UsdPrimvarReader_float3")
+            && usda.contains("DisplayColorReader"),
+        "USDZ must contain primvars:displayColor and UsdPrimvarReader_float3"
+    );
+
+    let (_w, _h, rgba) = three_live_compiler::render::render_scene_rgba(
+        &scene,
+        &three_live_compiler::render::RenderOptions {
+            width: 128,
+            height: 128,
+            ..Default::default()
+        },
+    );
+    let left_idx = (64 * 128 + 32) * 4;
+    let right_idx = (64 * 128 + 96) * 4;
+    let (lr, _lg, lb) = (rgba[left_idx], rgba[left_idx + 1], rgba[left_idx + 2]);
+    let (rr, _rg, rb) = (rgba[right_idx], rgba[right_idx + 1], rgba[right_idx + 2]);
+    assert!(
+        lr > lb.saturating_add(80),
+        "Left side of quad should render red (got R={}, B={})",
+        lr,
+        lb
+    );
+    assert!(
+        rb > rr.saturating_add(80),
+        "Right side of quad should render blue (got R={}, B={})",
+        rr,
+        rb
+    );
+
+    // Also verify MoleculeGeometry and AtomicOrbitalGeometry export distinct vertex colors in Rust
+    let sci_script = r#"
+        const mol = new THREE.Mesh(
+            new THREE.Science.MoleculeGeometry({ preset: "water" }),
+            new THREE.MeshStandardMaterial({ roughness: 0.3 })
+        );
+        mol.name = "WaterCPK";
+        scene.add(mol);
+        const orb = new THREE.Mesh(
+            new THREE.Science.AtomicOrbitalGeometry({ orbital: "2pz" }),
+            new THREE.MeshStandardMaterial({ roughness: 0.35 })
+        );
+        orb.name = "Orbital2pz";
+        orb.position.set(1.2, 0, 0);
+        scene.add(orb);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        camera.position.set(0.5, 0.5, 2.5);
+        camera.lookAt(0.5, 0.0, 0.0);
+    "#;
+    let sci_scene = validate_three_script(sci_script).expect("Science CPK/orbital scene compiles");
+    assert_eq!(sci_scene.meshes.len(), 2);
+    assert_eq!(sci_scene.meshes[0].colors.len(), sci_scene.meshes[0].positions.len());
+    assert_eq!(sci_scene.meshes[1].colors.len(), sci_scene.meshes[1].positions.len());
+}

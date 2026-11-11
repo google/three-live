@@ -363,8 +363,8 @@ ${vBody}
       .replace('@vertex', `${evalPosFn}\n@vertex`)
       .replace(
         'let world = m * vec4<f32>(aPos, 1.0);',
-        `let _tslInstF=f32(instIdx);let _tslNewP=_tslEvalPos(aPos,aNormal,aUV,vec4<f32>(1.0),_tslInstF,m);var _tslNewN=aNormal;
-  if(length(aNormal)>1e-4){let _n0=normalize(aNormal);let _tg1=normalize(select(cross(vec3<f32>(1.0,0.0,0.0),_n0),cross(vec3<f32>(0.0,1.0,0.0),_n0),abs(_n0.y)<0.99));let _tg2=cross(_n0,_tg1);let _cn=cross(_tslEvalPos(aPos+_tg1*1e-3,aNormal,aUV,vec4<f32>(1.0),_tslInstF,m)-_tslNewP,_tslEvalPos(aPos+_tg2*1e-3,aNormal,aUV,vec4<f32>(1.0),_tslInstF,m)-_tslNewP);if(length(_cn)>1e-10){_tslNewN=normalize(_cn);}}
+        `let _tslInstF=f32(instIdx);let _tslVC0=vec4<f32>(aColor,1.0);let _tslNewP=_tslEvalPos(aPos,aNormal,aUV,_tslVC0,_tslInstF,m);var _tslNewN=aNormal;
+  if(length(aNormal)>1e-4){let _n0=normalize(aNormal);let _tg1=normalize(select(cross(vec3<f32>(1.0,0.0,0.0),_n0),cross(vec3<f32>(0.0,1.0,0.0),_n0),abs(_n0.y)<0.99));let _tg2=cross(_n0,_tg1);let _cn=cross(_tslEvalPos(aPos+_tg1*1e-3,aNormal,aUV,_tslVC0,_tslInstF,m)-_tslNewP,_tslEvalPos(aPos+_tg2*1e-3,aNormal,aUV,_tslVC0,_tslInstF,m)-_tslNewP);if(length(_cn)>1e-10){_tslNewN=normalize(_cn);}}
   let world = m * vec4<f32>(_tslNewP, 1.0);`,
       )
       .replace(
@@ -386,7 +386,7 @@ ${vBody}
     const fBody = emitWgslStatements(graph.nodes, graph.fragmentReachable);
     const uniformEval = `  let _nL=length(in.normal);var _nU:vec3<f32>;if(_nL<1e-4){let _fc=cross(p1,p2);let _fl=length(_fc);_nU=select(vec3<f32>(0.0,1.0,0.0),_fc/_fl,_fl>1e-8);}else{_nU=in.normal/_nL;}if(!frontFacing){_nU=-_nU;}
   let _toC=sc.camAndExp.xyz-in.worldPos;let _cD=length(_toC);let _tslVD=select(vec3<f32>(0.0,0.0,1.0),_toC/_cD,_cD>1e-6);let _tslNW=_nU;
-  let _lnL=length(in.localNorm);let _tslNL=select(vec3<f32>(0.0,1.0,0.0),in.localNorm/_lnL,_lnL>1e-5);let _tslPL=in.localPos;let _tslPW=in.worldPos;let _tslUV=in.uv;let _tslVC=vec4<f32>(1.0);let _tslII=f32(in.instIdx);
+  let _lnL=length(in.localNorm);let _tslNL=select(vec3<f32>(0.0,1.0,0.0),in.localNorm/_lnL,_lnL>1e-5);let _tslPL=in.localPos;let _tslPW=in.worldPos;let _tslUV=in.uv;let _tslVC=vec4<f32>(in.vColor,1.0);let _tslII=f32(in.instIdx);
 ${fBody}`;
 
     pbrWgsl = pbrWgsl.replace(
@@ -461,11 +461,11 @@ ${fBody}`;
       )
       .replace(
         '@location(1) aNormal: vec3<f32>,',
-        '@location(1) aNormal: vec3<f32>,\n  @location(2) aUV: vec2<f32>,',
+        '@location(1) aNormal: vec3<f32>,\n  @location(2) aUV: vec2<f32>,\n  @location(3) aColor: vec3<f32>,',
       )
       .replace(
         'var wp = m * vec4<f32>(aPos, 1.0);',
-        `let _tslPL=aPos;let _tslPW=(m*vec4<f32>(aPos,1.0)).xyz;let _tslNL=aNormal;let _rn=m[0].xyz*aNormal.x+m[1].xyz*aNormal.y+m[2].xyz*aNormal.z;let _rl=length(_rn);let _tslNW=select(vec3<f32>(0.0,1.0,0.0),_rn/_rl,_rl>1e-5);let _tslVD=vec3<f32>(0.0,0.0,1.0);let _tslUV=aUV;let _tslVC=vec4<f32>(1.0);let _tslII=f32(instIdx);\n${vBody}\n  var wp = m * vec4<f32>(_t${graph.outputs.position}, 1.0);`,
+        `let _tslPL=aPos;let _tslPW=(m*vec4<f32>(aPos,1.0)).xyz;let _tslNL=aNormal;let _rn=m[0].xyz*aNormal.x+m[1].xyz*aNormal.y+m[2].xyz*aNormal.z;let _rl=length(_rn);let _tslNW=select(vec3<f32>(0.0,1.0,0.0),_rn/_rl,_rl>1e-5);let _tslVD=vec3<f32>(0.0,0.0,1.0);let _tslUV=aUV;let _tslVC=vec4<f32>(aColor,1.0);let _tslII=f32(instIdx);\n${vBody}\n  var wp = m * vec4<f32>(_t${graph.outputs.position}, 1.0);`,
       );
   }
 

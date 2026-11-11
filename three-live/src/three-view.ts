@@ -450,6 +450,7 @@ layout(location=9) in vec4 aInst1;
 layout(location=10) in vec4 aInst2;
 layout(location=11) in vec4 aInst3;
 layout(location=12) in vec4 aInstColor;
+layout(location=6) in vec4 aColor;
 uniform int uInstanced;
 uniform mat4 uViewProj;
 out vec4 vInstTint;
@@ -463,7 +464,7 @@ out vec3 vNormal,vWorldPos;
 out vec2 vUV;
 void main(){
 vec3 aPosition=aPos+aOff;
-vInstTint=uInstanced==1?aInstColor:vec4(1.0);
+vInstTint=(uInstanced==1?aInstColor:vec4(1.0))*aColor;
 vec3 rawN=uNormalMatrix*aNormal;
 vNormal=length(rawN)>1e-5?normalize(rawN):vec3(0.0);
 vec4 world=uModel*vec4(aPosition,1.0);
@@ -770,6 +771,7 @@ interface PrimitiveGpu {
   positions: Float32Array;
   normals?: Float32Array | null;
   uvs?: Float32Array | null;
+  colors?: Float32Array | null;
   indices: Uint16Array | Uint32Array | null;
   texture: WebGLTexture | null;
   metallicRoughnessTexture: WebGLTexture | null;
@@ -1603,7 +1605,7 @@ function buildGpuSceneUnchecked(
         buffers,
       )!;
 
-      // 2. NORMAL & TEXCOORD_0 (optional)
+      // 2. NORMAL, TEXCOORD_0 & COLOR_0 (optional)
       const normData = bindBufferAttribute(
         gl,
         gltf,
@@ -1622,6 +1624,20 @@ function buildGpuSceneUnchecked(
         2,
         buffers,
         primitiveTextureTransform(gltf, prim),
+      );
+      const colAccIdx = prim.attributes.COLOR_0;
+      const colComps =
+        colAccIdx !== undefined && gltf.accessors?.[colAccIdx]?.type === 'VEC4'
+          ? 4
+          : 3;
+      const colorData = bindBufferAttribute(
+        gl,
+        gltf,
+        bin,
+        colAccIdx,
+        6,
+        colComps,
+        buffers,
       );
 
       // 3. INDICES
@@ -1722,6 +1738,7 @@ function buildGpuSceneUnchecked(
         positions: posData,
         normals: normData,
         uvs: uvData,
+        colors: colorData,
         indices: idxDataRaw,
         buffers,
         materialIndex: prim.material,
@@ -4052,6 +4069,7 @@ export class ThreeView {
           const u = prim.customUniforms || this.uRender;
           gl.useProgram(prog);
           gl.vertexAttrib3f(3, 0, 0, 0);
+          gl.vertexAttrib4f?.(6, 1, 1, 1, 1);
           if (u.uInstanced) gl.uniform1i(u.uInstanced, 0);
 
           gl.uniform1i(u.uToneMapping, toneMode);
