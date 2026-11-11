@@ -83,12 +83,36 @@ export interface AIChatProviderOptions {
   readonly endpoint: string;
   /** Model name forwarded in the request body. */
   readonly model?: string;
+  /** Ordered fallback model IDs tried if the primary model fails after retries or stalls before the first chunk. */
+  readonly fallbackModels?: readonly string[];
   /** Extra request headers (e.g. a short-lived bearer token for your proxy). */
   readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * Optional OpenAI-compatible reasoning effort (`'minimal'`, `'low'`,
+   * `'medium'`, `'high'`, or `'none'`). Omitted by default unless explicitly set.
+   */
+  readonly reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'none';
   /** Sampling temperature (default 0.2). */
   readonly temperature?: number;
   /** Request timeout in milliseconds (default 120000). */
   readonly timeoutMs?: number;
+  /** Max wait in milliseconds for HTTP 200 + first SSE delta before switching to a fallback model. */
+  readonly firstByteTimeoutMs?: number;
+  /** Max transient retries per model on HTTP 429/502/503/504 before receiving output chunks (default 1). */
+  readonly maxRetries?: number;
+  /** Base delay in milliseconds before retrying a transient HTTP 429/502/503/504 error (default 1500). */
+  readonly retryDelayMs?: number;
+  /** Stream Server-Sent Events (`stream: true`) with resettable per-chunk timeout. */
+  readonly stream?: boolean;
+  /** Live progress callback invoked as SSE tokens stream in. */
+  readonly onProgress?: (progress: {
+    chars: number;
+    lines: number;
+    thinkingChars?: number;
+    phase?: 'thinking' | 'streaming';
+  }) => void;
+  /** Status callback invoked when retrying or falling back to a secondary model. */
+  readonly onStatus?: (status: string) => void;
   /** `fetch` implementation (defaults to the global `fetch`). */
   readonly fetch?: typeof fetch;
 }
@@ -169,15 +193,54 @@ const DRY_RUN_TIMEOUT_MS = 15000;
 
 const SYSTEM_PROMPT = [
   'You edit Three.js scene scripts for Three-Live, which compiles them to glTF for Web, Android, and iOS.',
-  'Reply with the COMPLETE updated script in a single ```js code block and nothing else.',
+  'For targeted edits or additions to an existing script, prefer returning ONLY the changes using one or more SEARCH/REPLACE blocks (fastest):',
+  '<<<<<<< SEARCH',
+  '<exact lines from Current scene script>',
+  '=======',
+  '<replacement lines>',
+  '>>>>>>> REPLACE',
+  'To add new objects at the end without repeating existing code, you may also return a ```js block starting with `// APPEND` followed by the new statements.',
+  'Or, if rewriting most of the scene, reply with the COMPLETE updated script in a single ```js code block (never use "// ... existing code ..." placeholders).',
   'Rules:',
   '- Use the pre-defined globals `THREE`, `scene`, and `camera`. No imports, renderer, loaders, DOM, network, or timers.',
   '- Change only what the instruction asks; keep every other object, name, and value as it is.',
+  '- Keep any `__TL_DATA_URI_N__` placeholders intact.',
   '- Give new meshes and groups descriptive `.name` values; keep existing names stable.',
   '- Keep objects resting on y = 0 and within view of the camera.',
   '- Supported: core geometries and materials (MeshStandardMaterial / MeshPhysicalMaterial with PBR maps, and MeshStandardNodeMaterial with loop-free THREE.TSL colorNode / emissiveNode / roughnessNode / metalnessNode / opacityNode / bumpNode / positionNode), lights, Group, InstancedMesh, THREE.CSG, domain kits when loaded (THREE.Mechanical, THREE.Architecture, THREE.Industrial, THREE.Science, THREE.Electronics), THREE.CanvasTexture, THREE.ProceduralTexture presets (wood, marble, brick, concrete, brushedMetal, rust, leather, fabric, carbonFiber, checkerboard, grid), and declarative mesh.userData.xr traits. Optional per-frame motion: function animate(t) { ... }.',
   '- Keep every userData.xr.material preset; add a prompt (AI texture) only when the instruction asks for a specific surface.',
 ].join('\n');
+
+const DATA_URI_REGEX = /data:[^"'\s`]+;base64,[A-Za-z0-9+/=]{64,}/g;
+
+/** Replaces long inline base64 data URIs with compact `__TL_DATA_URI_N__` tokens. */
+export function maskDataUris(source: string): {
+  masked: string;
+  uris: string[];
+} {
+  const uris: string[] = [];
+  const masked = String(source ?? '').replace(DATA_URI_REGEX, (match) => {
+    let idx = uris.indexOf(match);
+    if (idx < 0) idx = uris.push(match) - 1;
+    return `__TL_DATA_URI_${idx}__`;
+  });
+  return {masked, uris};
+}
+
+/** Restores `__TL_DATA_URI_N__` placeholders with their original base64 data URIs. */
+export function unmaskDataUris(
+  script: string,
+  uris: readonly string[],
+): string {
+  if (!uris.length) return script;
+  return String(script ?? '').replace(
+    /__TL_DATA_URI_(\d+)__/g,
+    (full, idxStr: string) => {
+      const idx = Number(idxStr);
+      return idx >= 0 && idx < uris.length ? uris[idx] : full;
+    },
+  );
+}
 
 function isAllowedEndpoint(raw: string): boolean {
   try {
@@ -190,6 +253,31 @@ function isAllowedEndpoint(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+function extractDeltaText(val: unknown): string {
+  if (typeof val === 'string') return val;
+  return Array.isArray(val)
+    ? val
+        .map((p) => (typeof p === 'string' ? p : String(p?.text ?? '')))
+        .join('')
+    : '';
+}
+
+function waitRetryDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(signal?.reason ?? new Error('ai-chat: request aborted'));
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, {once: true});
+  });
 }
 
 /**
@@ -212,61 +300,262 @@ export function createAIChatProvider(
   const temperature = Number.isFinite(options.temperature)
     ? Number(options.temperature)
     : 0.2;
-  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 120000);
+  const timeoutMs =
+    Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
+      ? Math.max(10, Number(options.timeoutMs))
+      : 120000;
+  const reasoningEffort = options.reasoningEffort;
+  const useStream = Boolean(options.stream || options.onProgress);
+  const baseModel = options.model?.trim() || undefined;
+  const candidateModels: Array<string | undefined> = options.fallbackModels
+    ?.length
+    ? [
+        baseModel,
+        ...options.fallbackModels.filter((m) => m && m !== baseModel),
+      ]
+    : [baseModel];
+  const explicitFirstByteTimeout =
+    Number(options.firstByteTimeoutMs) > 0
+      ? Math.max(10, Number(options.firstByteTimeoutMs))
+      : undefined;
+  const firstByteTimeoutMs =
+    explicitFirstByteTimeout ??
+    (candidateModels.length > 1 ? Math.min(timeoutMs, 20000) : timeoutMs);
+  const maxRetries =
+    Number(options.maxRetries) >= 0
+      ? Math.min(5, Math.floor(Number(options.maxRetries)))
+      : 1;
+  const retryDelayMs =
+    Number(options.retryDelayMs) >= 0 ? Number(options.retryDelayMs) : 1500;
+  const headers = {'Content-Type': 'application/json', ...options.headers};
   return {
     async complete({messages, signal}) {
-      const ctrl = new AbortController();
-      const onAbort = () => ctrl.abort(signal?.reason);
-      if (signal?.aborted) onAbort();
-      signal?.addEventListener('abort', onAbort, {once: true});
-      const timer = setTimeout(
-        () => ctrl.abort(new Error(`ai-chat: timed out after ${timeoutMs} ms`)),
-        timeoutMs,
-      );
-      try {
-        const body: Record<string, unknown> = {
-          messages,
-          temperature,
-          stream: false,
-        };
-        if (options.model) body['model'] = options.model;
-        const res = await doFetch(endpoint, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json', ...options.headers},
-          body: JSON.stringify(body),
-          signal: ctrl.signal,
-        });
-        const text = await res.text();
-        if (!res.ok) {
-          throw new Error(
-            `ai-chat: HTTP ${res.status} from endpoint: ${text.slice(0, 300)}`,
-          );
+      for (let modelIdx = 0; modelIdx < candidateModels.length; modelIdx++) {
+        const currentModel = candidateModels[modelIdx];
+        const hasNextFallback = modelIdx < candidateModels.length - 1;
+        const attemptFirstByteTimeout =
+          explicitFirstByteTimeout ??
+          (hasNextFallback ? firstByteTimeoutMs : timeoutMs);
+        for (let retryAttempt = 0; retryAttempt <= maxRetries; retryAttempt++) {
+          const ctrl = new AbortController();
+          let receivedFirstChunk = false;
+          let timedOutWaitingForFirstByte = false;
+          const onAbort = () => ctrl.abort(signal?.reason);
+          if (signal?.aborted) onAbort();
+          signal?.addEventListener('abort', onAbort, {once: true});
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const armTimer = (ms: number, isFirstByteWait: boolean) => {
+            if (timer !== undefined) clearTimeout(timer);
+            timer = setTimeout(() => {
+              if (isFirstByteWait && !receivedFirstChunk) {
+                timedOutWaitingForFirstByte = true;
+              }
+              ctrl.abort(new Error(`ai-chat: timed out after ${ms} ms`));
+            }, ms);
+          };
+          armTimer(attemptFirstByteTimeout, true);
+          try {
+            const body: Record<string, unknown> = {
+              messages,
+              temperature,
+              stream: useStream,
+            };
+            if (currentModel) body['model'] = currentModel;
+            if (reasoningEffort) body['reasoning_effort'] = reasoningEffort;
+            const res = await doFetch(endpoint, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(body),
+              signal: ctrl.signal,
+            });
+            let text = '';
+            if (!res.ok) {
+              text = await res.text();
+              throw new Error(
+                `ai-chat: HTTP ${res.status} from endpoint: ${text.slice(0, 300)}`,
+              );
+            }
+            const contentType = res.headers?.get?.('content-type') ?? '';
+            const isEventStream =
+              !contentType || /text\/event-stream/i.test(contentType);
+            if (
+              useStream &&
+              isEventStream &&
+              res.body &&
+              typeof res.body.getReader === 'function'
+            ) {
+              armTimer(
+                explicitFirstByteTimeout !== undefined
+                  ? explicitFirstByteTimeout
+                  : timeoutMs,
+                explicitFirstByteTimeout !== undefined,
+              );
+              options.onProgress?.({
+                chars: 0,
+                lines: 0,
+                thinkingChars: 0,
+                phase: 'thinking',
+              });
+              const reader = res.body.getReader();
+              const onStreamAbort = () => {
+                try {
+                  void reader.cancel();
+                } catch {}
+              };
+              ctrl.signal.addEventListener('abort', onStreamAbort, {
+                once: true,
+              });
+              const decoder = new TextDecoder();
+              let rawBuffer = '';
+              let sseBuffer = '';
+              let fullText = '';
+              let thinkingChars = 0;
+              let sawSse = false;
+              const processSseLine = (rawLine: string) => {
+                const line = rawLine.trim();
+                if (!line) return;
+                if (line.startsWith(':')) {
+                  sawSse = true;
+                  return;
+                }
+                if (!line.startsWith('data:')) return;
+                sawSse = true;
+                const payload = line.slice(5).trim();
+                if (!payload || payload === '[DONE]') return;
+                try {
+                  // tslint:disable-next-line:no-any Untyped provider SSE JSON.
+                  const parsed: any = JSON.parse(payload);
+                  const deltaObj =
+                    parsed?.choices?.[0]?.delta ??
+                    parsed?.choices?.[0]?.message;
+                  let contentDelta = extractDeltaText(deltaObj?.content);
+                  let reasoningDelta = extractDeltaText(
+                    deltaObj?.reasoning ?? deltaObj?.reasoning_content,
+                  );
+                  if (
+                    !reasoningDelta &&
+                    contentDelta &&
+                    (deltaObj?.extra_content?.google?.thought === true ||
+                      deltaObj?.thought === true)
+                  ) {
+                    reasoningDelta = contentDelta;
+                    contentDelta = '';
+                  }
+                  if (reasoningDelta || contentDelta) {
+                    receivedFirstChunk = true;
+                    armTimer(timeoutMs, false);
+                    thinkingChars += reasoningDelta.length;
+                    if (contentDelta) fullText += contentDelta;
+                    if (contentDelta || !fullText.length) {
+                      options.onProgress?.({
+                        chars: fullText.length,
+                        lines: contentDelta ? fullText.split('\n').length : 0,
+                        thinkingChars,
+                        phase: contentDelta ? 'streaming' : 'thinking',
+                      });
+                    }
+                  }
+                } catch {
+                  // Ignore malformed intermediate SSE lines.
+                }
+              };
+              try {
+                for (;;) {
+                  const {done, value} = await reader.read();
+                  if (ctrl.signal.aborted) {
+                    throw (
+                      ctrl.signal.reason ??
+                      new Error('ai-chat: request aborted')
+                    );
+                  }
+                  if (!done && value && value.byteLength > 0) {
+                    armTimer(timeoutMs, false);
+                  }
+                  if (done) {
+                    const tail = decoder.decode();
+                    if (tail) {
+                      rawBuffer += tail;
+                      sseBuffer += tail;
+                    }
+                    if (sseBuffer) processSseLine(sseBuffer);
+                    break;
+                  }
+                  const chunkText = decoder.decode(value, {stream: true});
+                  rawBuffer += chunkText;
+                  sseBuffer += chunkText;
+                  const lines = sseBuffer.split('\n');
+                  sseBuffer = lines.pop() ?? '';
+                  for (const l of lines) processSseLine(l);
+                }
+              } finally {
+                ctrl.signal.removeEventListener('abort', onStreamAbort);
+              }
+              if (sawSse) {
+                if (!fullText.trim()) {
+                  throw new Error('ai-chat: response had no message content.');
+                }
+                return fullText;
+              }
+              receivedFirstChunk = true;
+              text = rawBuffer;
+            } else {
+              receivedFirstChunk = true;
+              armTimer(timeoutMs, false);
+              text = await res.text();
+            }
+            // tslint:disable-next-line:no-any Untyped provider JSON.
+            let json: any;
+            try {
+              json = JSON.parse(text);
+            } catch {
+              throw new Error('ai-chat: endpoint returned non-JSON content.');
+            }
+            const out = extractDeltaText(json?.choices?.[0]?.message?.content);
+            if (!out.trim()) {
+              throw new Error('ai-chat: response had no message content.');
+            }
+            return out;
+          } catch (err) {
+            const msg = String((err as Error)?.message ?? err ?? '');
+            const isTransientStatus =
+              /HTTP (429|502|503|504)\b|UNAVAILABLE|high demand|RESOURCE_EXHAUSTED/i.test(
+                msg,
+              );
+            if (
+              !signal?.aborted &&
+              !receivedFirstChunk &&
+              isTransientStatus &&
+              retryAttempt < maxRetries
+            ) {
+              options.onStatus?.(
+                `Endpoint busy — retrying${currentModel ? ` (${currentModel})` : ''}…`,
+              );
+              await waitRetryDelay(
+                retryDelayMs * Math.pow(2, retryAttempt),
+                signal,
+              );
+              continue;
+            }
+            if (
+              hasNextFallback &&
+              !signal?.aborted &&
+              !receivedFirstChunk &&
+              (isTransientStatus || timedOutWaitingForFirstByte)
+            ) {
+              const nextModel = candidateModels[modelIdx + 1];
+              options.onStatus?.(
+                `${currentModel || 'model'} busy — retrying with ${nextModel}…`,
+              );
+              break;
+            }
+            throw err;
+          } finally {
+            if (timer !== undefined) clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+          }
         }
-        // tslint:disable-next-line:no-any Untyped provider JSON.
-        let json: any;
-        try {
-          json = JSON.parse(text);
-        } catch {
-          throw new Error('ai-chat: endpoint returned non-JSON content.');
-        }
-        const content = json?.choices?.[0]?.message?.content;
-        const out = Array.isArray(content)
-          ? content
-              .map((p: unknown) =>
-                typeof p === 'string'
-                  ? p
-                  : String((p as {text?: unknown} | null)?.text ?? ''),
-              )
-              .join('')
-          : content;
-        if (typeof out !== 'string' || !out.trim()) {
-          throw new Error('ai-chat: response had no message content.');
-        }
-        return out;
-      } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', onAbort);
       }
+      throw new Error('ai-chat: all candidate models failed.');
     },
   };
 }
@@ -289,6 +578,83 @@ export function extractScript(reply: string): string {
   const open = /```[^\n]*\n([\s\S]*)$/.exec(text);
   if (open) return open[1].trim();
   return /\bscene\b/.test(text) ? text.trim() : '';
+}
+
+/**
+ * Applies an LLM reply to `source`. Supports:
+ * 1. One or more `<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE` blocks
+ * 2. A fenced or raw script starting with `// APPEND` (or `/* APPEND *\/`)
+ * 3. A complete replacement script (via `extractScript`)
+ */
+export function applySceneEdit(
+  source: string,
+  reply: string,
+): {code: string; searchError?: string} {
+  const text = String(reply ?? '');
+  if (/<<<<<<<[ \t]*SEARCH\b/.test(text)) {
+    const blockRegex =
+      /<<<<<<<[ \t]*SEARCH[^\r\n]*\r?\n([\s\S]*?)\r?\n=======[^\r\n]*\r?\n([\s\S]*?)(?:\r?\n)?>>>>>>>[ \t]*REPLACE/g;
+    const blocks: Array<{search: string; replace: string}> = [];
+    let m: RegExpExecArray | null;
+    while ((m = blockRegex.exec(text)) !== null) {
+      blocks.push({search: m[1], replace: m[2]});
+    }
+    if (blocks.length === 0) {
+      return {
+        code: '',
+        searchError:
+          'Incomplete SEARCH/REPLACE block (missing ======= or >>>>>>> REPLACE).',
+      };
+    }
+    let current = source;
+    for (const {search, replace} of blocks) {
+      if (!search.trim()) {
+        current = `${current.trimEnd()}\n${replace}\n`;
+        continue;
+      }
+      const exactIdx = current.indexOf(search);
+      if (exactIdx !== -1) {
+        current =
+          current.slice(0, exactIdx) +
+          replace +
+          current.slice(exactIdx + search.length);
+        continue;
+      }
+      const curLines = current.split(/\r?\n/);
+      const searchLines = search.trim().split(/\r?\n/);
+      const matchedLineIdx = curLines.findIndex(
+        (_, i) =>
+          i + searchLines.length <= curLines.length &&
+          searchLines.every((s, k) => curLines[i + k].trim() === s.trim()),
+      );
+      if (matchedLineIdx !== -1) {
+        curLines.splice(matchedLineIdx, searchLines.length, replace);
+        current = curLines.join('\n');
+        continue;
+      }
+      return {
+        code: '',
+        searchError: 'A SEARCH block did not match the current scene script.',
+      };
+    }
+    return {code: current.trim()};
+  }
+
+  const extracted = extractScript(text);
+  if (!extracted) return {code: ''};
+  const appendMatch =
+    /^\s*(?:\/\/\s*APPEND\b[^\r\n]*|\/\*\s*APPEND\s*\*\/)\s*([\s\S]*)$/i.exec(
+      extracted,
+    );
+  if (appendMatch) {
+    const body = appendMatch[1].trim();
+    if (!body) return {code: source};
+    const wrapped = /\bfunction\s+animate\b/.test(body)
+      ? body
+      : `{\n${body}\n}`;
+    return {code: `${source.trimEnd()}\n\n${wrapped}\n`};
+  }
+  return {code: extracted};
 }
 
 export function sceneSummary(model: unknown): {
@@ -510,12 +876,13 @@ export async function editScene(
     0,
     Math.min(3, Math.floor(Number(options.maxRepairs ?? 1)) || 0),
   );
+  const {masked: maskedSource, uris: dataUris} = maskDataUris(source);
   const messages: AIChatMessage[] = [
     {role: 'system', content: SYSTEM_PROMPT},
     {
       role: 'user',
       content:
-        `Current scene script:\n\`\`\`js\n${source}\n\`\`\`\n` +
+        `Current scene script:\n\`\`\`js\n${maskedSource}\n\`\`\`\n` +
         selectionSentence(selected) +
         `Instruction: ${text}`,
     },
@@ -530,8 +897,11 @@ export async function editScene(
     for (let turn = 0; turn <= maxRepairs; turn++) {
       const reply = await provider.complete({messages, signal});
       if (signal.aborted) throw signal.reason;
-      code = extractScript(reply);
-      if (!code) {
+      const edited = applySceneEdit(maskedSource, reply);
+      code = unmaskDataUris(edited.code, dataUris);
+      if (edited.searchError) {
+        error = edited.searchError;
+      } else if (!code) {
         error = 'The model reply did not contain a scene script.';
       } else if (new TextEncoder().encode(code).length > MAX_SCRIPT_BYTES) {
         error = 'The generated script exceeds the 1 MB script limit.';
@@ -572,7 +942,7 @@ export async function editScene(
           {role: 'assistant', content: reply},
           {
             role: 'user',
-            content: `That script was rejected by the Three-Live sandbox: ${error}\nReturn the complete corrected script in a single \`\`\`js code block.`,
+            content: `That script was rejected by the Three-Live sandbox: ${error}\nReturn a corrected SEARCH/REPLACE block or the complete corrected script in a single \`\`\`js code block.`,
           },
         );
       }

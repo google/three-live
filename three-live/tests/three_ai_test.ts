@@ -60,7 +60,8 @@ getSharedRegistry().scriptRunner = {
           glb.byteOffset,
           glb.byteOffset + glb.byteLength,
         );
-        if (script.includes('/*warn*/')) cb.onToast?.('degraded: RectAreaLight');
+        if (script.includes('/*warn*/'))
+          cb.onToast?.('degraded: RectAreaLight');
         cb.onModelReady(buf);
       } catch (e) {
         cb.onError?.(e);
@@ -120,7 +121,8 @@ function scripted(replies: Array<string | (() => Promise<string>)>) {
   return {provider, requests};
 }
 
-const fenced = (code: string) => `Here you go:\n\`\`\`js\n${code}\n\`\`\`\nDone.`;
+const fenced = (code: string) =>
+  `Here you go:\n\`\`\`js\n${code}\n\`\`\`\nDone.`;
 const WITH_LAMP = `${BASE}
 const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2), new THREE.MeshStandardMaterial({ color: 0xffd166 }));
 lamp.name = 'Lantern';
@@ -188,6 +190,7 @@ async function run(): Promise<void> {
   );
   const errChat = createAIChatProvider({
     endpoint: 'https://proxy.test/chat',
+    retryDelayMs: 5,
     fetch: (async () => new Response('rate limited', {status: 429})) as any,
   });
   const junkChat = createAIChatProvider({
@@ -259,7 +262,9 @@ async function run(): Promise<void> {
   {
     const {el} = fakeElement();
     const {provider, requests} = scripted([
-      fenced(`${BASE}\nscene.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), ;`),
+      fenced(
+        `${BASE}\nscene.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), ;`,
+      ),
       fenced(WITH_LAMP),
     ]);
     const res = await el.editScene('add a lantern', {provider});
@@ -299,7 +304,10 @@ async function run(): Promise<void> {
   // Structural checks: empty scenes and dropped selections.
   {
     const {el} = fakeElement({selected: 'Roof'});
-    const {provider} = scripted([fenced('const x = 1;'), fenced('const y = 2;')]);
+    const {provider} = scripted([
+      fenced('const x = 1;'),
+      fenced('const y = 2;'),
+    ]);
     const res = await el.editScene('clear', {provider});
     const noRoof = WITH_LAMP.replace("roof.name = 'Roof'", "roof.name = 'Top'");
     const {provider: p2} = scripted([fenced(noRoof), fenced(noRoof)]);
@@ -321,7 +329,10 @@ async function run(): Promise<void> {
     const {el, executed} = fakeElement();
     const before = executed.length;
     const {provider} = scripted([fenced(`${WITH_LAMP}\n/*warn*/`)]);
-    const res = await el.editScene('preview a lantern', {provider, dryRun: true});
+    const res = await el.editScene('preview a lantern', {
+      provider,
+      dryRun: true,
+    });
     assert(
       res.applied &&
         executed.length === before &&
@@ -351,7 +362,10 @@ async function run(): Promise<void> {
     const {el: locked} = fakeElement({allow: false});
     const {el} = fakeElement();
     assert(
-      (await rejects(locked.editScene('x', {provider: scripted([]).provider}), 'allow-client-scripts')) &&
+      (await rejects(
+        locked.editScene('x', {provider: scripted([]).provider}),
+        'allow-client-scripts',
+      )) &&
         (await rejects(el.editScene('   '), 'instruction is empty')) &&
         (await rejects(el.editScene('add a lamp'), 'no AI provider')),
       'editScene enforces allow-client-scripts, non-empty instructions, and a provider',
@@ -393,11 +407,300 @@ async function run(): Promise<void> {
     );
   }
 
-  // Programmatic executeScript loads become the base for later edits.
+  //Programmatic executeScript loads become the base for later edits.
   {
     const {el} = fakeElement();
     await el.executeScript(WITH_LAMP);
     assert(el.sceneSource === WITH_LAMP, 'executeScript updates sceneSource');
+  }
+
+  // SSE streaming (`stream: true` + `onProgress`) in createAIChatProvider.
+  {
+    const progressEvents: Array<{
+      chars: number;
+      lines: number;
+      thinkingChars?: number;
+      phase?: 'thinking' | 'streaming';
+    }> = [];
+    let streamBody: any = null;
+    const sseFetch = (async (_url: string, init: any) => {
+      streamBody = JSON.parse(init.body);
+      const chunks = [
+        ': keepalive\n',
+        'data: {"choices":[{"delta":{"reasoning":"plan step 1; "}}]}\n\n',
+        'data: {"choices":[{"delta":{"reasoning_content":[{"text":"step 2"}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"const a = 1;\\n"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":[{"text":"scene.add(x);"}]}}]}\n',
+        'data: [DONE]\n\n',
+      ];
+      const stream = new ReadableStream({
+        async start(controller) {
+          const enc = new TextEncoder();
+          for (const c of chunks) {
+            await new Promise((r) => setTimeout(r, 12));
+            controller.enqueue(enc.encode(c));
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {'Content-Type': 'text/event-stream'},
+      });
+    }) as any;
+    const sseProvider = createAIChatProvider({
+      endpoint:
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      model: 'gemini-flash-latest',
+      stream: true,
+      timeoutMs: 35,
+      firstByteTimeoutMs: 35,
+      onProgress: (info) => progressEvents.push(info),
+      fetch: sseFetch,
+    });
+    const sseText = await sseProvider.complete({
+      messages: [{role: 'user', content: 'edit'}],
+    });
+    assert(
+      sseText === 'const a = 1;\nscene.add(x);' &&
+        streamBody.stream === true &&
+        !('reasoning_effort' in streamBody) &&
+        progressEvents.length === 5 &&
+        progressEvents[0].chars === 0 &&
+        progressEvents[1].phase === 'thinking' &&
+        progressEvents[1].thinkingChars === 13 &&
+        progressEvents[1].chars === 0 &&
+        progressEvents[2].phase === 'thinking' &&
+        progressEvents[2].thinkingChars === 19 &&
+        progressEvents[3].phase === 'streaming' &&
+        progressEvents[3].thinkingChars === 19 &&
+        progressEvents[4].phase === 'streaming' &&
+        progressEvents[4].chars === sseText.length &&
+        progressEvents[4].lines === 2,
+      'createAIChatProvider omits reasoning_effort by default, keeps SSE stream alive during delta.reasoning, and fires thinking/streaming onProgress events',
+    );
+
+    // Explicit reasoningEffort is forwarded when provided by caller.
+    let explicitEffortBody: any = null;
+    const explicitEffortProvider = createAIChatProvider({
+      endpoint: 'https://api.openai.com/v1/chat/completions',
+      model: 'o3-mini',
+      reasoningEffort: 'low',
+      fetch: (async (_url: string, init: any) => {
+        explicitEffortBody = JSON.parse(init.body);
+        return new Response(
+          JSON.stringify({choices: [{message: {content: 'scene.add(o3);'}}]}),
+          {status: 200},
+        );
+      }) as any,
+    });
+    const explicitEffortOut = await explicitEffortProvider.complete({
+      messages: [{role: 'user', content: 'edit'}],
+    });
+    assert(
+      explicitEffortOut === 'scene.add(o3);' &&
+        explicitEffortBody.reasoning_effort === 'low',
+      'createAIChatProvider sends reasoning_effort when explicitly configured',
+    );
+
+    // Transient HTTP 503 retries the SAME model after retryDelayMs and succeeds.
+    const retryStatusMessages: string[] = [];
+    const retryModels503: string[] = [];
+    let transient503Count = 0;
+    const transient503Provider = createAIChatProvider({
+      endpoint:
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      model: 'gemini-flash-latest',
+      retryDelayMs: 10,
+      onStatus: (s) => retryStatusMessages.push(s),
+      fetch: (async (_url: string, init: any) => {
+        const parsed = JSON.parse(init.body);
+        retryModels503.push(parsed.model);
+        transient503Count += 1;
+        if (transient503Count === 1) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message:
+                  'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.',
+                status: 'UNAVAILABLE',
+              },
+            }),
+            {status: 503},
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [{message: {content: 'scene.add(retriedSameModel);'}}],
+          }),
+          {status: 200},
+        );
+      }) as any,
+    });
+    const outRetry503 = await transient503Provider.complete({
+      messages: [{role: 'user', content: 'edit'}],
+    });
+    assert(
+      outRetry503 === 'scene.add(retriedSameModel);' &&
+        retryModels503.length === 2 &&
+        retryModels503[0] === 'gemini-flash-latest' &&
+        retryModels503[1] === 'gemini-flash-latest' &&
+        retryStatusMessages.length === 1 &&
+        retryStatusMessages[0] ===
+          'Endpoint busy — retrying (gemini-flash-latest)…',
+      'createAIChatProvider retries the same model on transient HTTP 503 after retryDelayMs',
+    );
+
+    // Explicit fallbackModels work when configured by the caller.
+    const statusMessages: string[] = [];
+    const attemptedModels503: string[] = [];
+    const fallback503Provider = createAIChatProvider({
+      endpoint:
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      model: 'gemini-flash-latest',
+      fallbackModels: ['gemini-flash-lite-latest'],
+      maxRetries: 0,
+      onStatus: (s) => statusMessages.push(s),
+      fetch: (async (_url: string, init: any) => {
+        const parsed = JSON.parse(init.body);
+        attemptedModels503.push(parsed.model);
+        if (parsed.model === 'gemini-flash-latest') {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: 'Service unavailable',
+                status: 'UNAVAILABLE',
+              },
+            }),
+            {status: 503},
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [{message: {content: 'scene.add(fallback503);'}}],
+          }),
+          {status: 200},
+        );
+      }) as any,
+    });
+    const out503 = await fallback503Provider.complete({
+      messages: [{role: 'user', content: 'edit'}],
+    });
+    assert(
+      out503 === 'scene.add(fallback503);' &&
+        attemptedModels503.length === 2 &&
+        attemptedModels503[0] === 'gemini-flash-latest' &&
+        attemptedModels503[1] === 'gemini-flash-lite-latest' &&
+        statusMessages.length === 1 &&
+        statusMessages[0].includes('gemini-flash-latest busy') &&
+        statusMessages[0].includes('gemini-flash-lite-latest'),
+      'createAIChatProvider steps to explicit fallbackModels when configured',
+    );
+
+    const stallStatuses: string[] = [];
+    const attemptedModelsStall: string[] = [];
+    const stallFallbackProvider = createAIChatProvider({
+      endpoint:
+        'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      model: 'gemini-flash-latest',
+      fallbackModels: ['gemini-flash-lite-latest'],
+      stream: true,
+      firstByteTimeoutMs: 30,
+      onStatus: (s) => stallStatuses.push(s),
+      fetch: (async (_url: string, init: any) => {
+        const parsed = JSON.parse(init.body);
+        attemptedModelsStall.push(parsed.model);
+        if (parsed.model === 'gemini-flash-latest') {
+          const stalledStream = new ReadableStream({
+            start() {
+              // Stalls without emitting any SSE content delta.
+            },
+          });
+          return new Response(stalledStream, {
+            status: 200,
+            headers: {'Content-Type': 'text/event-stream'},
+          });
+        }
+        const okStream = new ReadableStream({
+          start(controller) {
+            const enc = new TextEncoder();
+            controller.enqueue(
+              enc.encode(
+                'data: {"choices":[{"delta":{"content":"scene.add(unstalled);"}}]}\n\ndata: [DONE]\n\n',
+              ),
+            );
+            controller.close();
+          },
+        });
+        return new Response(okStream, {
+          status: 200,
+          headers: {'Content-Type': 'text/event-stream'},
+        });
+      }) as any,
+    });
+    const outStall = await stallFallbackProvider.complete({
+      messages: [{role: 'user', content: 'edit'}],
+    });
+    assert(
+      outStall === 'scene.add(unstalled);' &&
+        attemptedModelsStall.length === 2 &&
+        attemptedModelsStall[0] === 'gemini-flash-latest' &&
+        attemptedModelsStall[1] === 'gemini-flash-lite-latest' &&
+        stallStatuses.length === 1 &&
+        stallStatuses[0].includes('gemini-flash-lite-latest'),
+      'createAIChatProvider aborts a first-byte SSE queue stall and succeeds via explicit fallbackModels',
+    );
+  }
+
+  // Surgical SEARCH/REPLACE and // APPEND edits + base64 Data-URI masking.
+  {
+    const fakePng =
+      'data:image/png;base64,' +
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const baseWithUri = `${BASE}\nconst texUri = "${fakePng}";\n`;
+    const {el} = fakeElement();
+    const searchReplaceReply = [
+      '<<<<<<< SEARCH',
+      'const roof = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshStandardMaterial({ color: 0x334155 }));',
+      '=======',
+      'const roof = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshStandardMaterial({ color: 0xd97706 }));',
+      '>>>>>>> REPLACE',
+    ].join('\n');
+    const {provider, requests} = scripted([searchReplaceReply]);
+    const res = await el.editScene('make the roof amber', {
+      provider,
+      source: baseWithUri,
+    });
+    const sentPrompt = String(requests[0][1].content);
+    assert(
+      res.applied &&
+        sentPrompt.includes('__TL_DATA_URI_0__') &&
+        !sentPrompt.includes(fakePng) &&
+        res.code.includes('0xd97706') &&
+        res.code.includes(fakePng) &&
+        !res.code.includes('__TL_DATA_URI_0__'),
+      'editScene masks base64 data URIs in prompt, applies SEARCH/REPLACE diff, and restores data URIs in output',
+    );
+
+    const appendReply = fenced(
+      [
+        '// APPEND',
+        'const roof = new THREE.Mesh(new THREE.SphereGeometry(0.25), new THREE.MeshStandardMaterial({ color: 0x38bdf8 }));',
+        "roof.name = 'SkyOrb';",
+        'roof.position.set(0, 2.5, 0);',
+        'scene.add(roof);',
+      ].join('\n'),
+    );
+    const {provider: appendProvider} = scripted([appendReply]);
+    const resAppend = await el.editScene('add a sky orb above the roof', {
+      provider: appendProvider,
+    });
+    assert(
+      resAppend.applied &&
+        resAppend.code.includes("roof.name = 'Roof'") &&
+        resAppend.code.includes("roof.name = 'SkyOrb'"),
+      'editScene supports // APPEND blocks in an isolated block scope so const declarations never collide',
+    );
   }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);

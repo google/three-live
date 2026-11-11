@@ -38,7 +38,7 @@ object SampleScenes {
   private val ESPRESSO_SCRIPT =
     """
     // Commercial E61 Espresso Machine (Brushed Stainless Steel & Slate)
-    const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xd8e0e8, metalness: 0.92, roughness: 0.14, clearcoat: 0.2 });
+    const bodyMat = new THREE.MeshPhysicalMaterial({ ...THREE.ProceduralTexture.brushedMetal({ color: 0xdce4ec, roughness: 0.17, scale: 1, normalStrength: 0.18 }), clearcoat: 0.25, clearcoatRoughness: 0.08 });
     const woodAccentMat = new THREE.MeshPhysicalMaterial({ color: 0x1e293b, metalness: 0.55, roughness: 0.24, clearcoat: 0.4 });
     const brassOrChromeMat = new THREE.MeshPhysicalMaterial({ color: 0xe2e8f0, metalness: 0.95, roughness: 0.09, clearcoat: 0.2 });
     const mirrorChromeMat = new THREE.MeshPhysicalMaterial({ color: 0xf1f5f9, metalness: 0.96, roughness: 0.07, clearcoat: 0.25 });
@@ -157,12 +157,12 @@ object SampleScenes {
     }
 
     // Forward Brushed-Steel Drip Tray with Top Grate
-    const trayCenter = new THREE.Mesh(new THREE.BoxGeometry(0.60, 0.1404, 0.36), mirrorChromeMat);
+    const trayCenter = new THREE.Mesh(new THREE.BoxGeometry(0.60, 0.1404, 0.36), bodyMat);
     trayCenter.name = "DripTray";
     trayCenter.position.set(0, -0.41, 0.36);
     machine.add(trayCenter);
     for (const side of [-1, 1]) {
-      const trayCorner = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.14, 28), mirrorChromeMat);
+      const trayCorner = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.14, 28), bodyMat);
       trayCorner.position.set(side * 0.30, -0.41, 0.36);
       const trayTrim = new THREE.Mesh(new THREE.CylinderGeometry(0.184, 0.184, 0.022, 28), brassOrChromeMat);
       trayTrim.position.set(side * 0.30, -0.46, 0.36);
@@ -1130,7 +1130,7 @@ object SampleScenes {
                     "// AI Edit: Matte Obsidian Body, Polished Walnut Side Accents & Brass Trim\nconst WALNUT_URL = \"$WALNUT_GRAIN_PNG\";",
                   )
                   .replace(
-                    "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xd8e0e8, metalness: 0.92, roughness: 0.14, clearcoat: 0.2 });",
+                    "const bodyMat = new THREE.MeshPhysicalMaterial({ ...THREE.ProceduralTexture.brushedMetal({ color: 0xdce4ec, roughness: 0.17, scale: 1, normalStrength: 0.18 }), clearcoat: 0.25, clearcoatRoughness: 0.08 });",
                     "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0x161920, metalness: 0.48, roughness: 0.19, clearcoat: 0.45, clearcoatRoughness: 0.10 });",
                   )
                   .replace(
@@ -1150,7 +1150,7 @@ object SampleScenes {
                     "// AI Edit: Glossy British Racing-Green Body & Side Cheeks with Polished Copper Trim",
                   )
                   .replace(
-                    "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xd8e0e8, metalness: 0.92, roughness: 0.14, clearcoat: 0.2 });",
+                    "const bodyMat = new THREE.MeshPhysicalMaterial({ ...THREE.ProceduralTexture.brushedMetal({ color: 0xdce4ec, roughness: 0.17, scale: 1, normalStrength: 0.18 }), clearcoat: 0.25, clearcoatRoughness: 0.08 });",
                     "const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0x198754, metalness: 0.16, roughness: 0.14, clearcoat: 0.95, clearcoatRoughness: 0.04 });",
                   )
                   .replace(

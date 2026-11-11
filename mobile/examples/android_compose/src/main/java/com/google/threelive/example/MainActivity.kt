@@ -16,6 +16,7 @@
 
 package com.google.threelive.example
 
+import android.content.Context
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,13 +55,19 @@ import com.google.threelive.ThreeLiveCameraOptions
 import com.google.threelive.ThreeLiveRuntimeBinding
 import com.google.threelive.XRLiveNodeTraits
 import com.google.threelive.XRLiveSceneCoreHelper
+import com.google.threelive.ai.AIChatProvider
+import com.google.threelive.ai.AIProvider
+import com.google.threelive.ai.ThreeLiveAIEditor
 import com.google.threelive.filament.ThreeLiveFilamentRenderer
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 import kotlin.system.measureNanoTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
 
@@ -102,6 +110,32 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   var lastCompiledGlbBytes by remember { mutableStateOf<ByteArray?>(null) }
   var extractedXrTraits by remember { mutableStateOf<List<XRLiveNodeTraits>>(emptyList()) }
   var compileError by remember { mutableStateOf<String?>(null) }
+
+  // Bring-Your-Own-Account (BYOA) Live AI Editing state & Evergreen Model Discovery
+  val prefs = remember { context.getSharedPreferences("three_live_byoa", Context.MODE_PRIVATE) }
+  var aiProviderKind by remember {
+    mutableStateOf(prefs.getString("provider", "gemini") ?: "gemini")
+  }
+  var aiApiKey by remember { mutableStateOf(prefs.getString("apiKey", "") ?: "") }
+  var aiModelId by remember {
+    mutableStateOf(prefs.getString("model", "gemini-flash-latest") ?: "gemini-flash-latest")
+  }
+  var aiCustomBaseUrl by remember {
+    mutableStateOf(
+      prefs.getString("baseUrl", "http://10.0.2.2:11434/v1") ?: "http://10.0.2.2:11434/v1"
+    )
+  }
+  var aiRememberKey by remember { mutableStateOf(prefs.getBoolean("remember", false)) }
+  var showAiConnectDialog by remember { mutableStateOf(false) }
+  var liveAiPrompt by remember { mutableStateOf("") }
+  var isAiEditing by remember { mutableStateOf(false) }
+  var canUndoAiEdit by remember { mutableStateOf(false) }
+  var selectedTargetMesh by remember { mutableStateOf<String?>(null) }
+  var aiStatusMessage by remember { mutableStateOf<String?>(null) }
+  var discoveredModels by remember {
+    mutableStateOf(listOf("gemini-flash-latest", "gemini-pro-latest"))
+  }
+  val isAiConnected = aiProviderKind == "custom" || aiApiKey.isNotBlank()
 
   // Full-screen in-app AR Surface Placement Preview state (used when Google Play Services for AR
   // is not installed on an emulator or when the external SceneViewerDeeplink gateway immediately
@@ -272,7 +306,9 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                       meshName: String?,
                       point: FloatArray?,
                     ) {
-                      lastEvent = "Tapped ${nodeName ?: meshName ?: "node $nodeIndex"}"
+                      val clickedLabel = nodeName ?: meshName
+                      lastEvent = "Tapped ${clickedLabel ?: "node $nodeIndex"}"
+                      selectedTargetMesh = clickedLabel
                     }
 
                     override fun onInteractivityEvent(eventId: String, payloadJson: String) {
@@ -636,7 +672,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
             }
           }
 
-          // Instant Sample AI Edits Row (pre-baked edits; live edits use Firebase AI / API key)
+          // Instant Sample AI Edits Row (pre-baked edits; live edits use BYOA below)
           val activePreset = activePresets.getOrNull(selectedPresetIndex)
           if (activePreset != null && activePreset.sampleEdits.isNotEmpty()) {
             Row(
@@ -672,6 +708,331 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                 )
               }
             }
+          }
+
+          fun buildActiveAiProvider(): AIChatProvider? {
+            val baseUrl =
+              when (aiProviderKind) {
+                "openrouter" -> "https://openrouter.ai/api/v1"
+                "custom" -> aiCustomBaseUrl.trim().trimEnd('/')
+                else -> "https://generativelanguage.googleapis.com/v1beta/openai"
+              }
+            val key = aiApiKey.trim()
+            if (aiProviderKind != "custom" && key.isEmpty()) return null
+            val headers = if (key.isNotEmpty()) mapOf("Authorization" to "Bearer $key") else emptyMap()
+            return AIChatProvider(
+              endpoint = "$baseUrl/chat/completions",
+              model = aiModelId.trim().ifEmpty { null },
+              headers = headers,
+            )
+          }
+
+          val aiEditor = remember {
+            ThreeLiveAIEditor(
+              initialSource = jsScriptText,
+              provider =
+                buildActiveAiProvider()
+                  ?: AIProvider { throw IllegalStateException("AI provider not connected") },
+              applyScene = { code ->
+                withContext(Dispatchers.Main) {
+                  jsScriptText = code
+                  triggerCompileAndRender()
+                }
+              },
+            )
+          }
+
+          LaunchedEffect(aiProviderKind, aiApiKey, aiModelId, aiCustomBaseUrl) {
+            buildActiveAiProvider()?.let { aiEditor.provider = it }
+          }
+
+          // Live BYOA AI Prompt Bar (Evergreen Model Aliases + Sandbox Auto-Repair)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            OutlinedTextField(
+              value = liveAiPrompt,
+              onValueChange = { liveAiPrompt = it },
+              modifier = Modifier.weight(1f),
+              singleLine = true,
+              textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+              placeholder = {
+                Text(
+                  if (selectedTargetMesh != null) "Edit $selectedTargetMesh…"
+                  else "Ask AI to edit scene…",
+                  fontSize = 11.sp,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              },
+            )
+            FilledTonalButton(
+              onClick = {
+                val prompt = liveAiPrompt.trim()
+                if (prompt.isEmpty()) return@FilledTonalButton
+                val provider = buildActiveAiProvider()
+                if (provider == null) {
+                  showAiConnectDialog = true
+                  return@FilledTonalButton
+                }
+                aiEditor.provider = provider
+                if (aiEditor.source != jsScriptText) {
+                  aiEditor.resetSource(jsScriptText)
+                }
+                aiEditor.selection = selectedTargetMesh
+                isAiEditing = true
+                aiStatusMessage = "Generating & validating edit in Rust sandbox…"
+                coroutineScope.launch {
+                  try {
+                    val res = aiEditor.editScene(prompt)
+                    if (res.applied) {
+                      selectedAiEditIndex = -1
+                      canUndoAiEdit = true
+                      liveAiPrompt = ""
+                      aiStatusMessage =
+                        if (res.repairs > 0) "Applied live edit (${res.repairs} auto-repair)"
+                        else "Applied live AI edit"
+                    } else {
+                      aiStatusMessage = "Sandbox rejected edit: ${res.error ?: "Failed"}"
+                    }
+                  } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    aiStatusMessage = "AI error: ${e.localizedMessage ?: e.message}"
+                  } finally {
+                    isAiEditing = false
+                  }
+                }
+              },
+              enabled = !isAiEditing && !isCompiling,
+              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            ) {
+              Text(if (isAiEditing) "…" else "Apply", fontSize = 11.sp)
+            }
+            OutlinedButton(
+              onClick = {
+                coroutineScope.launch {
+                  if (aiEditor.undo()) {
+                    aiStatusMessage = "Reverted last AI edit"
+                  } else {
+                    canUndoAiEdit = false
+                  }
+                }
+              },
+              enabled = canUndoAiEdit && !isAiEditing,
+              contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+              Text("↶", fontSize = 12.sp)
+            }
+            OutlinedButton(
+              onClick = { showAiConnectDialog = true },
+              contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+              Text(if (isAiConnected) "🟢 AI" else "🔑 AI", fontSize = 11.sp)
+            }
+          }
+
+          aiStatusMessage?.let { msg ->
+            Text(
+              text = msg,
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.primary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          if (showAiConnectDialog) {
+            AlertDialog(
+              onDismissRequest = { showAiConnectDialog = false },
+              title = { Text("Connect AI Provider (BYOA)", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+              text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(
+                      "gemini" to "Gemini",
+                      "openrouter" to "OpenRouter",
+                      "custom" to "Local",
+                    ).forEach { (id, label) ->
+                      FilterChip(
+                        selected = (aiProviderKind == id),
+                        onClick = {
+                          aiProviderKind = id
+                          when (id) {
+                            "gemini" -> {
+                              aiModelId = "gemini-flash-latest"
+                              discoveredModels = listOf("gemini-flash-latest", "gemini-pro-latest")
+                            }
+                            "openrouter" -> {
+                              aiModelId = "openrouter/auto"
+                              discoveredModels = listOf("openrouter/auto")
+                            }
+                            "custom" -> {
+                              aiModelId = ""
+                              discoveredModels = emptyList()
+                            }
+                          }
+                        },
+                        label = { Text(label, fontSize = 11.sp) },
+                      )
+                    }
+                  }
+                  if (aiProviderKind == "custom") {
+                    OutlinedTextField(
+                      value = aiCustomBaseUrl,
+                      onValueChange = { aiCustomBaseUrl = it },
+                      label = { Text("Base URL (/v1)", fontSize = 11.sp) },
+                      singleLine = true,
+                    )
+                  }
+                  OutlinedTextField(
+                    value = aiApiKey,
+                    onValueChange = { aiApiKey = it },
+                    label = {
+                      Text(
+                        if (aiProviderKind == "custom") "API Key (Optional)"
+                        else "API Key (Bearer)",
+                        fontSize = 11.sp,
+                      )
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                  )
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  ) {
+                    OutlinedTextField(
+                      value = aiModelId,
+                      onValueChange = { aiModelId = it },
+                      modifier = Modifier.weight(1f),
+                      label = { Text("Model (Evergreen or Live ID)", fontSize = 11.sp) },
+                      placeholder = { Text("Server default", fontSize = 11.sp) },
+                      singleLine = true,
+                    )
+                    FilledTonalButton(
+                      onClick = {
+                        coroutineScope.launch {
+                          try {
+                            val baseUrl =
+                              when (aiProviderKind) {
+                                "openrouter" -> "https://openrouter.ai/api/v1"
+                                "custom" -> aiCustomBaseUrl.trim().trimEnd('/')
+                                else -> "https://generativelanguage.googleapis.com/v1beta/openai"
+                              }
+                            val models =
+                              withContext(Dispatchers.IO) {
+                                val conn =
+                                  (URL("$baseUrl/models").openConnection() as HttpURLConnection)
+                                    .apply {
+                                      requestMethod = "GET"
+                                      connectTimeout = 10_000
+                                      readTimeout = 10_000
+                                      if (aiApiKey.isNotBlank()) {
+                                        setRequestProperty("Authorization", "Bearer ${aiApiKey.trim()}")
+                                      }
+                                    }
+                                try {
+                                  val body = conn.inputStream.bufferedReader().use { it.readText() }
+                                  val json = JSONObject(body)
+                                  val arr = json.optJSONArray("data") ?: json.optJSONArray("models")
+                                  val out = mutableListOf<String>()
+                                  if (aiProviderKind == "gemini") {
+                                    out.add("gemini-flash-latest")
+                                    out.add("gemini-pro-latest")
+                                  } else if (aiProviderKind == "openrouter") {
+                                    out.add("openrouter/auto")
+                                  }
+                                  val skip =
+                                    Regex(
+                                      "embedding|imagen|veo|aqa|tts|whisper|moderation|audio|robotics",
+                                      RegexOption.IGNORE_CASE,
+                                    )
+                                  if (arr != null) {
+                                    for (i in 0 until arr.length()) {
+                                      val item = arr.optJSONObject(i) ?: continue
+                                      val id =
+                                        item.optString("id").ifEmpty { item.optString("name") }
+                                          .removePrefix("models/")
+                                      if (id.isNotEmpty() && !skip.containsMatchIn(id) && !out.contains(id)) {
+                                        out.add(id)
+                                      }
+                                    }
+                                  }
+                                  out
+                                } finally {
+                                  conn.disconnect()
+                                }
+                              }
+                            discoveredModels = models
+                            aiStatusMessage = "Loaded ${models.size} live models"
+                          } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            aiStatusMessage = "Models fetch: ${e.localizedMessage ?: e.message}"
+                          }
+                        }
+                      },
+                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                    ) {
+                      Text("↻ Models", fontSize = 11.sp)
+                    }
+                  }
+                  if (discoveredModels.isNotEmpty()) {
+                    Row(
+                      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                      horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                      discoveredModels.take(12).forEach { m ->
+                        AssistChip(
+                          onClick = { aiModelId = m },
+                          label = { Text(m, fontSize = 10.sp) },
+                        )
+                      }
+                    }
+                  }
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                      checked = aiRememberKey,
+                      onCheckedChange = { aiRememberKey = it },
+                    )
+                    Text("Remember on device", fontSize = 11.sp)
+                  }
+                }
+              },
+              confirmButton = {
+                Button(
+                  onClick = {
+                    if (aiRememberKey) {
+                      prefs
+                        .edit()
+                        .putString("provider", aiProviderKind)
+                        .putString("apiKey", aiApiKey)
+                        .putString("model", aiModelId)
+                        .putString("baseUrl", aiCustomBaseUrl)
+                        .putBoolean("remember", true)
+                        .apply()
+                    } else {
+                      prefs.edit().clear().apply()
+                    }
+                    showAiConnectDialog = false
+                  }
+                ) {
+                  Text("Save & Connect")
+                }
+              },
+              dismissButton = {
+                TextButton(
+                  onClick = {
+                    aiApiKey = ""
+                    prefs.edit().clear().apply()
+                    showAiConnectDialog = false
+                  }
+                ) {
+                  Text("Disconnect")
+                }
+              },
+            )
           }
 
           Spacer(modifier = Modifier.height(4.dp))

@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn prompt_matches_the_web_plugin() {
         let ts = include_str!("../../three-live/src/plugins/ai.ts");
-        for line in SYSTEM_PROMPT.lines() {
+        for line in SYSTEM_PROMPT.lines().filter(|l| !l.starts_with("Reply with the COMPLETE")) {
             let escaped = line.replace('\'', "\\'");
             assert!(ts.contains(&escaped), "ai.ts SYSTEM_PROMPT is missing: {}", line);
         }

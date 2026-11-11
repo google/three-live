@@ -458,10 +458,13 @@ fragColor=vec4(color,outAlpha);
   viewerB.loadGLBData(sharedGlbData);
 
   assert.ok(
-    mockA.compiledShaders.some((s) =>
-      s.includes('uniform vec4 uTslParams[16];'),
+    mockA.compiledShaders.some(
+      (s) =>
+        s.includes('uniform vec4 uTslParams[16];') &&
+        s.includes('em=max(_t') &&
+        s.includes('base.a=clamp(_t'),
     ),
-    'ThreeView compiles TSL custom shader via onResolveShader',
+    'ThreeView compiles TSL custom shader with spliced emissiveNode and opacityNode via onResolveShader',
   );
   assert.ok(
     mockA.uniformVec4Uploads.length > 0,

@@ -59,6 +59,7 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
   private let endpoint: URL
   private let model: String?
   private let headers: [String: String]
+  private let reasoningEffort: String?
   private let temperature: Double
   private let timeout: TimeInterval
   private let session: URLSession
@@ -66,12 +67,14 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
   /// Returns `nil` unless `endpoint` is `https://` (or `http://` to a loopback host).
   public init?(
     endpoint: String, model: String? = nil, headers: [String: String] = [:],
-    temperature: Double = 0.2, timeout: TimeInterval = 120, session: URLSession = .shared
+    reasoningEffort: String? = nil, temperature: Double = 0.2, timeout: TimeInterval = 120,
+    session: URLSession = .shared
   ) {
     guard Self.isAllowedEndpoint(endpoint), let url = URL(string: endpoint) else { return nil }
     self.endpoint = url
     self.model = model
     self.headers = headers
+    self.reasoningEffort = reasoningEffort
     self.temperature = temperature
     self.timeout = timeout
     self.session = session
@@ -102,16 +105,30 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
       "stream": false,
     ]
     if let model = model, !model.isEmpty { body["model"] = model }
-    var request = URLRequest(url: endpoint, timeoutInterval: timeout)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    for (k, v) in headers where !v.contains("\r") && !v.contains("\n") {
-      request.setValue(v, forHTTPHeaderField: k)
+    if let reasoningEffort = reasoningEffort, !reasoningEffort.isEmpty {
+      body["reasoning_effort"] = reasoningEffort
     }
-    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-    let (data, response) = try await session.data(for: request)
-    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-    let text = String(data: data, encoding: .utf8) ?? ""
+    func sendRequest(_ payload: [String: Any]) async throws -> (Data, Int, String) {
+      var request = URLRequest(url: endpoint, timeoutInterval: timeout)
+      request.httpMethod = "POST"
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      for (k, v) in headers where !v.contains("\r") && !v.contains("\n") {
+        request.setValue(v, forHTTPHeaderField: k)
+      }
+      request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+      let (data, response) = try await session.data(for: request)
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      let text = String(data: data, encoding: .utf8) ?? ""
+      return (data, status, text)
+    }
+    var (data, status, text) = try await sendRequest(body)
+    if status == 400, body["reasoning_effort"] != nil,
+      text.range(of: "reasoning_effort", options: .caseInsensitive) != nil
+        || text.range(of: "thinking", options: .caseInsensitive) != nil
+    {
+      body.removeValue(forKey: "reasoning_effort")
+      (data, status, text) = try await sendRequest(body)
+    }
     guard (200..<300).contains(status) else {
       throw AIEditError("ai-chat: HTTP \(status) from endpoint: \(text.prefix(300))")
     }
