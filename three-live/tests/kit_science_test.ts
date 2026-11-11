@@ -18,6 +18,7 @@ import {
   MAX_SCI_BASE_PAIRS,
   MAX_SCI_GLYPHS,
   MAX_SCI_GRID,
+  MAX_SCI_RIBBON_POINTS,
   scienceKitPlugin,
 } from '../src/kit-science';
 import {
@@ -238,11 +239,15 @@ assert(
   MAX_SCI_ATOMS === 512 &&
     MAX_SCI_GRID === 128 &&
     MAX_SCI_GLYPHS === 1000 &&
-    MAX_SCI_BASE_PAIRS === 256,
+    MAX_SCI_BASE_PAIRS === 256 &&
+    MAX_SCI_RIBBON_POINTS === 512 &&
+    Sci.MAX_SCI_RIBBON_POINTS === 512,
   'exported quota constants match THREE.Science limits',
 );
 assert(
-  Object.isFrozen(Sci) && Object.isFrozen(Sci.MoleculeGeometry.prototype),
+  Object.isFrozen(Sci) &&
+    Object.isFrozen(Sci.MoleculeGeometry.prototype) &&
+    Object.isFrozen(Sci.RibbonGeometry.prototype),
   'THREE.Science and geometry prototypes are frozen against sandbox mutation',
 );
 
@@ -455,6 +460,97 @@ auditGeometry(dna, 'DoubleHelixGeometry (2-turn B-DNA double helix)', {
   expectWatertight: true,
 });
 
+// 3h. RibbonGeometry (default fold, custom barrel sheet+coil+helix, closed cyclic peptide) + ribbonColorMap
+const defaultRibbon = new Sci.RibbonGeometry();
+auditGeometry(
+  defaultRibbon,
+  'RibbonGeometry (default beta-hairpin + alpha-helix fold)',
+  {expectWatertight: true},
+);
+assert(
+  Boolean(defaultRibbon.getAttribute('color')),
+  'RibbonGeometry populates N->C RGB vertex colors alongside uChain UV mapping',
+);
+
+{
+  const barrelPts: Array<[number, number, number]> = [];
+  for (let s = 0; s < 3; s++) {
+    const up = s % 2 === 0;
+    const ang = (s * Math.PI) / 4;
+    for (let i = 0; i <= 5; i++) {
+      const u = i / 5;
+      const y = up ? -0.8 + 1.6 * u : 0.8 - 1.6 * u;
+      barrelPts.push([0.9 * Math.cos(ang + u * 0.2), y, 0.9 * Math.sin(ang + u * 0.2)]);
+    }
+    const nextAng = ((s + 1) * Math.PI) / 4;
+    const capY = up ? 0.96 : -0.96;
+    const midAng = (ang + 0.2 + nextAng) * 0.5;
+    barrelPts.push([0.65 * Math.cos(midAng), capY, 0.65 * Math.sin(midAng)]);
+  }
+  for (let i = 0; i <= 8; i++) {
+    const u = i / 8;
+    const a = u * Math.PI * 4;
+    barrelPts.push([0.18 * Math.cos(a), 0.75 - 1.5 * u, 0.18 * Math.sin(a)]);
+  }
+  const barrelRibbon = new Sci.RibbonGeometry({
+    points: barrelPts,
+    spans: [
+      {from: 0, to: 5, kind: 'sheet'},
+      {from: 7, to: 12, kind: 'sheet'},
+      {from: 14, to: 19, kind: 'sheet'},
+      {from: 21, to: 29, kind: 'helix'},
+    ],
+    faceCenter: [0, 0, 0],
+    colorScheme: 'secondary',
+  });
+  auditGeometry(
+    barrelRibbon,
+    'RibbonGeometry (barrel staves + hairpin turns + central helix)',
+    {expectWatertight: true},
+  );
+}
+
+{
+  const cycPts: Array<[number, number, number]> = [];
+  const cycKinds: Array<'coil' | 'sheet'> = [];
+  for (let i = 0; i < 16; i++) {
+    const a = (i * Math.PI * 2) / 16;
+    cycPts.push([
+      0.75 * Math.cos(a),
+      0.16 * Math.sin(a * 2),
+      0.75 * Math.sin(a),
+    ]);
+    cycKinds.push(i >= 2 && i <= 6 ? 'sheet' : i >= 10 && i <= 14 ? 'sheet' : 'coil');
+  }
+  auditGeometry(
+    new Sci.RibbonGeometry({
+      points: cycPts,
+      kinds: cycKinds,
+      closed: true,
+      faceCenter: [0, 0, 0],
+    }),
+    'RibbonGeometry (closed cyclic beta-macrocycle)',
+    {expectWatertight: true},
+  );
+}
+
+for (const scheme of ['spectrum', 'secondary', 'plddt'] as const) {
+  const tex = Sci.ribbonColorMap({
+    scheme,
+    kinds: ['coil', 'sheet', 'sheet', 'coil', 'helix', 'helix', 'coil'],
+  });
+  assert(
+    Boolean(
+      tex &&
+        tex.isDataTexture === true &&
+        tex.image?.width === 256 &&
+        tex.image?.height === 4 &&
+        tex.image?.data?.length === 256 * 4 * 4,
+    ),
+    `ribbonColorMap("${scheme}") builds 256x4 sRGB DataTexture`,
+  );
+}
+
 // 4. Adversarial / degenerate parameter fuzzing
 for (const [name, fn] of [
   [
@@ -503,6 +599,34 @@ for (const [name, fn] of [
         curvatureRadius2: NaN,
         radialSegments: 99999,
       }),
+  ],
+  [
+    'RibbonGeometry 9999 NaN/duplicate points & extreme widths',
+    () => {
+      const pts: Array<[number, number, number]> = [];
+      for (let i = 0; i < 9999; i++) {
+        if (i % 5 === 0) {
+          pts.push([NaN, 0, Infinity]);
+        } else if (i % 7 === 0 && pts.length > 0) {
+          pts.push([...pts[pts.length - 1]] as [number, number, number]);
+        } else {
+          const t = i * 0.17;
+          pts.push([Math.cos(t) * 0.8, i * 0.015, Math.sin(t) * 0.8]);
+        }
+      }
+      return new Sci.RibbonGeometry({
+        points: pts,
+        spans: [
+          {from: -50, to: 40, kind: 'sheet'},
+          {from: 90, to: 99999, kind: 'helix'},
+        ],
+        subdivisions: 999,
+        profileSegments: 999,
+        coilRadius: -5,
+        sheetWidth: -10,
+        arrowHeadWidth: 999,
+      });
+    },
   ],
 ] as const) {
   const g = fn();
@@ -554,11 +678,21 @@ for (const [name, fn] of [
   }
   scene.add(molecules);
 
+  const ribbonMat = new MeshStandardMaterial({
+    color: 0xffffff,
+    map: Sci.ribbonColorMap({scheme: 'spectrum'}),
+    roughness: 0.3,
+    metalness: 0.08,
+  });
+  const ribbonMesh = new Mesh(defaultRibbon, ribbonMat);
+  ribbonMesh.name = 'PolypeptideRibbon';
+  scene.add(ribbonMesh);
+
   const glbBytes = scene.toGLB();
   const parsed = parseGLB(glbBytes);
   assert(
-    parsed.gltf.meshes.length === 2 && glbBytes.byteLength > 1000,
-    `Scientific assembly exports valid GLB (${glbBytes.byteLength} bytes, 2 meshes incl. InstancedMesh)`,
+    parsed.gltf.meshes.length === 3 && glbBytes.byteLength > 1000,
+    `Scientific assembly exports valid GLB (${glbBytes.byteLength} bytes, 3 meshes incl. RibbonGeometry + InstancedMesh)`,
   );
 
   const usdzBytes = scene.toUSDZ();

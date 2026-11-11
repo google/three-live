@@ -5386,4 +5386,73 @@ fn test_all_domain_kits_transcode_to_glb_usdz_and_render() {
             expected_name
         );
     }
+
+    // Sub-assembly 2c: Science RibbonGeometry + ribbonColorMap
+    let expanded_kits_c = r#"
+        const ribbonMat = new THREE.MeshStandardMaterial({
+            name: "SpectrumRibbonMat",
+            color: 0xffffff,
+            map: THREE.Science.ribbonColorMap({ scheme: "spectrum", width: 32 }),
+            roughness: 0.35
+        });
+        const ribbon = new THREE.Mesh(
+            new THREE.Science.RibbonGeometry({
+                points: [
+                    [-0.4, -0.5, 0.0],
+                    [-0.4, -0.1, 0.02],
+                    [-0.4, 0.3, -0.02],
+                    [-0.4, 0.6, 0.0],
+                    [-0.1, 0.78, 0.05],
+                    [0.2, 0.6, 0.0],
+                    [0.2, 0.2, -0.02],
+                    [0.2, -0.2, 0.02],
+                    [0.35, -0.5, 0.15],
+                    [0.5, -0.1, -0.15],
+                    [0.35, 0.3, 0.15]
+                ],
+                spans: [
+                    { from: 0, to: 3, kind: "sheet" },
+                    { from: 5, to: 7, kind: "sheet" },
+                    { from: 8, to: 10, kind: "helix" }
+                ],
+                subdivisions: 3,
+                profileSegments: 8
+            }),
+            ribbonMat
+        );
+        ribbon.name = "ProteinRibbon";
+        scene.add(ribbon);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(2.0, 3.0, 2.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 0.2, 2.4);
+        camera.lookAt(0.0, 0.1, 0.0);
+    "#;
+
+    let report2c = three_live_compiler::validate_and_lint_scene(
+        expanded_kits_c,
+        "expanded_domain_kits_c.js",
+        2.0,
+    );
+    let errs2c: Vec<_> = report2c
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report2c.valid && errs2c.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics on expanded domain kits C, got: {:?}",
+        report2c.diagnostics
+    );
+
+    let usdz2c = three_live_compiler::transcode_three_to_usdz(expanded_kits_c)
+        .expect("Expanded domain kit scene C should transcode to USDZ");
+    let usda2c = String::from_utf8_lossy(&usdz2c);
+    assert!(
+        usda2c.contains("ProteinRibbon"),
+        "USDZ missing expanded domain kit node ProteinRibbon"
+    );
 }

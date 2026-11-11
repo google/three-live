@@ -198,6 +198,7 @@ export {
   MAX_SCI_BASE_PAIRS,
   MAX_SCI_GLYPHS,
   MAX_SCI_GRID,
+  MAX_SCI_RIBBON_POINTS,
   scienceKitPlugin,
   type AtomicOrbitalKind,
   type AtomicOrbitalOptions,
@@ -210,6 +211,10 @@ export {
   type OpticalElementKind,
   type OpticalElementOptions,
   type ParametricSurfaceOptions,
+  type RibbonColorMapOptions,
+  type RibbonOptions,
+  type RibbonSecondaryKind,
+  type RibbonSpanSpec,
   type SurfacePlotOptions,
   type VectorFieldOptions,
 } from './three-live/src/kits/science';
