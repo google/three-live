@@ -11,7 +11,16 @@
  * Domain kits are intentionally a la carte (NOT bundled in `three-live-full.min.js`
  * or `xr-live-full.min.js`) so general 3D viewers do not pay for industry-specific
  * parametric geometry libraries unless opted in via `three-live-kits.min.js` or
- * an individual `three-live-kit-<domain>.min.js` bundle.
+ * an individual `three-live-kit-<domain>.min.js` bundle:
+ * - `kit-mechanical`: `THREE.Mechanical`
+ * - `kit-architecture`: `THREE.Architecture`
+ * - `kit-industrial`: `THREE.Industrial`
+ * - `kit-science`: `THREE.Science`
+ * - `kit-electronics`: `THREE.Electronics`
  */
 
 export * from './kit-mechanical';
+export * from './kit-architecture';
+export * from './kit-industrial';
+export * from './kit-science';
+export * from './kit-electronics';
