@@ -1088,10 +1088,22 @@ function stampDemoSizes() {
   stampBundleSizes(
       {
         'three-live.min.js': path.join(DIST_DIR, 'three-live.min.js'),
+        'three-live-kits.min.js': path.join(DIST_DIR, 'three-live-kits.min.js'),
+        'three-live-kit-mechanical.min.js':
+            path.join(DIST_DIR, 'three-live-kit-mechanical.min.js'),
+        'three-live-kit-architecture.min.js':
+            path.join(DIST_DIR, 'three-live-kit-architecture.min.js'),
+        'three-live-kit-industrial.min.js':
+            path.join(DIST_DIR, 'three-live-kit-industrial.min.js'),
+        'three-live-kit-science.min.js':
+            path.join(DIST_DIR, 'three-live-kit-science.min.js'),
+        'three-live-kit-electronics.min.js':
+            path.join(DIST_DIR, 'three-live-kit-electronics.min.js'),
         'xr-live.min.js': path.join(DIST_DIR, 'xr-live.min.js'),
       },
       [
         path.join(ROOT_DIR, 'examples/index.html'),
+        path.join(ROOT_DIR, 'examples/kits/index.html'),
         path.join(ROOT_DIR, 'examples/three/index.html'),
         path.join(ROOT_DIR, 'examples/xr/index.html'),
         path.join(THREE_LIVE_DIR, 'examples/index.html'),

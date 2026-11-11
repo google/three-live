@@ -30,6 +30,7 @@ limitations under the License.
 **[⚡ Quickstarts (Android • iOS • CLI • Web)](#quickstarts)** •
 **[📦 Install (JitPack • SwiftPM • Cargo • npm)](#install-packages-and-bundles)** •
 **[▶ Live 3D Studio](https://google.github.io/three-live/three/)** •
+**[🧩 Domain Kits Catalog](https://google.github.io/three-live/kits/)** •
 **[🥽 Live Spatial XR Studio](https://google.github.io/three-live/xr/)** •
 **[📚 Docs](#documentation-guide)**
 
@@ -470,11 +471,11 @@ live Three.js scenes:
     (`renderer="auto | webgpu | webgl2"`). Five optional a la carte **domain
     kits**
     (`three-live-kit-{mechanical,architecture,industrial,science,electronics}.min.js`,
-    `12–19 KB gz` each, or the all-in-one `three-live-kits.min.js`,
-    `< 70 KB gz`, intentionally excluded from `three-live-full.min.js`) add 53
+    `12–30 KB gz` each, or the all-in-one `three-live-kits.min.js`,
+    `< 82 KB gz`, intentionally excluded from `three-live-full.min.js`) add 57
     watertight 2-manifold parametric parts across `THREE.Mechanical`,
     `THREE.Architecture`, `THREE.Industrial`, `THREE.Science`, and
-    `THREE.Electronics`.
+    `THREE.Electronics` (see [`docs/kits-gallery.md`](docs/kits-gallery.md)).
 *   **Hardware XR sensors (`xr-live-sensors.min.js`, `< 10 KB gz`):** Adds
     hardware XR depth occlusion (`XRDepthManager`), analytical heightfield
     physics (`XRHeightfieldPhysics`), 25-joint hand gesture classification
@@ -667,6 +668,7 @@ components, and LLM authoring workflows:
 | **[`docs/why-three-live.md`](docs/why-three-live.md)** | All developers & evaluators | Architectural rationale, technical capabilities specific to Three-Live, comparison across 3D/XR approaches, and trade-offs. |
 | **[`docs/xr-live.md`](docs/xr-live.md)** | Android, iOS, and XR developers | Complete spatial and native SDK guide: Android (`Filament` + Jetpack XR `SceneCore`), iOS/visionOS (`RealityKit`), canonical `userData.xr` traits, all 15 spatial plugins, the six `xr-live-sim` simulation plugins, depth and physics, 25-joint hands, and WebMCP. |
 | **[`docs/three-live.md`](docs/three-live.md)** | Mobile and web developers | Complete 3D reference: Three.js authoring, `KHR_interactivity`, PBR Next and HDRI, CAD/CSG/Text, animations, 3D hotspots, and sandboxing. |
+| **[`docs/kits-gallery.md`](docs/kits-gallery.md)** | All developers & designers | Visual thumbnail catalog of all 57 watertight parametric constructors across `THREE.Mechanical`, `THREE.Architecture`, `THREE.Industrial`, `THREE.Science`, and `THREE.Electronics` (plus [interactive 3D inspector](https://google.github.io/three-live/kits/)). |
 | **[`docs/cookbook.md`](docs/cookbook.md)** | All developers | Copy-pasteable Three.js recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, CAD exploded views and measurements, magnetic snapping and persistent anchors, multi-user co-presence, and interactive training and simulation drills (`xr-live-sim`). |
 | **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs and agents | Copy-paste system prompt snippet, canonical `userData.xr` and `userData.interactivity` schemas, strict `THREE.*` allowlist, scene quotas, and few-shot templates. |
 | **[`AGENTS.md`](AGENTS.md)** | Coding agents | Repository rules, three-target cross-platform parity contract, build and test commands, bundle budgets, and security invariants. |
