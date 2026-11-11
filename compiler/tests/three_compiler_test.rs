@@ -5145,3 +5145,245 @@ fn test_parametric_cad_parts_glb_usdz_lint_and_render() {
         assert!(usda3.contains(expected_name), "USDZ missing CAD part node {}", expected_name);
     }
 }
+
+#[test]
+fn test_all_domain_kits_transcode_to_glb_usdz_and_render() {
+    let cross_domain_script = r#"
+        const plaster = new THREE.MeshStandardMaterial({ name: "Plaster", color: 0xe2e8f0, roughness: 0.8 });
+        const steel = new THREE.MeshStandardMaterial({ name: "IndustrialSteel", color: 0xf59e0b, metalness: 0.65, roughness: 0.35 });
+        const fr4 = new THREE.MeshStandardMaterial({ name: "PcbGreen", color: 0x15803d, roughness: 0.45 });
+
+        const wall = new THREE.Mesh(
+            new THREE.Architecture.WallGeometry({
+                length: 2.4,
+                height: 1.8,
+                thickness: 0.16,
+                openings: [{ x: 0, sillHeight: 0.5, width: 0.8, height: 0.9, arch: "semicircular" }]
+            }),
+            plaster
+        );
+        wall.name = "ArchWall";
+        wall.position.set(-1.6, 0.0, -0.6);
+        scene.add(wall);
+
+        const col = new THREE.Mesh(
+            new THREE.Architecture.ColumnGeometry({ style: "doric", height: 1.8, radius: 0.16, radialSegments: 16 }),
+            plaster
+        );
+        col.name = "DoricColumn";
+        col.position.set(-0.2, 0.0, -0.6);
+        scene.add(col);
+
+        const pipe = new THREE.Mesh(
+            new THREE.Industrial.PipeRunGeometry({
+                size: "DN80",
+                waypoints: [[0.5, 0.15, -0.4], [1.3, 0.15, -0.4], [1.3, 0.85, -0.4]],
+                radialSegments: 14,
+                elbowSegments: 5
+            }),
+            steel
+        );
+        pipe.name = "ProcessPipe";
+        scene.add(pipe);
+
+        const mol = new THREE.Mesh(
+            new THREE.Science.MoleculeGeometry({ preset: "water", sphereSegments: 12 }),
+            plaster
+        );
+        mol.name = "WaterMolecule";
+        mol.position.set(0.0, 0.5, 0.4);
+        scene.add(mol);
+
+        const pcb = new THREE.Mesh(
+            new THREE.Electronics.PcbBoardGeometry({ width: 0.06, length: 0.04, scale: 5 }),
+            fr4
+        );
+        pcb.name = "ControlPcb";
+        pcb.position.set(1.0, 0.05, 0.4);
+        scene.add(pcb);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(2.0, 3.5, 2.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 1.6, 3.8);
+        camera.lookAt(0.0, 0.7, 0.0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(
+        cross_domain_script,
+        "cross_domain_kits.js",
+        2.0,
+    );
+    let errs: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report.valid && errs.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics across all domain kits, got: {:?}",
+        report.diagnostics
+    );
+
+    let glb = three_live_compiler::transcode_three_to_glb(cross_domain_script)
+        .expect("Cross-domain kit scene should transcode to GLB");
+    let gltf = parse_gltf_json(&glb);
+    assert_eq!(gltf["meshes"].as_array().unwrap().len(), 5);
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(cross_domain_script)
+        .expect("Cross-domain kit scene should transcode to USDZ");
+    let usda = String::from_utf8_lossy(&usdz);
+    for expected_name in ["ArchWall", "DoricColumn", "ProcessPipe", "WaterMolecule", "ControlPcb"] {
+        assert!(usda.contains(expected_name), "USDZ missing domain kit node {}", expected_name);
+    }
+
+    let mut engine = three_live_compiler::ThreeEngine::new().unwrap();
+    let sg = engine.execute(cross_domain_script).expect("Cross-domain kit scene graph executes");
+    assert_eq!(sg.meshes.len(), 5);
+    let (w, h, rgba) = three_live_compiler::render_scene_rgba(
+        &sg,
+        &three_live_compiler::RenderOptions {
+            width: 256,
+            height: 256,
+            view: three_live_compiler::RenderViewMode::Quad,
+            show_grid: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!((w, h), (256, 256));
+    assert_eq!(rgba.len(), 256 * 256 * 4);
+
+    // Sub-assembly 2: Expanded second-pass primitives across all 5 kits
+    // (BevelGear, Barn Door, CentrifugalPump, AtomicOrbital, DiscreteComponent)
+    // Sub-assembly 2a: Expanded Mechanical, Architecture & Electronics primitives
+    let expanded_kits_a = r#"
+        const plaster = new THREE.MeshStandardMaterial({ name: "Plaster2", color: 0xe2e8f0, roughness: 0.8 });
+        const steel = new THREE.MeshStandardMaterial({ name: "Steel2", color: 0x94a3b8, metalness: 0.75, roughness: 0.3 });
+        const copper = new THREE.MeshStandardMaterial({ name: "Copper2", color: 0xd97706, metalness: 0.8, roughness: 0.3 });
+
+        const bevelGear = new THREE.Mesh(
+            new THREE.Mechanical.BevelGearGeometry({ teeth: 12, module: 0.014, coneAngleDeg: 45, radialSegments: 14 }),
+            steel
+        );
+        bevelGear.name = "MiterBevelGear";
+        bevelGear.position.set(-1.1, 0.15, 0.2);
+        scene.add(bevelGear);
+
+        const barnDoor = new THREE.Mesh(
+            new THREE.Architecture.DoorGeometry({
+                style: "panel-2",
+                operation: "barn",
+                openFraction: 0.5,
+                slideSide: "right",
+                width: 0.9,
+                height: 1.7
+            }),
+            plaster
+        );
+        barnDoor.name = "BarnSliderDoor";
+        barnDoor.position.set(1.0, 0.0, -0.4);
+        scene.add(barnDoor);
+
+        const cap = new THREE.Mesh(
+            new THREE.Electronics.DiscreteComponentGeometry({ kind: "electrolytic-cap", scale: 12 }),
+            copper
+        );
+        cap.name = "ElectrolyticCap";
+        cap.position.set(0.0, 0.05, 0.4);
+        scene.add(cap);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(2.0, 3.5, 2.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 1.6, 3.6);
+        camera.lookAt(0.0, 0.6, 0.0);
+    "#;
+
+    let report2a = three_live_compiler::validate_and_lint_scene(
+        expanded_kits_a,
+        "expanded_domain_kits_a.js",
+        2.0,
+    );
+    let errs2a: Vec<_> = report2a
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report2a.valid && errs2a.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics on expanded domain kits A, got: {:?}",
+        report2a.diagnostics
+    );
+
+    let usdz2a = three_live_compiler::transcode_three_to_usdz(expanded_kits_a)
+        .expect("Expanded domain kit scene A should transcode to USDZ");
+    let usda2a = String::from_utf8_lossy(&usdz2a);
+    for expected_name in ["MiterBevelGear", "BarnSliderDoor", "ElectrolyticCap"] {
+        assert!(
+            usda2a.contains(expected_name),
+            "USDZ missing expanded domain kit node {}",
+            expected_name
+        );
+    }
+
+    // Sub-assembly 2b: Expanded Industrial & Science primitives
+    let expanded_kits_b = r#"
+        const plaster = new THREE.MeshStandardMaterial({ name: "Plaster3", color: 0xe2e8f0, roughness: 0.8 });
+        const steel = new THREE.MeshStandardMaterial({ name: "Steel3", color: 0x94a3b8, metalness: 0.75, roughness: 0.3 });
+
+        const pump = new THREE.Mesh(
+            new THREE.Industrial.CentrifugalPumpGeometry({ suctionSize: "DN80", dischargeSize: "DN65", radialSegments: 12 }),
+            steel
+        );
+        pump.name = "ProcessPump";
+        pump.position.set(-0.45, 0.0, 0.0);
+        scene.add(pump);
+
+        const orbital = new THREE.Mesh(
+            new THREE.Science.AtomicOrbitalGeometry({ orbital: "3dz2", latSegments: 12, lonSegments: 14, scale: 0.35 }),
+            plaster
+        );
+        orbital.name = "Orbital3dz2";
+        orbital.position.set(0.55, 0.65, 0.0);
+        scene.add(orbital);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+        const key = new THREE.DirectionalLight(0xffffff, 1.8);
+        key.position.set(2.0, 3.5, 2.5);
+        scene.add(key);
+
+        camera.position.set(0.0, 1.2, 2.8);
+        camera.lookAt(0.0, 0.45, 0.0);
+    "#;
+
+    let report2b = three_live_compiler::validate_and_lint_scene(
+        expanded_kits_b,
+        "expanded_domain_kits_b.js",
+        2.0,
+    );
+    let errs2b: Vec<_> = report2b
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("TL1") || d.code.starts_with("TL2"))
+        .collect();
+    assert!(
+        report2b.valid && errs2b.is_empty(),
+        "Expected zero TL1xx/TL2xx diagnostics on expanded domain kits B, got: {:?}",
+        report2b.diagnostics
+    );
+
+    let usdz2b = three_live_compiler::transcode_three_to_usdz(expanded_kits_b)
+        .expect("Expanded domain kit scene B should transcode to USDZ");
+    let usda2b = String::from_utf8_lossy(&usdz2b);
+    for expected_name in ["ProcessPump", "Orbital3dz2"] {
+        assert!(
+            usda2b.contains(expected_name),
+            "USDZ missing expanded domain kit node {}",
+            expected_name
+        );
+    }
+}

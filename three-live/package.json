@@ -103,6 +103,26 @@
       "import": "./dist/three-live-kit-mechanical.js",
       "require": "./dist/three-live-kit-mechanical.cjs"
     },
+    "./kits/architecture": {
+      "types": "./dist/three-live-kit-architecture.d.ts",
+      "import": "./dist/three-live-kit-architecture.js",
+      "require": "./dist/three-live-kit-architecture.cjs"
+    },
+    "./kits/industrial": {
+      "types": "./dist/three-live-kit-industrial.d.ts",
+      "import": "./dist/three-live-kit-industrial.js",
+      "require": "./dist/three-live-kit-industrial.cjs"
+    },
+    "./kits/science": {
+      "types": "./dist/three-live-kit-science.d.ts",
+      "import": "./dist/three-live-kit-science.js",
+      "require": "./dist/three-live-kit-science.cjs"
+    },
+    "./kits/electronics": {
+      "types": "./dist/three-live-kit-electronics.d.ts",
+      "import": "./dist/three-live-kit-electronics.js",
+      "require": "./dist/three-live-kit-electronics.cjs"
+    },
     "./ai": {
       "types": "./dist/three-live-ai.d.ts",
       "import": "./dist/three-live-ai.js",

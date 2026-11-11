@@ -32,7 +32,11 @@ import {
   CLIENT_SCRIPTS_DISABLED_ERROR,
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
+import {installArchitectureKit} from './kits/architecture';
+import {installElectronicsKit} from './kits/electronics';
+import {installIndustrialKit} from './kits/industrial';
 import {installMechanicalKit} from './kits/mechanical';
+import {installScienceKit} from './kits/science';
 import {getSharedRegistry} from './plugin';
 import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
@@ -5260,6 +5264,10 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   registerSimTraitSchema();
   installCadExtension(THREE, getSharedRegistry());
   installMechanicalKit(THREE, getSharedRegistry());
+  installArchitectureKit(THREE, getSharedRegistry());
+  installIndustrialKit(THREE, getSharedRegistry());
+  installScienceKit(THREE, getSharedRegistry());
+  installElectronicsKit(THREE, getSharedRegistry());
   installIKExtension(THREE, getSharedRegistry());
   installLodExtension(THREE, getSharedRegistry());
   installProceduralExtension(THREE, getSharedRegistry());

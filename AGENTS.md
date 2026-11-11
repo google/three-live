@@ -32,7 +32,12 @@ Goal                                                                            
 Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                                          | `<three-live>` | `three-live.min.js`            | `< 77 KB gz`
 Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js`     | `< 35 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                                    | `<three-live>` | `three-live-cad.min.js`        | `< 10 KB gz`
-Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, ISO bolts/nuts/washers, bearings, springs         | `<three-live>` | `three-live-kit-mechanical.min.js` / `three-live-kits.min.js` | `< 18 KB gz`
+Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz`
+Domain Kit (a la carte): Parametric `THREE.Architecture` walls, slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways   | `<three-live>` | `three-live-kit-architecture.min.js` | `< 16 KB gz`
+Domain Kit (a la carte): Parametric `THREE.Industrial` process pipes, valves, pumps, pallet racks, conveyors, ladders, catwalks, tanks        | `<three-live>` | `three-live-kit-industrial.min.js` | `< 14 KB gz`
+Domain Kit (a la carte): Parametric `THREE.Science` molecules, crystal lattices, atomic orbitals, optics, 3D surface plots, vector fields, DNA | `<three-live>` | `three-live-kit-science.min.js` | `< 15 KB gz`
+Domain Kit (a la carte): Parametric `THREE.Electronics` PCBs, flanged/cutout enclosures, heatsinks, DIN rails, ICs, connectors, discretes     | `<three-live>` | `three-live-kit-electronics.min.js` | `< 14 KB gz`
+Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 52 geometries)     | `<three-live>` | `three-live-kits.min.js`       | `< 64 KB gz`
 Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers                         | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                                     | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
 Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select                          | `<three-live>` | `three-live-ai.min.js`         | `< 32 KB gz`
@@ -107,26 +112,59 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
     -   **3D Extruded Text:** `new THREE.TextGeometry('HELLO', { size: 0.3,
         depth: 0.06, bevelEnabled: true })` (built-in stroke/contour vector
         font).
-    -   **Parametric Mechanical Domain Kit (`THREE.Mechanical`,
-        `three-live-kit-mechanical.min.js` or `three-live-kits.min.js`, built
-        into CLI/MCP; excluded from `*-full.min.js`):** Watertight 2-manifold
-        geometries `THREE.Mechanical.SpurGearGeometry`,
-        `THREE.Mechanical.BevelGearGeometry`,
-        `THREE.Mechanical.InternalRingGearGeometry`,
-        `THREE.Mechanical.RackGeometry`, `THREE.Mechanical.PulleyGeometry`
-        (`v-belt`, `flat`, `timing`), `THREE.Mechanical.BoltGeometry` (`hex`,
-        `socket`, `button`, `countersunk`), `THREE.Mechanical.NutGeometry`
-        (`hex`, `flange`, `nyloc`), `THREE.Mechanical.WasherGeometry`,
-        `THREE.Mechanical.ShaftGeometry`,
-        `THREE.Mechanical.ShaftCouplerGeometry` (`jaw-spider`, `rigid-clamp`),
-        `THREE.Mechanical.BearingGeometry`,
-        `THREE.Mechanical.PillowBlockGeometry`,
-        `THREE.Mechanical.HelicalSpringGeometry`,
-        `THREE.Mechanical.FlangePlateGeometry`,
-        `THREE.Mechanical.ProfileExtrusionGeometry` (`i-beam`, `c-channel`,
-        `l-angle`, `t-slot`, `rect-tube`, `round-tube`, `hex-bar`), plus
-        `THREE.Mechanical.metricFastener('M8x25')` and
-        `THREE.Mechanical.gearMeshDistance(g1, g2)`.
+    -   **A La Carte Parametric Domain Kits (`three-live-kits.min.js` or
+        `three-live-kit-<domain>.min.js`, built into CLI/MCP; excluded from
+        `*-full.min.js`):** 52 watertight 2-manifold geometries across 5
+        canonical industry namespaces (zero aliases, zero root `THREE.*` leaks):
+        -   `THREE.Mechanical` (15): `SpurGearGeometry`, `BevelGearGeometry`,
+            `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`
+            (`v-belt`, `flat`, `timing`), `BoltGeometry`, `NutGeometry`,
+            `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`
+            (`jaw-spider`, `rigid-clamp`), `BearingGeometry`,
+            `PillowBlockGeometry`, `HelicalSpringGeometry`,
+            `FlangePlateGeometry`, `ProfileExtrusionGeometry` (`i-beam`,
+            `c-channel`, `l-angle`, `t-slot`, `rect-tube`, `round-tube`,
+            `hex-bar`), `metricFastener('M8x25')`, `gearMeshDistance(g1, g2)`.
+        -   `THREE.Architecture` (9): `WallGeometry` (rectangular, semicircular,
+            segmental, pointed Gothic `openings` + segmented baseboards),
+            `SlabGeometry` (rect stairwell & circular skylight shaft openings),
+            `StaircaseGeometry` (`straight`, `l-shape`, `u-shape`, `spiral` with
+            `turn`), `RoofGeometry` (`gable`, `hip`, `shed`, `mansard`,
+            `gambrel`, `flat-parapet`), `DoorGeometry` (10 leaf styles, 5
+            operations `swing` / `slider` / `barn` / `pocket` / `bifold`,
+            handing & hardware), `WindowGeometry` (10 styles incl. `single-hung`,
+            `double-hung`, `slider` `OX`/`XO`/`XOX`/`OXXO`, `casement`, `awning`,
+            `hopper`), `RailingGeometry`, `ColumnGeometry`, `ArchwayGeometry`,
+            `codeStairSpec(rise)`.
+        -   `THREE.Industrial` (10): `PipeRunGeometry` (3D `waypoints` + bent
+            elbows + flanges), `PipeFittingGeometry` (`elbow90`, `elbow45`,
+            `tee`, `cross`, `reducer`, `eccentric-reducer`, `cap`),
+            `ValveGeometry` (`ball`, `gate`, `globe`, `butterfly`, `check`,
+            `pneumatic-control`), `CentrifugalPumpGeometry`,
+            `PalletRackGeometry`, `ConveyorGeometry` (flat or inclined + side
+            guides), `IndustrialLadderGeometry`, `CatwalkPlatformGeometry`,
+            `SafetyBarrierGeometry`, `StorageTankGeometry` (`vertical-legs`,
+            `horizontal-saddle`, `skirt`, `flat-api650`),
+            `nominalPipeSpec('DN100')`.
+        -   `THREE.Science` (9): `MoleculeGeometry` (44 IUPAC elements, presets
+            incl. `water`, `methane`, `benzene`, `cyclohexane`, `caffeine`, `co2`,
+            `nh3`, `ethanol`), `CrystalLatticeGeometry` (`sc`, `bcc`, `fcc`,
+            `hcp`, `diamond`, `graphene`, `nacl`, `perovskite`),
+            `AtomicOrbitalGeometry` (`1s`..`3dxz` dual-phase lobes),
+            `OpticalElementGeometry` (spherical lenses & prisms),
+            `SurfacePlotGeometry`, `ParametricSurfaceGeometry`,
+            `VectorFieldGeometry`, `Axes3DGeometry`, `DoubleHelixGeometry`,
+            `elementSpec('C')`.
+        -   `THREE.Electronics` (9): `PcbBoardGeometry`, `EnclosureGeometry`
+            (`base`, `lid`, `closed` with vents, wall-mount `flanges`, and I/O
+            `panelCutouts`), `HeatsinkGeometry`, `DinRailGeometry`,
+            `IcPackageGeometry` (`dip`, `soic`, `qfp`, `qfn`, `bga`, `to220`,
+            `sot23`, `d2pak`), `PinHeaderGeometry`, `ConnectorGeometry` (`usb-c`,
+            `usb-a`, `rj45`, `barrel-jack`, `sma`, `terminal-block`, `hdmi`,
+            `microsd`, `jst-xh`), `StandoffSpacerGeometry`,
+            `DiscreteComponentGeometry` (`smd-chip` `0402`..`2512`,
+            `electrolytic-cap`, `tactile-switch`, `led-domed`, `crystal-hc49`),
+            `jedecPackageSpec('TQFP-32')`.
     -   **GPU Instancing:** `const inst = new THREE.InstancedMesh(geo, mat,
         count); inst.setMatrixAt(i, mat4); inst.setColorAt(i, color);` (exports
         `EXT_mesh_gpu_instancing` and USDZ `PointInstancer`; the WebGL2 renderer
