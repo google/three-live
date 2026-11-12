@@ -31,12 +31,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact_name: three-live-cli-linux-x86_64
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            use_cross: true
             artifact_name: three-live-cli-linux-aarch64
           - target: x86_64-apple-darwin
             os: macos-latest
@@ -69,14 +68,18 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build with Cargo
-        if: ${{ !matrix.use_cross }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
         run: cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target ${{ matrix.target }}
 
-      - name: Build with Cross
-        if: ${{ matrix.use_cross }}
+      - name: Verify Linux binary is statically linked (zero GLIBC version dependency)
+        if: runner.os == 'Linux'
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross
-          cross build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target ${{ matrix.target }}
+          file "target/${{ matrix.target }}/release/three-live-cli"
+          if objdump -T "target/${{ matrix.target }}/release/three-live-cli" 2>/dev/null | grep -q "GLIBC_"; then
+            echo "::error::Linux CLI binary contains dynamic GLIBC symbol references; expected static musl binary"
+            exit 1
+          fi
 
       - name: Rename binary to target artifact name
         shell: bash

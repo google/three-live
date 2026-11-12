@@ -60,6 +60,19 @@ jobs:
           npx --no-install three-live-cli --help
           npx --no-install three-live-cli --locate-only
 
+      - name: Verify Docker & Debian (bookworm-slim + Glama trixie-slim) CLI compatibility
+        if: matrix.node-version == '22.x'
+        run: |
+          BIN_PATH="$(node -e "console.log(JSON.parse(require('child_process').execFileSync('node', ['./bin/three-live-cli.js', '--locate-only'], {encoding: 'utf8'})).resolvedBinary)")"
+          echo "Resolved release binary: ${BIN_PATH}"
+          if objdump -T "${BIN_PATH}" 2>/dev/null | grep -q "GLIBC_"; then
+            echo "::error::Prebuilt Linux CLI binary (${BIN_PATH}) dynamically links GLIBC symbols; expected static musl binary"
+            exit 1
+          fi
+          docker run --rm -v "${BIN_PATH}:/usr/local/bin/three-live-cli:ro" debian:trixie-slim /usr/local/bin/three-live-cli --help > /dev/null
+          docker build -t three-live-mcp .
+          docker run --rm --entrypoint /usr/local/bin/three-live-cli three-live-mcp --help > /dev/null
+
   test-rust:
     name: Rust Compiler Suite (Ubuntu)
     runs-on: ubuntu-latest
