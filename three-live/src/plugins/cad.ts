@@ -227,6 +227,160 @@ export interface LoftGeometryOptions {
 }
 
 /**
+ * Options for `THREE.PatternInstancer.linear(geometry, material, options)`.
+ */
+export interface LinearPatternOptions {
+  /** Number of instances (`1..10000`, default 2). */
+  count: number;
+  /** Per-instance step vector `[dx, dy, dz]` or scalar step along `direction`. */
+  step?: [number, number, number] | {x: number; y: number; z: number} | number;
+  /** Total span from first to last instance (alternative to `step`). */
+  span?: [number, number, number] | {x: number; y: number; z: number} | number;
+  /** Alias for `step`. */
+  spacing?:
+    | [number, number, number]
+    | {x: number; y: number; z: number}
+    | number;
+  /** Direction vector when `step` or `span` is a number (default `[1, 0, 0]`). */
+  direction?: [number, number, number] | {x: number; y: number; z: number};
+  /** Center the array around `startOffset` (default false). */
+  centered?: boolean;
+  /** Starting translation offset (default `[0, 0, 0]`). */
+  startOffset?: [number, number, number] | {x: number; y: number; z: number};
+  /** Alias for `startOffset`. */
+  origin?: [number, number, number] | {x: number; y: number; z: number};
+  /** Fixed Euler `[rx, ry, rz]` rotation (radians) applied to every instance. */
+  instanceRotation?:
+    | [number, number, number]
+    | {x: number; y: number; z: number};
+  /** Incremental Euler `[drx, dry, drz]` rotation (radians) added per step `i`. */
+  rotationStep?: [number, number, number] | {x: number; y: number; z: number};
+  /** Uniform scale range `[startScale, endScale]` interpolated across instances. */
+  scaleRange?: [number, number];
+  /** Optional color palette cycled across instances via `setColorAt`. */
+  colors?: Array<number | string | {r: number; g: number; b: number}>;
+}
+
+/**
+ * Options for `THREE.PatternInstancer.grid(geometry, material, options)`.
+ */
+export interface GridPatternOptions {
+  /**
+   * Grid dimensions `[nx, ny, nz]` or `{x, y, z}` (missing entries: nx 2, ny 1,
+   * nz 1). Without `counts`, `countX`/`countY`/`countZ` default to 2 x 1 x 2.
+   * Large grids shrink their largest axis until <= 10,000 instances.
+   */
+  counts?: [number, number, number?] | {x?: number; y?: number; z?: number};
+  countX?: number;
+  countY?: number;
+  countZ?: number;
+  /** Cell-to-cell spacing `[dx, dy, dz]` or uniform scalar spacing (default 1). */
+  spacing?:
+    | [number, number, number?]
+    | number
+    | {x?: number; y?: number; z?: number};
+  spacingX?: number;
+  spacingY?: number;
+  spacingZ?: number;
+  /** Center grid along X and Z around `origin` (default true). */
+  centered?: boolean;
+  /** Center grid along Y around `origin` (default false). */
+  centerY?: boolean;
+  /** Grid origin `[x, y, z]` (default `[0, 0, 0]`). */
+  origin?: [number, number, number] | {x: number; y: number; z: number};
+  /** Fixed Euler `[rx, ry, rz]` rotation (radians) applied to every instance. */
+  instanceRotation?:
+    | [number, number, number]
+    | {x: number; y: number; z: number};
+  /** Skip alternating `(ix + iy + iz) % 2 === 1` cells (default false). */
+  checkerboard?: boolean;
+  /**
+   * Optional color palette indexed by `ix + iy + iz` (by `(ix + iy + iz) >> 1`
+   * with `checkerboard`), so 2 colors alternate like a checkerboard.
+   */
+  colors?: Array<number | string | {r: number; g: number; b: number}>;
+}
+
+/**
+ * Options for `THREE.PatternInstancer.circular(geometry, material, options)`.
+ *
+ * Each instance is the seed rigidly rotated about `axis` (counter-clockwise
+ * seen from +axis): the seed sits at `+X * radius` for `'y'`/`'z'` and at
+ * `+Y * radius` for `'x'`. A single full turn never duplicates the seam.
+ */
+export interface CircularPatternOptions {
+  /** Number of instances (`1..10000`, default 6). */
+  count: number;
+  /** Circle radius in world units (default 1). */
+  radius?: number;
+  /** Axis of rotation (default `'y'`). */
+  axis?: 'y' | 'z' | 'x';
+  /** Center of the circle `[x, y, z]` (default `[0, 0, 0]`). */
+  center?: [number, number, number] | {x: number; y: number; z: number};
+  /** Starting angle in radians (default 0). */
+  startAngle?: number;
+  /** Total angular span in radians (default `Math.PI * 2`). */
+  angleSpan?: number;
+  /** Optional ending angle in radians (alternative to `angleSpan`). */
+  endAngle?: number;
+  /** Include the end-angle endpoint even when `angleSpan === Math.PI * 2` (default false). */
+  endpoint?: boolean;
+  /** Rotate each instance around `axis` to face radially/tangentially (default true). */
+  alignRadial?: boolean;
+  /** Helical step along `axis` per instance (default 0). */
+  axialStep?: number;
+  /** Fixed local Euler `[rx, ry, rz]` rotation composed with radial alignment. */
+  instanceRotation?:
+    | [number, number, number]
+    | {x: number; y: number; z: number};
+  /** Uniform scale range `[startScale, endScale]` interpolated across instances. */
+  scaleRange?: [number, number];
+  /** Optional color palette cycled across instances via `setColorAt`. */
+  colors?: Array<number | string | {r: number; g: number; b: number}>;
+}
+
+/**
+ * Options for `THREE.PatternInstancer.alongCurve(geometry, material, options)`.
+ *
+ * With `alignTangent`, each instance's local +Z follows the curve tangent and
+ * local +Y the twist-free (Bishop) up vector. Open curves include both
+ * endpoints; closed curves spread `count` instances without a seam duplicate.
+ */
+export interface CurvePatternOptions {
+  /** Number of instances (`1..10000`, default 8). */
+  count: number;
+  /** 3D `Curve` or array of `[x, y, z]` / `Vector3` waypoints. */
+  // tslint:disable-next-line:no-any Dynamic Curve3 or waypoint array.
+  path?: any;
+  /** Alias for `path`. */
+  // tslint:disable-next-line:no-any Dynamic Curve3 or waypoint array.
+  curve?: any;
+  /** Align each instance to the twist-free Bishop frame along the curve (default true). */
+  alignTangent?: boolean;
+  /** Treat the curve as closed (default `Boolean(path?.closed)`). */
+  closed?: boolean;
+  /** Optional reference up vector for Bishop-frame initialization. */
+  up?: [number, number, number] | {x: number; y: number; z: number};
+  /** Fixed local Euler `[rx, ry, rz]` rotation composed with the curve frame. */
+  instanceRotation?:
+    | [number, number, number]
+    | {x: number; y: number; z: number};
+  /** Uniform scale range `[startScale, endScale]` interpolated across instances. */
+  scaleRange?: [number, number];
+  /** Optional color palette cycled across instances via `setColorAt`. */
+  colors?: Array<number | string | {r: number; g: number; b: number}>;
+}
+
+/**
+ * Unified options for `new THREE.PatternInstancer(geometry, material, options)`.
+ */
+export type PatternOptions =
+  | ({mode?: 'linear'} & LinearPatternOptions)
+  | ({mode: 'grid'} & GridPatternOptions)
+  | ({mode: 'circular' | 'radial' | 'polar'} & CircularPatternOptions)
+  | ({mode: 'curve' | 'alongCurve' | 'path'} & CurvePatternOptions);
+
+/**
  * Options for `THREE.TextGeometry`.
  *
  * Uses a built-in stroke font (digits, A-Z, and common punctuation; lowercase
@@ -258,6 +412,9 @@ export const MAX_TEXT_GEOMETRY_CHARS = 128;
 /** Maximum total outer + hole contour points per `Shape` (bounds ear-clipping cost). */
 export const MAX_SHAPE_POINTS = 4096;
 
+/** Maximum merged vertex count when baking an `InstancedMesh` via `PatternInstancer.toGeometry`. */
+export const MAX_MERGED_PATTERN_VERTICES = 100000;
+
 /**
  * Self-contained installer that attaches `Path`, `Shape`, `ShapeGeometry`,
  * `ExtrudeGeometry`, `TextGeometry`, `CSG`, and `materializeDeclarativeGeometry`
@@ -283,6 +440,8 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   const Material = threeNs.Material;
   const MeshStandardMaterial = threeNs.MeshStandardMaterial;
   const Mesh = threeNs.Mesh;
+  const InstancedMesh = threeNs.InstancedMesh;
+  const Euler = threeNs.Euler;
   // tslint:disable-next-line:no-any Dynamic Curve3 base class from threeNs.
   const Curve3Base: any =
     threeNs.Curve3 ||
@@ -3248,6 +3407,131 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     return csgPolygonsToGeometry(evaluateCSGBoolean(polysA, polysB, op));
   }
 
+  // Bakes an InstancedMesh (or plain Mesh) into one merged, indexed
+  // BufferGeometry: positions, normals (inverse-transpose; mirrored instances
+  // re-wound), uvs, and instance colors as vertex colors. Instances beyond the
+  // 100k-vertex quota are dropped.
+  function bakeInstancedMeshToGeometry(
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh / Mesh / BufferGeometry.
+    src: any,
+    includeMeshTransform = true,
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+  ): any {
+    if (src instanceof BufferGeometry) return src;
+    const geo = src?.geometry;
+    const pos = geo?.attributes?.position;
+    const vc = pos?.count | 0;
+    if (!(geo instanceof BufferGeometry) || vc <= 0) {
+      return new BufferGeometry();
+    }
+    const isInst = Boolean(src.isInstancedMesh && src.instanceMatrix);
+    const idx = geo.index?.array;
+    const ic = (idx ? idx.length : vc) - ((idx ? idx.length : vc) % 3);
+    const want = isInst
+      ? Math.min(
+          Math.floor(num(src.count, 0)),
+          Math.floor((src.instanceMatrix.array?.length ?? 0) / 16),
+        )
+      : 1;
+    // Cap both merged vertices (100k) and merged indices (300k).
+    const n = Math.max(
+      0,
+      Math.min(
+        want,
+        Math.floor(maxGeneratedVertices / vc),
+        Math.floor((maxGeneratedVertices * 3) / Math.max(ic, 1)),
+      ),
+    );
+    if (n < want && typeof console !== 'undefined') {
+      console.warn(
+        `[three-live] PatternInstancer.toGeometry baked ${n} of ${want} instances (100k vertex / 300k index quota)`,
+      );
+    }
+    if (n === 0) return new BufferGeometry();
+    if (includeMeshTransform) src.updateMatrix?.();
+    const P = pos.array;
+    const N = geo.attributes.normal?.array;
+    const UV = geo.attributes.uv?.array;
+    const instCol = isInst ? src.instanceColor?.array : null;
+    const outP = new Float32Array(n * vc * 3);
+    const outN = new Float32Array(n * vc * 3);
+    const outUV = new Float32Array(n * vc * 2);
+    const outC = instCol ? new Float32Array(n * vc * 3) : null;
+    const outI = new Uint32Array(n * ic);
+    const mat = new Matrix4();
+    for (let i = 0; i < n; i++) {
+      mat.identity();
+      if (isInst) src.getMatrixAt(i, mat);
+      if (includeMeshTransform && src.matrix) {
+        mat.multiplyMatrices(src.matrix, mat.clone());
+      }
+      const m = mat.elements;
+      // Cofactor matrix = det * inverse-transpose; its sign is fixed below.
+      const c = [
+        m[5] * m[10] - m[6] * m[9],
+        m[6] * m[8] - m[4] * m[10],
+        m[4] * m[9] - m[5] * m[8],
+        m[2] * m[9] - m[1] * m[10],
+        m[0] * m[10] - m[2] * m[8],
+        m[1] * m[8] - m[0] * m[9],
+        m[1] * m[6] - m[2] * m[5],
+        m[2] * m[4] - m[0] * m[6],
+        m[0] * m[5] - m[1] * m[4],
+      ];
+      const flip = m[0] * c[0] + m[4] * c[3] + m[8] * c[6] < 0;
+      const base = i * vc;
+      for (let v = 0; v < vc; v++) {
+        const o = (base + v) * 3;
+        const x = P[v * 3];
+        const y = P[v * 3 + 1];
+        const z = P[v * 3 + 2];
+        outP[o] = m[0] * x + m[4] * y + m[8] * z + m[12];
+        outP[o + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+        outP[o + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+        const nx = N ? N[v * 3] : 0;
+        const ny = N ? N[v * 3 + 1] : 1;
+        const nz = N ? N[v * 3 + 2] : 0;
+        const tx = c[0] * nx + c[3] * ny + c[6] * nz;
+        const ty = c[1] * nx + c[4] * ny + c[7] * nz;
+        const tz = c[2] * nx + c[5] * ny + c[8] * nz;
+        const l = (flip ? -1 : 1) / (Math.hypot(tx, ty, tz) || 1);
+        outN[o] = tx * l;
+        outN[o + 1] = ty * l;
+        outN[o + 2] = tz * l;
+        if (UV) {
+          outUV[(base + v) * 2] = UV[v * 2];
+          outUV[(base + v) * 2 + 1] = UV[v * 2 + 1];
+        }
+        if (outC) {
+          outC[o] = instCol[i * 3] ?? 1;
+          outC[o + 1] = instCol[i * 3 + 1] ?? 1;
+          outC[o + 2] = instCol[i * 3 + 2] ?? 1;
+        }
+      }
+      for (let k = 0; k < ic; k += 3) {
+        const a = idx ? idx[k] : k;
+        const b = idx ? idx[k + 1] : k + 1;
+        const d = idx ? idx[k + 2] : k + 2;
+        // Malformed indices collapse to a degenerate triangle in this instance.
+        if (!(a < vc && b < vc && d < vc)) {
+          outI.fill(base, i * ic + k, i * ic + k + 3);
+          continue;
+        }
+        outI[i * ic + k] = base + a;
+        outI[i * ic + k + 1] = base + (flip ? d : b);
+        outI[i * ic + k + 2] = base + (flip ? b : d);
+      }
+    }
+    const out = new BufferGeometry();
+    out.setAttribute('position', new BufferAttribute(outP, 3));
+    out.setAttribute('normal', new BufferAttribute(outN, 3));
+    out.setAttribute('uv', new BufferAttribute(outUV, 2));
+    if (outC) out.setAttribute('color', new BufferAttribute(outC, 3));
+    out.setIndex(new BufferAttribute(outI, 1));
+    if (!N) out.computeVertexNormals?.();
+    return out;
+  }
+
   function runCSGMeshOp(
     // tslint:disable-next-line:no-any Dynamic Mesh or BufferGeometry from threeNs.
     targetA: any,
@@ -3258,8 +3542,16 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   ): any {
     const isMeshA = targetA instanceof Mesh || Boolean(targetA?.isMesh);
     const isMeshB = targetB instanceof Mesh || Boolean(targetB?.isMesh);
-    const geomA = isMeshA ? targetA.geometry : targetA;
-    const geomB = isMeshB ? targetB.geometry : targetB;
+    const geomA = targetA?.isInstancedMesh
+      ? bakeInstancedMeshToGeometry(targetA, false)
+      : isMeshA
+        ? targetA.geometry
+        : targetA;
+    const geomB = targetB?.isInstancedMesh
+      ? bakeInstancedMeshToGeometry(targetB, false)
+      : isMeshB
+        ? targetB.geometry
+        : targetB;
     // tslint:disable-next-line:no-any Dynamic Matrix4 from threeNs.
     let relMatrixB: any = null;
     if (isMeshB) {
@@ -3328,6 +3620,399 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       return runCSGMeshOp(meshA, meshB, 'intersect');
     },
   };
+
+  // ---------------------------------------------------------------------------
+  // PatternInstancer: declarative linear / grid / circular / along-curve arrays
+  // built on InstancedMesh (exports EXT_mesh_gpu_instancing / USDZ PointInstancer).
+  // ---------------------------------------------------------------------------
+  const maxPatternInstances = 10000;
+
+  function vec3Tuple(v: unknown, dx = 0, dy = 0, dz = 0): number[] {
+    if (Array.isArray(v)) return [num(v[0], dx), num(v[1], dy), num(v[2], dz)];
+    if (v && typeof v === 'object') {
+      const r = v as Record<string, unknown>;
+      return [num(r['x'], dx), num(r['y'], dy), num(r['z'], dz)];
+    }
+    if (typeof v === 'number' && Number.isFinite(v)) return [v, v, v];
+    return [dx, dy, dz];
+  }
+
+  // tslint:disable-next-line:no-any Dynamic Quaternion.
+  function eulerXYZToQuat(e: number[]): any {
+    return new Quaternion().setFromEuler(new Euler(e[0], e[1], e[2]));
+  }
+
+  // tslint:disable-next-line:no-any Dynamic Color.
+  function parsePatternColor(raw: unknown): any {
+    if (raw instanceof Color) return raw;
+    if (raw && typeof raw === 'object') {
+      const r = raw as Record<string, unknown>;
+      return new Color(num(r['r'], 1), num(r['g'], 1), num(r['b'], 1));
+    }
+    try {
+      return new Color(raw as number | string);
+    } catch {
+      return new Color(1, 1, 1);
+    }
+  }
+
+  // tslint:disable-next-line:no-any Dynamic Color[].
+  function parsePalette(raw: unknown): any[] | null {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return raw.slice(0, 256).map(parsePatternColor);
+  }
+
+  function clampCount(raw: unknown, d: number): number {
+    return Math.max(1, Math.min(maxPatternInstances, Math.floor(num(raw, d))));
+  }
+
+  function scaleAt(range: unknown, u: number): number {
+    if (!Array.isArray(range)) {
+      const s = num(range, 1);
+      return s > 1e-6 ? s : 1;
+    }
+    const s0 = Math.max(1e-4, num(range[0], 1));
+    const s1 = Math.max(1e-4, num(range[1], s0));
+    return s0 + (s1 - s0) * u;
+  }
+
+  function newPatternMesh(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry / Material.
+    geometry: any,
+    // tslint:disable-next-line:no-any Dynamic Material.
+    material: any,
+    count: number,
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+  ): any {
+    if (typeof InstancedMesh !== 'function') {
+      throw new Error('PatternInstancer requires THREE.InstancedMesh');
+    }
+    const geo =
+      geometry instanceof BufferGeometry ? geometry : new BufferGeometry();
+    const mat =
+      material instanceof Material
+        ? material
+        : Array.isArray(material) && material[0] instanceof Material
+          ? material[0]
+          : new MeshStandardMaterial(
+            material && typeof material === 'object' ? material : {},
+          );
+    const inst = new InstancedMesh(geo, mat, count);
+    inst.userData = inst.userData ?? {};
+    return inst;
+  }
+
+  function writeInstance(
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+    inst: any,
+    i: number,
+    // tslint:disable-next-line:no-any Dynamic Matrix4 / Vector3 / Quaternion.
+    m: any,
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    pos: any,
+    // tslint:disable-next-line:no-any Dynamic Quaternion.
+    q: any,
+    s: number,
+    // tslint:disable-next-line:no-any Dynamic Color[].
+    palette: any[] | null,
+    colorKey: number,
+  ): void {
+    m.compose(pos, q, new Vector3(s, s, s));
+    inst.setMatrixAt(i, m);
+    if (palette) inst.setColorAt(i, palette[colorKey % palette.length]);
+  }
+
+  function buildLinearPattern(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    geometry: any,
+    // tslint:disable-next-line:no-any Dynamic Material.
+    material: any,
+    options: LinearPatternOptions = {count: 2},
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+  ): any {
+    const o = (options && typeof options === 'object' ? options : {}) as
+      // tslint:disable-next-line:no-any Loosely-typed LLM option bag.
+      any;
+    const count = clampCount(o.count, 2);
+    let dir = vec3Tuple(o.direction, 1, 0, 0);
+    const dLen = Math.hypot(dir[0], dir[1], dir[2]);
+    dir = dLen > 1e-9 ? dir.map((c) => c / dLen) : [1, 0, 0];
+    const rawStep = o.step ?? o.spacing;
+    let step: number[];
+    if (rawStep !== undefined) {
+      step =
+        typeof rawStep !== 'object'
+          ? dir.map((c) => c * num(rawStep, 1))
+          : vec3Tuple(rawStep, 0, 0, 0);
+    } else if (o.span !== undefined) {
+      const denom = Math.max(1, count - 1);
+      step =
+        typeof o.span !== 'object'
+          ? dir.map((c) => (c * num(o.span, 1)) / denom)
+          : vec3Tuple(o.span, 0, 0, 0).map((c) => c / denom);
+    } else {
+      step = dir.slice();
+    }
+    const start = vec3Tuple(o.startOffset ?? o.origin, 0, 0, 0);
+    const k0 = o.centered ? (count - 1) / 2 : 0;
+    const rot0 = vec3Tuple(o.instanceRotation, 0, 0, 0);
+    const dRot = vec3Tuple(o.rotationStep, 0, 0, 0);
+    const palette = parsePalette(o.colors);
+    const inst = newPatternMesh(geometry, material, count);
+    const m = new Matrix4();
+    const pos = new Vector3();
+    for (let i = 0; i < count; i++) {
+      const k = i - k0;
+      pos.set(
+        start[0] + step[0] * k,
+        start[1] + step[1] * k,
+        start[2] + step[2] * k,
+      );
+      const q = eulerXYZToQuat([
+        rot0[0] + dRot[0] * i,
+        rot0[1] + dRot[1] * i,
+        rot0[2] + dRot[2] * i,
+      ]);
+      const u = count > 1 ? i / (count - 1) : 0;
+      writeInstance(inst, i, m, pos, q, scaleAt(o.scaleRange, u), palette, i);
+    }
+    return inst;
+  }
+
+  function buildGridPattern(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    geometry: any,
+    // tslint:disable-next-line:no-any Dynamic Material.
+    material: any,
+    options: GridPatternOptions = {},
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+  ): any {
+    const o = (options && typeof options === 'object' ? options : {}) as
+      // tslint:disable-next-line:no-any Loosely-typed LLM option bag.
+      any;
+    const c = o.counts;
+    const cnt = Array.isArray(c)
+      ? [num(c[0], 2), num(c[1], 1), num(c[2], 1)]
+      : c && typeof c === 'object'
+        ? [num(c.x, 2), num(c.y, 1), num(c.z, 1)]
+        : [num(o.countX, 2), num(o.countY, 1), num(o.countZ, 2)];
+    const n = cnt.map((v) =>
+      Math.max(1, Math.min(maxPatternInstances, Math.floor(v))),
+    );
+    // Shrink the largest axis until the grid fits the instance cap.
+    while (n[0] * n[1] * n[2] > maxPatternInstances) {
+      const big = n[0] >= n[1] && n[0] >= n[2] ? 0 : n[1] >= n[2] ? 1 : 2;
+      n[big] = Math.max(1, Math.floor(n[big] * 0.9));
+    }
+    const sp = o.spacing;
+    const spacing =
+      typeof sp === 'number'
+        ? [num(sp, 1), num(sp, 1), num(sp, 1)]
+        : Array.isArray(sp)
+          ? [num(sp[0], 1), num(sp[1], num(sp[0], 1)), num(sp[2], num(sp[0], 1))]
+          : sp && typeof sp === 'object'
+            ? [num(sp.x, 1), num(sp.y, 1), num(sp.z, 1)]
+            : [num(o.spacingX, 1), num(o.spacingY, 1), num(o.spacingZ, 1)];
+    const origin = vec3Tuple(o.origin, 0, 0, 0);
+    const centered = o.centered !== false;
+    const off = [
+      centered ? (n[0] - 1) / 2 : 0,
+      o.centerY ? (n[1] - 1) / 2 : 0,
+      centered ? (n[2] - 1) / 2 : 0,
+    ];
+    const cells: number[][] = [];
+    for (let iy = 0; iy < n[1]; iy++) {
+      for (let iz = 0; iz < n[2]; iz++) {
+        for (let ix = 0; ix < n[0]; ix++) {
+          if (o.checkerboard && (ix + iy + iz) % 2 === 1) continue;
+          cells.push([ix, iy, iz]);
+        }
+      }
+    }
+    const q = eulerXYZToQuat(vec3Tuple(o.instanceRotation, 0, 0, 0));
+    const palette = parsePalette(o.colors);
+    const inst = newPatternMesh(geometry, material, cells.length);
+    const m = new Matrix4();
+    const pos = new Vector3();
+    for (let i = 0; i < cells.length; i++) {
+      const [ix, iy, iz] = cells[i];
+      pos.set(
+        origin[0] + (ix - off[0]) * spacing[0],
+        origin[1] + (iy - off[1]) * spacing[1],
+        origin[2] + (iz - off[2]) * spacing[2],
+      );
+      // Checkerboard keeps only even cells, so step the palette per kept cell.
+      const key = ix + iy + iz;
+      writeInstance(inst, i, m, pos, q, 1, palette, o.checkerboard ? key >> 1 : key);
+    }
+    return inst;
+  }
+
+  function buildCircularPattern(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    geometry: any,
+    // tslint:disable-next-line:no-any Dynamic Material.
+    material: any,
+    options: CircularPatternOptions = {count: 6},
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+  ): any {
+    const o = (options && typeof options === 'object' ? options : {}) as
+      // tslint:disable-next-line:no-any Loosely-typed LLM option bag.
+      any;
+    const count = clampCount(o.count, 6);
+    const radius = Math.abs(num(o.radius, 1));
+    const axis = o.axis === 'x' || o.axis === 'z' ? o.axis : 'y';
+    const center = vec3Tuple(o.center, 0, 0, 0);
+    const a0 = num(o.startAngle, 0);
+    const span =
+      o.angleSpan !== undefined
+        ? num(o.angleSpan, Math.PI * 2)
+        : o.endAngle !== undefined
+          ? num(o.endAngle, Math.PI * 2) - a0
+          : Math.PI * 2;
+    // A full turn must not place the last instance on top of the first.
+    const fullTurn =
+      Math.abs(Math.abs(span) - Math.PI * 2) < 1e-6 && !o.endpoint;
+    const dA = fullTurn ? span / count : count > 1 ? span / (count - 1) : 0;
+    const axialStep = num(o.axialStep, 0);
+    const align = o.alignRadial !== false;
+    const local = eulerXYZToQuat(vec3Tuple(o.instanceRotation, 0, 0, 0));
+    const axisVec =
+      axis === 'x'
+        ? new Vector3(1, 0, 0)
+        : axis === 'z'
+          ? new Vector3(0, 0, 1)
+          : new Vector3(0, 1, 0);
+    const palette = parsePalette(o.colors);
+    const inst = newPatternMesh(geometry, material, count);
+    const m = new Matrix4();
+    const pos = new Vector3();
+    for (let i = 0; i < count; i++) {
+      const th = a0 + dA * i;
+      const ct = Math.cos(th);
+      const st = Math.sin(th);
+      const h = axialStep * i;
+      // Seed (theta = 0) sits on +X for 'y'/'z' axes and on +Y for 'x', so each
+      // instance is exactly the seed rigidly rotated by theta about `axis`.
+      if (axis === 'y') pos.set(radius * ct, h, -radius * st);
+      else if (axis === 'z') pos.set(radius * ct, radius * st, h);
+      else pos.set(h, radius * ct, radius * st);
+      pos.x += center[0];
+      pos.y += center[1];
+      pos.z += center[2];
+      const q = align
+        ? new Quaternion().setFromAxisAngle(axisVec, th).multiply(local)
+        : local.clone();
+      const u = count > 1 ? i / (count - 1) : 0;
+      writeInstance(inst, i, m, pos, q, scaleAt(o.scaleRange, u), palette, i);
+    }
+    return inst;
+  }
+
+  function buildCurvePattern(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    geometry: any,
+    // tslint:disable-next-line:no-any Dynamic Material.
+    material: any,
+    options: CurvePatternOptions = {count: 8},
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+  ): any {
+    const o = (options && typeof options === 'object' ? options : {}) as
+      // tslint:disable-next-line:no-any Loosely-typed LLM option bag.
+      any;
+    const count = clampCount(o.count, 8);
+    const path = o.path ?? o.curve;
+    const closed =
+      o.closed !== undefined ? Boolean(o.closed) : Boolean(path?.closed);
+    const steps = Math.max(2, Math.min(512, closed ? count : count - 1));
+    const fr = computeBishopFrames(path, steps, closed, o.up);
+    const nSegs = fr.pts.length - 1;
+    const align = o.alignTangent !== false;
+    const local = eulerXYZToQuat(vec3Tuple(o.instanceRotation, 0, 0, 0));
+    const palette = parsePalette(o.colors);
+    const inst = newPatternMesh(geometry, material, count);
+    const m = new Matrix4();
+    const basis = new Matrix4();
+    const pos = new Vector3();
+    const zero = new Vector3();
+    for (let i = 0; i < count; i++) {
+      // Closed loops spread `count` instances over the full loop without
+      // duplicating the seam; open paths include both endpoints.
+      const u = closed ? i / count : count > 1 ? i / (count - 1) : 0;
+      const f = u * nSegs;
+      const j = Math.min(nSegs, Math.floor(f));
+      const w = f - j;
+      pos.copy(fr.pts[j]).lerp(fr.pts[Math.min(nSegs, j + 1)], w);
+      const k = w < 0.5 ? j : Math.min(nSegs, j + 1);
+      const s = scaleAt(o.scaleRange, count > 1 ? i / (count - 1) : 0);
+      m.compose(align ? zero : pos, local, new Vector3(s, s, s));
+      if (align) {
+        // Local +X -> normal, +Y -> twist-free binormal ("up"), +Z -> tangent.
+        const [N, B, T] = [fr.normals[k], fr.binormals[k], fr.tangents[k]];
+        basis.elements.set([
+          N.x, N.y, N.z, 0, B.x, B.y, B.z, 0, T.x, T.y, T.z, 0,
+          pos.x, pos.y, pos.z, 1,
+        ]);
+        m.multiplyMatrices(basis, m.clone());
+      }
+      inst.setMatrixAt(i, m);
+      if (palette) inst.setColorAt(i, palette[i % palette.length]);
+    }
+    return inst;
+  }
+
+  function PatternInstancer(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    geometry?: any,
+    // tslint:disable-next-line:no-any Dynamic Material.
+    material?: any,
+    options?: PatternOptions,
+    // tslint:disable-next-line:no-any Dynamic InstancedMesh.
+  ): any {
+    const o = (options && typeof options === 'object' ? options : {}) as
+      // tslint:disable-next-line:no-any Loosely-typed LLM option bag.
+      any;
+    const mode = String(o.mode ?? o.type ?? '').toLowerCase();
+    if (mode === 'grid') return buildGridPattern(geometry, material, o);
+    if (mode === 'circular' || mode === 'radial' || mode === 'polar') {
+      return buildCircularPattern(geometry, material, o);
+    }
+    if (mode === 'curve' || mode === 'alongcurve' || mode === 'path') {
+      return buildCurvePattern(geometry, material, o);
+    }
+    if (mode === 'linear') return buildLinearPattern(geometry, material, o);
+    if (mode && typeof console !== 'undefined') {
+      console.warn(
+        `[three-live] PatternInstancer: unknown mode '${mode}'; inferring from options (linear | grid | circular | curve)`,
+      );
+    }
+    // Infer the mode from the option shape when `mode` is omitted.
+    if (o.path != null || o.curve != null) {
+      return buildCurvePattern(geometry, material, o);
+    }
+    if (
+      ['radius', 'angleSpan', 'startAngle', 'endAngle', 'axialStep', 'alignRadial'].some(
+        (k) => o[k] !== undefined,
+      )
+    ) {
+      return buildCircularPattern(geometry, material, o);
+    }
+    if (
+      o.counts !== undefined ||
+      o.countX !== undefined ||
+      o.countZ !== undefined ||
+      o.countY !== undefined
+    ) {
+      return buildGridPattern(geometry, material, o);
+    }
+    return buildLinearPattern(geometry, material, o);
+  }
+  PatternInstancer.linear = buildLinearPattern;
+  PatternInstancer.grid = buildGridPattern;
+  PatternInstancer.circular = buildCircularPattern;
+  PatternInstancer.alongCurve = buildCurvePattern;
+  PatternInstancer.toGeometry = bakeInstancedMeshToGeometry;
+  PatternInstancer.MAX_INSTANCES = maxPatternInstances;
 
   const vectorGlyphStrokes: Record<string, number[][][]> = {
     '0': [
@@ -4240,12 +4925,15 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     HelixCurve3,
     HelixGeometry,
     LoftGeometry,
+    PatternInstancer,
+    Pattern: PatternInstancer,
     TextGeometry,
     CSG,
     MAX_CSG_TRIANGLES: maxCsgTriangles,
     MAX_BSP_DEPTH: maxBspDepth,
     MAX_TEXT_GEOMETRY_CHARS: maxTextGeometryChars,
     MAX_SHAPE_POINTS: maxShapePoints,
+    MAX_MERGED_PATTERN_VERTICES: maxGeneratedVertices,
     materializeDeclarativeGeometry,
   };
 
