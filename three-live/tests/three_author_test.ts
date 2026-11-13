@@ -2080,6 +2080,298 @@ function runCadRegressionTests(
       maxRadialErr < 1e-5 && boxCreaseOk,
       `Sweep walls are smooth-shaded around round profiles (err=${maxRadialErr.toExponential(1)}) while keeping sharp profile creases flat`,
     );
+
+    // Stage 3: PatternInstancer (linear, grid, circular, along-curve, toGeometry + CSG, export)
+    const {PatternInstancer, Pattern} = THREE as unknown as {
+      // tslint:disable-next-line:no-any Dynamic PatternInstancer.
+      PatternInstancer: any;
+      // tslint:disable-next-line:no-any Dynamic PatternInstancer alias.
+      Pattern: any;
+    };
+    const patBox = new BoxGeometry(0.1, 0.1, 0.1);
+    const patMat = new MeshStandardMaterial({color: 0xffffff});
+    const tAt = (inst: InstanceType<typeof InstancedMesh>, i: number) => {
+      const m = new Matrix4();
+      inst.getMatrixAt(i, m);
+      return [m.elements[12], m.elements[13], m.elements[14]];
+    };
+    const near = (a: number[], b: number[], eps = 1e-5) =>
+      a.every((v, k) => Math.abs(v - b[k]) < eps);
+    // Applies the instance rotation (upper 3x3) to a local direction.
+    const dirAt = (
+      inst: InstanceType<typeof InstancedMesh>,
+      i: number,
+      d: number[],
+    ) => {
+      const m = new Matrix4();
+      inst.getMatrixAt(i, m);
+      const e = m.elements;
+      return [
+        e[0] * d[0] + e[4] * d[1] + e[8] * d[2],
+        e[1] * d[0] + e[5] * d[1] + e[9] * d[2],
+        e[2] * d[0] + e[6] * d[1] + e[10] * d[2],
+      ];
+    };
+
+    const lin = PatternInstancer.linear(patBox, patMat, {
+      count: 5,
+      step: [0.5, 0, 0],
+    });
+    const linCentered = PatternInstancer.linear(patBox, patMat, {
+      count: 5,
+      span: 2,
+      direction: [0, 0, 2],
+      centered: true,
+      scaleRange: [1, 3],
+      colors: [0xff0000, '#00ff00'],
+    });
+    const lcM = new Matrix4();
+    linCentered.getMatrixAt(4, lcM);
+    const lcC = new Color();
+    linCentered.getColorAt(1, lcC);
+    assert(
+      lin instanceof InstancedMesh &&
+        lin.count === 5 &&
+        near(tAt(lin, 0), [0, 0, 0]) &&
+        near(tAt(lin, 4), [2, 0, 0]) &&
+        near(tAt(linCentered, 0), [0, 0, -1]) &&
+        near(tAt(linCentered, 4), [0, 0, 1]) &&
+        Math.abs(Math.hypot(lcM.elements[0], lcM.elements[1], lcM.elements[2]) - 3) < 1e-5 &&
+        lcC.g === 1 &&
+        lcC.r === 0,
+      'PatternInstancer.linear supports step, span + normalized direction, centering, scaleRange, and color palettes',
+    );
+
+    const grid = PatternInstancer.grid(patBox, patMat, {
+      counts: [3, 1, 2],
+      spacing: 1,
+    });
+    const checker = PatternInstancer.grid(patBox, patMat, {
+      countX: 4,
+      countZ: 4,
+      checkerboard: true,
+      centered: false,
+    });
+    const hugeGrid = PatternInstancer.grid(patBox, patMat, {
+      counts: [500, 500, 500],
+    });
+    assert(
+      grid.count === 6 &&
+        near(tAt(grid, 0), [-1, 0, -0.5]) &&
+        near(tAt(grid, 5), [1, 0, 0.5]) &&
+        checker.count === 8 &&
+        near(tAt(checker, 0), [0, 0, 0]) &&
+        hugeGrid.count <= 10000 &&
+        hugeGrid.count > 0,
+      `PatternInstancer.grid centers XZ, supports checkerboard, and clamps to MAX_INSTANCES (huge=${hugeGrid.count})`,
+    );
+
+    const circ = PatternInstancer.circular(patBox, patMat, {
+      count: 4,
+      radius: 2,
+    });
+    const circZ = PatternInstancer.circular(patBox, patMat, {
+      count: 3,
+      radius: 1,
+      axis: 'z',
+      angleSpan: Math.PI,
+      center: [0, 0, 5],
+    });
+    const circX = PatternInstancer.circular(patBox, patMat, {
+      count: 4,
+      radius: 1,
+      axis: 'x',
+    });
+    // Each instance must be the seed rigidly rotated about the axis:
+    // the seed's local +X (radial for y/z) must stay radial.
+    let radialOk = true;
+    for (let i = 0; i < 4; i++) {
+      const p = tAt(circ, i);
+      const r = dirAt(circ, i, [1, 0, 0]);
+      if (!near(r, [p[0] / 2, 0, p[2] / 2], 1e-5)) radialOk = false;
+      const px = tAt(circX, i);
+      const rx = dirAt(circX, i, [0, 1, 0]);
+      if (!near(rx, [0, px[1], px[2]], 1e-5)) radialOk = false;
+    }
+    assert(
+      circ.count === 4 &&
+        near(tAt(circ, 0), [2, 0, 0]) &&
+        near(tAt(circ, 2), [-2, 0, 0], 1e-5) &&
+        Math.abs(Math.hypot(...tAt(circ, 1)) - 2) < 1e-5 &&
+        near(tAt(circZ, 0), [1, 0, 5]) &&
+        near(tAt(circZ, 2), [-1, 0, 5], 1e-5) &&
+        radialOk,
+      'PatternInstancer.circular spaces full turns without seam duplicates, includes partial-arc endpoints, and rigidly rotates the seed on y/z/x axes',
+    );
+
+    const helixPath = new HelixCurve3({radius: 1, height: 2, turns: 2});
+    const alongHelix = PatternInstancer.alongCurve(patBox, patMat, {
+      count: 9,
+      path: helixPath,
+    });
+    const alongPts = PatternInstancer.alongCurve(patBox, patMat, {
+      count: 3,
+      path: [
+        [0, 0, 0],
+        [1, 0, 0],
+      ],
+    });
+    // Local +Z must follow the tangent of a straight X-axis path.
+    const tz = dirAt(alongPts, 1, [0, 0, 1]);
+    const ringPath = new THREE.CatmullRomCurve3(
+      [
+        new Vector3(1, 0, 0),
+        new Vector3(0, 0, 1),
+        new Vector3(-1, 0, 0),
+        new Vector3(0, 0, -1),
+      ],
+      true,
+    );
+    const ring = PatternInstancer.alongCurve(patBox, patMat, {
+      count: 8,
+      path: ringPath,
+    });
+    let ringOk = true;
+    for (let i = 0; i < 8; i++) {
+      for (let k = i + 1; k < 8; k++) {
+        if (near(tAt(ring, i), tAt(ring, k), 1e-3)) ringOk = false;
+      }
+    }
+    let helixOk = true;
+    for (let i = 0; i < 9; i++) {
+      const p = tAt(alongHelix, i);
+      if (Math.abs(Math.hypot(p[0], p[2]) - 1) > 1e-3) helixOk = false;
+    }
+    assert(
+      alongHelix.count === 9 &&
+        helixOk &&
+        near(tAt(alongPts, 0), [0, 0, 0], 1e-4) &&
+        near(tAt(alongPts, 2), [1, 0, 0], 1e-4) &&
+        near(tz, [1, 0, 0], 1e-3) &&
+        ringOk,
+      'PatternInstancer.alongCurve samples curves and point lists, aligns local +Z to the tangent, and never duplicates the seam of closed loops',
+    );
+
+    const viaCtor = new PatternInstancer(patBox, patMat, {
+      mode: 'circular',
+      count: 6,
+      radius: 1,
+    });
+    const inferredGrid = new Pattern(patBox, patMat, {counts: [2, 1, 2]});
+    const hostile = PatternInstancer.linear(patBox, patMat, {
+      count: NaN,
+      step: [NaN, Infinity, 0],
+      scaleRange: [NaN, -5],
+      instanceRotation: 'oops',
+      colors: [null, {r: NaN}],
+    });
+    const hostileCirc = PatternInstancer.circular(null, null, {
+      count: 1e9,
+      radius: -3,
+    });
+    let hostileFinite = true;
+    for (const inst of [hostile, hostileCirc]) {
+      const arr = inst.instanceMatrix.array as Float32Array;
+      for (let i = 0; i < arr.length; i++) {
+        if (!Number.isFinite(arr[i])) hostileFinite = false;
+      }
+    }
+    assert(
+      viaCtor instanceof InstancedMesh &&
+        viaCtor.count === 6 &&
+        inferredGrid.count === 4 &&
+        Pattern === PatternInstancer &&
+        hostile.count === 2 &&
+        hostileCirc.count === 10000 &&
+        hostileFinite,
+      'new THREE.PatternInstancer / THREE.Pattern dispatch by mode or option shape and sanitize hostile inputs',
+    );
+
+    // Audit regressions: checkerboard palettes, circular inference, string
+    // steps, and bake quotas.
+    const checkerColors = PatternInstancer.grid(patBox, patMat, {
+      countX: 4,
+      countZ: 4,
+      checkerboard: true,
+      colors: [0xff0000, 0x0000ff],
+    });
+    const seenColors = new Set<string>();
+    for (let i = 0; i < checkerColors.count; i++) {
+      const cc = new Color();
+      checkerColors.getColorAt(i, cc);
+      seenColors.add(`${cc.r},${cc.b}`);
+    }
+    const inferredCirc = new PatternInstancer(patBox, patMat, {
+      count: 4,
+      endAngle: Math.PI,
+      axis: 'z',
+    });
+    const strStep = PatternInstancer.linear(patBox, patMat, {
+      count: 3,
+      step: '2',
+    });
+    // 4,000 instances x 36 indices = 144k indices fits; a 3-vertex geometry
+    // with a 300-index list across 10,000 instances must be capped.
+    const tinyGeo = new THREE.BufferGeometry();
+    tinyGeo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3),
+    );
+    tinyGeo.setIndex(Array.from({length: 300}, (_, k) => [0, 1, 2][k % 3]));
+    const tinyInst = new InstancedMesh(tinyGeo, patMat, 10000);
+    const tinyBaked = PatternInstancer.toGeometry(tinyInst);
+    assert(
+      seenColors.size === 2 &&
+        near(tAt(inferredCirc, 3), [-1, 0, 0], 1e-5) &&
+        near(tAt(strStep, 2), [4, 0, 0]) &&
+        (tinyBaked.index?.count ?? Infinity) <= 300000 &&
+        tinyBaked.attributes.position.count <= 100000,
+      'PatternInstancer alternates checkerboard palettes, infers circular mode from endAngle, accepts numeric-string steps, and caps baked indices',
+    );
+
+    // toGeometry bakes instances (with mirrored instances re-wound) and feeds CSG.
+    const mirror = new InstancedMesh(patBox, patMat, 2);
+    mirror.setMatrixAt(0, new Matrix4().makeTranslation(-1, 0, 0));
+    mirror.setMatrixAt(1, new Matrix4().makeScale(-1, 1, 1));
+    const baked = PatternInstancer.toGeometry(mirror);
+    const bakedGrid = PatternInstancer.toGeometry(grid);
+    assert(
+      baked.attributes.position.count === patBox.attributes.position.count * 2 &&
+        countNormalWindingMismatches(baked) === 0 &&
+        Math.abs(meshVolume(baked) - 2 * 0.001) < 1e-6 &&
+        countBoundaryEdges(bakedGrid) === 0 &&
+        Math.abs(meshVolume(bakedGrid) - 6 * 0.001) < 1e-6,
+      'PatternInstancer.toGeometry bakes instance transforms, keeps winding consistent under mirroring, and stays watertight',
+    );
+
+    const plate = new Mesh(new BoxGeometry(4, 0.2, 2), patMat);
+    const pegs = PatternInstancer.grid(
+      new CylinderGeometry(0.1, 0.1, 1, 12),
+      patMat,
+      {counts: [3, 1, 2], spacing: 1},
+    );
+    const drilled = CSG.subtract(plate, pegs);
+    const plateVol = meshVolume(plate.geometry);
+    const drilledVol = meshVolume(drilled.geometry);
+    assert(
+      drilled instanceof Mesh &&
+        drilledVol < plateVol - 0.03 &&
+        drilledVol > plateVol * 0.8,
+      `CSG.subtract accepts an InstancedMesh pattern as the cutter (vol ${plateVol.toFixed(3)} -> ${drilledVol.toFixed(3)})`,
+    );
+
+    const patScene = new Scene();
+    patScene.add(lin, circ);
+    const patPayload = patScene.toCanvas3D();
+    const patUsdz = patScene.toUSDZ();
+    assert(
+      Boolean(
+        patPayload.gltf.extensionsUsed?.includes('EXT_mesh_gpu_instancing'),
+      ) &&
+        patUsdz instanceof Uint8Array &&
+        patUsdz.byteLength > 200,
+      'PatternInstancer meshes export as EXT_mesh_gpu_instancing (GLB) and expand cleanly in USDZ',
+    );
   }
 
   // Coverage: THREE.LOD, decimateGeometry, and userData.xr.lod materialization + MSFT_lod export.
