@@ -190,6 +190,8 @@ export {
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
   type HelixGeometryOptions,
+  type LoftGeometryOptions,
+  type LoftStationSpec,
   type SweepGeometryOptions,
   type TextGeometryOptions,
 } from './three-live/src/plugins/cad';

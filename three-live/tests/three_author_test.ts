@@ -71,6 +71,7 @@ const {
   SweepGeometry,
   HelixCurve3,
   HelixGeometry,
+  LoftGeometry,
   TextGeometry,
   CSG,
 } = THREE;
@@ -1700,15 +1701,28 @@ function runCadRegressionTests(
     const pEnd = hCurveR.getPoint(1);
     const pQuarterR = hCurveR.getPoint(1 / 12);
     const pQuarterL = hCurveL.getPoint(1 / 12);
+    // Right-handed helix: tangent x (next tangent) has a positive component
+    // along the rise axis (positive torsion), i.e. CCW seen from +Y.
+    const torsionSign = (c: {getPoint(t: number): Vector3}) => {
+      const a = c.getPoint(0.1);
+      const b = c.getPoint(0.11);
+      const d = c.getPoint(0.12);
+      const t1 = [b.x - a.x, b.y - a.y, b.z - a.z];
+      const t2 = [d.x - b.x, d.y - b.y, d.z - b.z];
+      // Horizontal turning direction about +Y: (t1 x t2).y
+      return t1[2] * t2[0] - t1[0] * t2[2];
+    };
     assert(
       Math.abs(pStart.x - 0.4) < 1e-6 &&
         Math.abs(pStart.y) < 1e-6 &&
         Math.abs(Math.hypot(pEnd.x, pEnd.z) - 0.2) < 1e-6 &&
         Math.abs(pEnd.y - 0.6) < 1e-6 &&
-        pQuarterR.z > 0 &&
-        pQuarterL.z < 0 &&
+        pQuarterR.z < 0 &&
+        pQuarterL.z > 0 &&
+        torsionSign(hCurveR) > 0 &&
+        torsionSign(hCurveL) < 0 &&
         hCurveR.getPoints(16).length === 17,
-      'HelixCurve3 evaluates cylindrical/conical radius, pitch/height, origin, and right/left handedness',
+      'HelixCurve3 evaluates cylindrical/conical radius, pitch/height, origin, and true right/left handedness (CCW rising seen from +Y)',
     );
 
     const springGeo = new HelixGeometry({
@@ -1763,6 +1777,308 @@ function runCadRegressionTests(
         allFinite(degHelix) &&
         countBoundaryEdges(degHelix) === 0,
       'SweepGeometry and HelixGeometry sanitize NaN/Infinity/degenerate inputs into finite watertight geometry',
+    );
+
+    // Stage 2: LoftGeometry (linear, smooth Catmull-Rom, hollow vessel shelling, 3D path, closed loop, tip collapse)
+    const sqProfile = new Shape();
+    sqProfile.moveTo(-0.15, -0.15);
+    sqProfile.lineTo(0.15, -0.15);
+    sqProfile.lineTo(0.15, 0.15);
+    sqProfile.lineTo(-0.15, 0.15);
+    sqProfile.closePath();
+
+    const circProfile = new Shape();
+    const cSegs = 24;
+    for (let i = 0; i < cSegs; i++) {
+      const a = (i / cSegs) * Math.PI * 2 + 0.7; // Intentionally rotated start angle to test seam alignment
+      const x = 0.12 * Math.cos(a);
+      const y = 0.12 * Math.sin(a);
+      if (i === 0) circProfile.moveTo(x, y);
+      else circProfile.lineTo(x, y);
+    }
+    circProfile.closePath();
+
+    const sqToCircle = new LoftGeometry([sqProfile, circProfile], {
+      height: 0.4,
+      profileSegments: 48,
+      steps: 16,
+    });
+    assert(
+      allFinite(sqToCircle) &&
+        countBoundaryEdges(sqToCircle) === 0 &&
+        countNormalWindingMismatches(sqToCircle) === 0 &&
+        meshVolume(sqToCircle) > 0.01,
+      `LoftGeometry([square, circle]) aligns seams and builds a watertight 2-manifold (vol=${meshVolume(sqToCircle).toFixed(4)})`,
+    );
+
+    // Multi-station smooth Catmull-Rom loft with per-station scale, twist, and translate
+    const smoothLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, y: 0, scale: 1.0},
+        {
+          shape: circProfile,
+          y: 0.2,
+          scale: [1.3, 1.1],
+          twist: Math.PI / 6,
+          translate: [0.02, -0.01],
+        },
+        {shape: circProfile, y: 0.45, scale: 0.75, twist: Math.PI / 3},
+        {shape: sqProfile, y: 0.65, scale: 0.9, twist: Math.PI / 2},
+      ],
+      {
+        interpolation: 'smooth',
+        profileSegments: 40,
+        steps: 36,
+      },
+    );
+    assert(
+      allFinite(smoothLoft) &&
+        countBoundaryEdges(smoothLoft) === 0 &&
+        countNormalWindingMismatches(smoothLoft) === 0 &&
+        meshVolume(smoothLoft) > 0.02,
+      `LoftGeometry(4 stations, smooth Catmull-Rom, twist/scale/translate) is watertight with outward normals (vol=${meshVolume(smoothLoft).toFixed(4)})`,
+    );
+
+    // Hollow shelled vessel mode (openTop: true, wallThickness: 0.015) vs solid vase
+    const vaseStations = [
+      {shape: circProfile, y: 0, scale: 0.9},
+      {shape: circProfile, y: 0.14, scale: 1.35},
+      {shape: circProfile, y: 0.28, scale: 0.75},
+      {shape: circProfile, y: 0.36, scale: 0.95},
+    ];
+    const solidVase = new LoftGeometry(vaseStations, {
+      interpolation: 'smooth',
+      profileSegments: 36,
+      steps: 24,
+    });
+    const hollowVase = new LoftGeometry(vaseStations, {
+      interpolation: 'smooth',
+      profileSegments: 36,
+      steps: 24,
+      openTop: true,
+      wallThickness: 0.015,
+    });
+    const solidVol = meshVolume(solidVase);
+    const hollowVol = meshVolume(hollowVase);
+    assert(
+      allFinite(hollowVase) &&
+        countBoundaryEdges(hollowVase) === 0 &&
+        countNormalWindingMismatches(hollowVase) === 0 &&
+        hollowVol > 0.001 &&
+        hollowVol < solidVol * 0.65,
+      `LoftGeometry(openTop=true, wallThickness=0.015) produces a watertight shelled vessel (hollowVol=${hollowVol.toFixed(4)} < solidVol=${solidVol.toFixed(4)})`,
+    );
+
+    // 3D curved spine loft, X/Z axes, closed loop loft, and zero-scale tip collapse
+    const spineLoft = new LoftGeometry([sqProfile, circProfile], {
+      path: sCurve,
+      profileSegments: 32,
+      steps: 24,
+    });
+    const zAxisLoft = new LoftGeometry({
+      profiles: [sqProfile, circProfile],
+      axis: 'z',
+      length: 0.5,
+      origin: 'center',
+      profileSegments: 32,
+    });
+    const xAxisTipLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, x: 0, scale: 1},
+        {shape: circProfile, x: 0.4, scale: 0},
+      ],
+      {axis: 'x', profileSegments: 32, steps: 8},
+    );
+    const closedLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, scale: 0.5},
+        {shape: circProfile, scale: 0.6},
+        {shape: sqProfile, scale: 0.45},
+      ],
+      {
+        path: closedLoop,
+        closed: true,
+        profileSegments: 24,
+        steps: 36,
+      },
+    );
+    assert(
+      allFinite(spineLoft) &&
+        countBoundaryEdges(spineLoft) === 0 &&
+        countNormalWindingMismatches(spineLoft) === 0 &&
+        allFinite(zAxisLoft) &&
+        countBoundaryEdges(zAxisLoft) === 0 &&
+        countNormalWindingMismatches(zAxisLoft) === 0 &&
+        allFinite(xAxisTipLoft) &&
+        countBoundaryEdges(xAxisTipLoft) === 0 &&
+        countNormalWindingMismatches(xAxisTipLoft) === 0 &&
+        allFinite(closedLoft) &&
+        countBoundaryEdges(closedLoft) === 0 &&
+        countNormalWindingMismatches(closedLoft) === 0,
+      'LoftGeometry along 3D path, X/Z axes, closed loop, and zero-scale tip collapse are all watertight with outward normals',
+    );
+
+    // Hostile / fallback inputs (0 profiles, 1 profile, reversed offsets, huge wallThickness)
+    const emptyLoft = new LoftGeometry([], {height: NaN, steps: NaN});
+    const singleLoft = new LoftGeometry([sqProfile], {height: 0.3});
+    const revThickLoft = new LoftGeometry(
+      [
+        {shape: circProfile, y: 0.4},
+        {shape: sqProfile, y: 0},
+      ],
+      {openTop: true, wallThickness: 999, profileSegments: 24},
+    );
+    assert(
+      allFinite(emptyLoft) &&
+        countBoundaryEdges(emptyLoft) === 0 &&
+        allFinite(singleLoft) &&
+        countBoundaryEdges(singleLoft) === 0 &&
+        allFinite(revThickLoft) &&
+        countBoundaryEdges(revThickLoft) === 0 &&
+        countNormalWindingMismatches(revThickLoft) === 0,
+      'LoftGeometry handles 0/1 station fallbacks, reversed offsets, and clamped wallThickness cleanly',
+    );
+
+    // Audit regressions: seams, quotas, spine mapping, smooth normals.
+    const throwsRange = (fn: () => unknown) => {
+      try {
+        fn();
+        return false;
+      } catch (e) {
+        return e instanceof RangeError;
+      }
+    };
+    const loopPath = new THREE.CatmullRomCurve3(
+      [
+        new Vector3(1, 0, 0),
+        new Vector3(0, 0.3, 1),
+        new Vector3(-1, 0, 0),
+        new Vector3(0, -0.3, -1),
+      ],
+      true,
+    );
+    const oddTwistLoop = new SweepGeometry(rect, loopPath, {
+      steps: 48,
+      twist: 1,
+      scale: [1, 0.5],
+    });
+    const flatScaleSweep = new SweepGeometry(rect, [[0, 0, 0], [0, 0, 1]], {
+      steps: 8,
+      scale: (u: number) => [u, 1],
+    });
+    const rotCirc = new Shape();
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + 1.1;
+      if (i === 0) rotCirc.moveTo(0.2 * Math.cos(a), 0.2 * Math.sin(a));
+      else rotCirc.lineTo(0.2 * Math.cos(a), 0.2 * Math.sin(a));
+    }
+    rotCirc.closePath();
+    const seamLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, twist: 0},
+        {shape: rotCirc, twist: 0.8},
+        {shape: sqProfile, twist: 1.9},
+      ],
+      {path: loopPath, closed: true, interpolation: 'catmull-rom'},
+    );
+    const lineSpine = [
+      [0, 0, 0],
+      [0, 0, 2],
+    ];
+    const oneStepLoft = new LoftGeometry([sqProfile, circProfile], {
+      path: lineSpine,
+      steps: 1,
+    });
+    const offsetPathLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, offset: 0},
+        {shape: circProfile, offset: 0.25},
+        {shape: sqProfile, offset: 1},
+      ],
+      {path: lineSpine, steps: 300},
+    );
+    oneStepLoft.computeBoundingBox();
+    offsetPathLoft.computeBoundingBox();
+    // The middle station (offset 0.25 of 1) sits at z = 0.5 on the 2 m spine,
+    // so the first span's 151 rings all land in z <= 0.5 (uniform u: only 76).
+    const ringZs = new Set<number>();
+    {
+      const pos = offsetPathLoft.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        if (pos.getZ(i) <= 0.5 + 1e-6) ringZs.add(Math.round(pos.getZ(i) * 1e6));
+      }
+    }
+    const midZ = ringZs.size > 140 ? 0.5 : NaN;
+    const negLoft = new LoftGeometry([sqProfile, circProfile], {height: -0.5});
+    assert(
+      countBoundaryEdges(oddTwistLoop) === 0 &&
+        countNormalWindingMismatches(oddTwistLoop) === 0 &&
+        countBoundaryEdges(flatScaleSweep) === 0 &&
+        countBoundaryEdges(seamLoft) === 0 &&
+        countNormalWindingMismatches(seamLoft) === 0 &&
+        Math.abs((oneStepLoft.boundingBox?.max.z ?? 0) - 2) < 1e-4 &&
+        Math.abs((offsetPathLoft.boundingBox?.max.z ?? 0) - 2) < 1e-4 &&
+        Math.abs(midZ - 0.5) < 0.02 &&
+        meshVolume(negLoft) > 0 &&
+        countNormalWindingMismatches(negLoft) === 0,
+      'Closed sweeps with odd twist/taper and closed seam-shifted lofts stay watertight; path lofts reach the spine end and honor station offsets; negative height stays outward',
+    );
+
+    const hugeSweepThrows = throwsRange(
+      () =>
+        new SweepGeometry({
+          path: loopPath,
+          steps: 512,
+          radius: 0.1,
+          radialSegments: 64,
+        }),
+    );
+    const hugeLoftThrows = throwsRange(
+      () =>
+        new LoftGeometry([sqProfile, circProfile, sqProfile], {
+          steps: 512,
+          profileSegments: 256,
+        }),
+    );
+    assert(
+      hugeSweepThrows && hugeLoftThrows,
+      'SweepGeometry and LoftGeometry reject inputs that would exceed the 100k vertex quota with a RangeError',
+    );
+
+    // Smooth shading: on a round tube, corner normals point radially, not per face.
+    const tube = new SweepGeometry({
+      path: lineSpine,
+      radius: 0.5,
+      radialSegments: 8,
+      steps: 4,
+      caps: false,
+    });
+    let maxRadialErr = 0;
+    {
+      const pos = tube.attributes.position;
+      const nrm = tube.attributes.normal;
+      for (let i = 0; i < pos.count; i++) {
+        const r = Math.hypot(pos.getX(i), pos.getY(i));
+        const err = Math.hypot(
+          nrm.getX(i) - pos.getX(i) / r,
+          nrm.getY(i) - pos.getY(i) / r,
+          nrm.getZ(i),
+        );
+        maxRadialErr = Math.max(maxRadialErr, err);
+      }
+    }
+    const boxSweep = new SweepGeometry(rect, lineSpine, {steps: 2, caps: false});
+    let boxCreaseOk = true;
+    {
+      const nrm = boxSweep.attributes.normal;
+      for (let i = 0; i < nrm.count; i++) {
+        const ax = [nrm.getX(i), nrm.getY(i), nrm.getZ(i)].map(Math.abs);
+        if (Math.max(...ax) < 0.999) boxCreaseOk = false;
+      }
+    }
+    assert(
+      maxRadialErr < 1e-5 && boxCreaseOk,
+      `Sweep walls are smooth-shaded around round profiles (err=${maxRadialErr.toExponential(1)}) while keeping sharp profile creases flat`,
     );
   }
 
