@@ -85,7 +85,7 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
     -   `three-live-viewer.min.js`: `< 30 KB gz`
     -   `three-live.min.js`: `< 73 KB gz`
     -   `three-live-studio.min.js`: `< 29 KB gz`
-    -   `three-live-cad.min.js`: `< 10 KB gz`
+    -   `three-live-cad.min.js`: `< 14 KB gz`
     -   `three-live-procedural.min.js`: `< 28 KB gz`
     -   `three-live-animation.min.js`: `< 11 KB gz`
     -   `three-live-ai.min.js`: `< 20 KB gz`

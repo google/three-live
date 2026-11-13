@@ -25,6 +25,8 @@ import {
   MAX_SHAPE_POINTS,
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
+  type HelixGeometryOptions,
+  type SweepGeometryOptions,
   type TextGeometryOptions,
 } from './plugins/cad';
 
@@ -39,5 +41,7 @@ export {
   MAX_SHAPE_POINTS,
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
+  type HelixGeometryOptions,
+  type SweepGeometryOptions,
   type TextGeometryOptions,
 };

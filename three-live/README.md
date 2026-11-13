@@ -47,7 +47,7 @@ display existing models only, use the viewer-only build:
 | `dist/three-live-viewer.min.js` | Viewer only: `.glb` display, PBR, orbit controls, animation |
 | `dist/three-live.min.js` | Standard: viewer + sandboxed `<script type="text/three">` + AR handoff |
 | `dist/three-live-studio.min.js` | Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), hotspots |
-| `dist/three-live-cad.min.js` | Add-on: 2D `Path`/`Shape`, `ExtrudeGeometry`, 3D `CSG` Booleans, stroke-font `TextGeometry` |
+| `dist/three-live-cad.min.js` | Add-on: 2D `Path`/`Shape`, `ExtrudeGeometry`, `SweepGeometry`, `HelixGeometry`, 3D `CSG` Booleans, stroke-font `TextGeometry` |
 | `dist/three-live-procedural.min.js` | Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `ProceduralTexture`, `Sprite`, 2D curves, scene helpers |
 | `dist/three-live-animation.min.js` | Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` |
 | `dist/three-live-ai.min.js` | Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`) & Tap & Speak voice |
