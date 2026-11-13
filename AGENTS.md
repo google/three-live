@@ -271,7 +271,7 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         `KHR_audio_emitter`, and validated `extras.tsl` SSA node graphs
         via `compiler/src/tsl.rs`) and `.usdz` (including `PointInstancer`,
         `VariantSets`, `SpatialAudio`, and `UsdShade` / MaterialX `NodeGraph`s)
-        bytes via C FFI (`compiler/include/three_live.h`) and `three-live-cli`.
+        bytes via C FFI (`compiler/include/three_live_compiler.h`) and `three-live-cli`.
 4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
     -   **Android (`mobile/android/src/main/java/com/google/threelive/`):**
         `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt` +
