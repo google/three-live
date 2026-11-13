@@ -150,6 +150,62 @@ export interface HelixGeometryOptions {
 }
 
 /**
+ * Per-station profile descriptor for `THREE.LoftGeometry`.
+ */
+export interface LoftStationSpec {
+  // tslint:disable-next-line:no-any 2D Shape, Path, or Vec2Like[] contour.
+  shape: any;
+  /** Axial position along the loft axis or spine. */
+  offset?: number;
+  y?: number;
+  z?: number;
+  x?: number;
+  /** Per-station scale factor (`number` or `[sx, sy]`). */
+  scale?: number | [number, number];
+  /** Per-station twist angle in radians around the loft axis (default 0). */
+  twist?: number;
+  /** Per-station 2D in-plane offset `[tx, ty]`. */
+  translate?: [number, number];
+}
+
+/**
+ * Options for `THREE.LoftGeometry`.
+ */
+export interface LoftGeometryOptions {
+  // tslint:disable-next-line:no-any Array of Shape, Path, or LoftStationSpec stations.
+  profiles?: any[];
+  /** Explicit axial station positions (defaults to even spacing across `height`). */
+  offsets?: number[];
+  /** Total span along the loft axis when station offsets are omitted (default 1). */
+  height?: number;
+  length?: number;
+  /** Straight loft axis when `path` is not set (default `'y'`). */
+  axis?: 'x' | 'y' | 'z';
+  // tslint:disable-next-line:no-any Optional 3D spine Curve3 or 3D point array.
+  path?: any;
+  /** Axial subdivisions across the loft (default: 16 for linear, 32 for smooth/curved). */
+  steps?: number;
+  /** Uniform arc-length vertex count per resampled profile ring (default 48, clamped to [8, 256]). */
+  profileSegments?: number;
+  /** Subdivisions per 2D curve segment before arc-length resampling (default 12). */
+  curveSegments?: number;
+  /** Station blending mode: `'linear'` (default) or `'smooth'` (Catmull-Rom spline). */
+  interpolation?: 'linear' | 'smooth';
+  /** Triangulate start/end planar caps (default true). */
+  caps?: boolean;
+  /** Leave the top station open (or shell the vessel when `wallThickness > 0`). */
+  openTop?: boolean;
+  /** Wall thickness in meters when `openTop` is true to create a watertight hollow vessel. */
+  wallThickness?: number;
+  /** Close the loft loop from the last station back to the first (default false). */
+  closed?: boolean;
+  /** Origin along the loft axis when explicit offsets are omitted: `'bottom'` (default) or `'center'`. */
+  origin?: 'bottom' | 'center';
+  /** Optional reference up vector when lofting along a 3D `path`. */
+  up?: {x: number; y: number; z: number} | [number, number, number];
+}
+
+/**
  * Options for `THREE.TextGeometry`.
  *
  * Uses a built-in stroke font (digits, A-Z, and common punctuation; lowercase
@@ -217,7 +273,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       }
       // tslint:disable-next-line:no-any Dynamic Vector3.
       getPoints(divisions = 5): any[] {
-        const d = Math.max(1, Math.min(512, Math.floor(Number(divisions) || 5)));
+        const d = Math.max(
+          1,
+          Math.min(512, Math.floor(Number(divisions) || 5)),
+        );
         // tslint:disable-next-line:no-any Dynamic Vector3.
         const pts: any[] = [];
         for (let i = 0; i <= d; i++) pts.push(this.getPoint(i / d));
@@ -785,7 +844,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const poly = contourIndices.slice();
     if (poly.length < 3) return triangles;
 
-    let guard = poly.length * poly.length + 64;
+    let guard = poly.length * poly.length * 3 + 128;
     let i = 0;
     while (poly.length > 2 && guard-- > 0) {
       const n = poly.length;
@@ -798,7 +857,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const c = vertices[nextIdx];
 
       const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-      if (cross > 1e-9) {
+      if (cross > 1e-12) {
         let ear = true;
         const minX = Math.min(a.x, b.x, c.x) - 1e-7;
         const maxX = Math.max(a.x, b.x, c.x) + 1e-7;
@@ -1207,6 +1266,165 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     return {pts, tangents, normals, binormals, closed: isClosed};
   }
 
+  interface SpineFrame3D {
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    p: any;
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    t: any;
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    rx: any;
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    ry: any;
+    u: number;
+    sx?: number;
+    sy?: number;
+  }
+
+  function evalFrame3D(
+    fr: SpineFrame3D,
+    vx: number,
+    vy: number,
+  ): [number, number, number] {
+    const x = vx * (fr.sx ?? 1);
+    const y = vy * (fr.sy ?? 1);
+    return [
+      fr.p.x + x * fr.rx.x + y * fr.ry.x,
+      fr.p.y + x * fr.rx.y + y * fr.ry.y,
+      fr.p.z + x * fr.rx.z + y * fr.ry.z,
+    ];
+  }
+
+  function emitFramedWallStrip(
+    rList: Vec2Like[][],
+    fList: SpineFrame3D[],
+    inward: boolean,
+    positions: number[],
+    normals: number[],
+    uvs: number[],
+    indices: number[],
+  ): void {
+    const pushV = (
+      pt: [number, number, number],
+      u: number,
+      v: number,
+      nx: number,
+      ny: number,
+      nz: number,
+    ) => {
+      positions.push(pt[0], pt[1], pt[2]);
+      normals.push(nx, ny, nz);
+      uvs.push(u, v);
+    };
+    const flip = inward ? -1 : 1;
+    for (let g = 0; g < fList.length - 1; g++) {
+      const r0 = rList[Math.min(g, rList.length - 1)];
+      const r1 = rList[Math.min(g + 1, rList.length - 1)];
+      const f0 = fList[g];
+      const f1 = fList[g + 1];
+      const rLen = r0.length;
+      const c0 =
+        (f0.sx ?? 1) * (f0.sy ?? 1) <= 1e-12 ||
+        Math.abs(signedArea2D(r0)) <= 1e-10;
+      const c1 =
+        (f1.sx ?? 1) * (f1.sy ?? 1) <= 1e-12 ||
+        Math.abs(signedArea2D(r1)) <= 1e-10;
+      if (c0 && c1) continue;
+      for (let i = 0; i < rLen; i++) {
+        const j = (i + 1) % rLen;
+        const v00 = r0[i];
+        const v10 = r0[j];
+        const v11 = r1[j];
+        const v01 = r1[i];
+        const p00 = evalFrame3D(f0, v00.x, v00.y);
+        const p10 = evalFrame3D(f0, v10.x, v10.y);
+        const p11 = evalFrame3D(f1, v11.x, v11.y);
+        const p01 = evalFrame3D(f1, v01.x, v01.y);
+        const d1x = p11[0] - p00[0];
+        const d1y = p11[1] - p00[1];
+        const d1z = p11[2] - p00[2];
+        const d2x = p01[0] - p10[0];
+        const d2y = p01[1] - p10[1];
+        const d2z = p01[2] - p10[2];
+        let nx = (d1y * d2z - d1z * d2y) * flip;
+        let ny = (d1z * d2x - d1x * d2z) * flip;
+        let nz = (d1x * d2y - d1y * d2x) * flip;
+        const nl = Math.hypot(nx, ny, nz);
+        if (nl > 1e-10) {
+          nx /= nl;
+          ny /= nl;
+          nz /= nl;
+        } else {
+          const ex = (v10.y - v00.y) * flip;
+          const ey = -(v10.x - v00.x) * flip;
+          const el = Math.hypot(ex, ey) || 1;
+          nx = (ex / el) * f0.rx.x + (ey / el) * f0.ry.x;
+          ny = (ex / el) * f0.rx.y + (ey / el) * f0.ry.y;
+          nz = (ex / el) * f0.rx.z + (ey / el) * f0.ry.z;
+        }
+        const qb = positions.length / 3;
+        const u0 = i / rLen;
+        const u1 = (i + 1) / rLen;
+        const i1 = inward ? 2 : 1;
+        const i2 = inward ? 1 : 2;
+        if (c1) {
+          pushV(p00, u0, f0.u, nx, ny, nz);
+          pushV(p10, u1, f0.u, nx, ny, nz);
+          pushV(p11, (u0 + u1) * 0.5, f1.u, nx, ny, nz);
+          indices.push(qb, qb + i1, qb + i2);
+        } else if (c0) {
+          pushV(p00, (u0 + u1) * 0.5, f0.u, nx, ny, nz);
+          pushV(p11, u1, f1.u, nx, ny, nz);
+          pushV(p01, u0, f1.u, nx, ny, nz);
+          indices.push(qb, qb + i1, qb + i2);
+        } else {
+          pushV(p00, u0, f0.u, nx, ny, nz);
+          pushV(p10, u1, f0.u, nx, ny, nz);
+          pushV(p11, u1, f1.u, nx, ny, nz);
+          pushV(p01, u0, f1.u, nx, ny, nz);
+          if (inward) {
+            indices.push(qb, qb + 2, qb + 1, qb, qb + 3, qb + 2);
+          } else {
+            indices.push(qb, qb + 1, qb + 2, qb, qb + 2, qb + 3);
+          }
+        }
+      }
+    }
+  }
+
+  function emitFramedCap(
+    allVertices: Vec2Like[],
+    capTris: Array<[number, number, number]>,
+    fr: SpineFrame3D,
+    sgn: 1 | -1,
+    positions: number[],
+    normals: number[],
+    uvs: number[],
+    indices: number[],
+  ): void {
+    if (
+      capTris.length === 0 ||
+      (fr.sx ?? 1) * (fr.sy ?? 1) <= 1e-8 ||
+      Math.abs(signedArea2D(allVertices)) <= 1e-10
+    ) {
+      return;
+    }
+    const [minX, minY, spanX, spanY] = bounds2D(allVertices);
+    const base = positions.length / 3;
+    for (const v of allVertices) {
+      const pt = evalFrame3D(fr, v.x, v.y);
+      positions.push(pt[0], pt[1], pt[2]);
+      normals.push(fr.t.x * sgn, fr.t.y * sgn, fr.t.z * sgn);
+      uvs.push((v.x - minX) / spanX, (v.y - minY) / spanY);
+    }
+    for (const [a, b, c] of capTris) {
+      indices.push(
+        base + a,
+        base + (sgn < 0 ? c : b),
+        base + (sgn < 0 ? b : c),
+      );
+    }
+  }
+
   function buildSweepBufferGeometry(
     // tslint:disable-next-line:no-any Dynamic BufferGeometry.
     targetGeo: any,
@@ -1261,20 +1479,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const uvs: number[] = [];
     const indices: number[] = [];
 
-    // Precompute twisted/scaled frame basis at each path station l in [0..nSegs]
-    const stationData: Array<{
-      // tslint:disable-next-line:no-any Dynamic Vector3.
-      p: any;
-      // tslint:disable-next-line:no-any Dynamic Vector3.
-      t: any;
-      // tslint:disable-next-line:no-any Dynamic Vector3.
-      rx: any;
-      // tslint:disable-next-line:no-any Dynamic Vector3.
-      ry: any;
-      sx: number;
-      sy: number;
-      u: number;
-    }> = [];
+    const stationData: SpineFrame3D[] = [];
     for (let l = 0; l <= nSegs; l++) {
       const u = l / nSegs;
       const phi = twistTotal * u;
@@ -1299,8 +1504,8 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       sEnd.p.copy(s0.p);
       if (
         sEnd.rx.distanceTo(s0.rx) < 1e-5 &&
-        Math.abs(sEnd.sx - s0.sx) < 1e-5 &&
-        Math.abs(sEnd.sy - s0.sy) < 1e-5
+        Math.abs((sEnd.sx ?? 1) - (s0.sx ?? 1)) < 1e-5 &&
+        Math.abs((sEnd.sy ?? 1) - (s0.sy ?? 1)) < 1e-5
       ) {
         sEnd.rx.copy(s0.rx);
         sEnd.ry.copy(s0.ry);
@@ -1308,32 +1513,6 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         sEnd.sy = s0.sy;
       }
     }
-
-    const evalPoint3D = (
-      st: (typeof stationData)[number],
-      vx: number,
-      vy: number,
-    ): [number, number, number] => {
-      const x = vx * st.sx;
-      const y = vy * st.sy;
-      return [
-        st.p.x + x * st.rx.x + y * st.ry.x,
-        st.p.y + x * st.rx.y + y * st.ry.y,
-        st.p.z + x * st.rx.z + y * st.ry.z,
-      ];
-    };
-    const pushV = (
-      pt: [number, number, number],
-      u: number,
-      v: number,
-      nx: number,
-      ny: number,
-      nz: number,
-    ) => {
-      positions.push(pt[0], pt[1], pt[2]);
-      normals.push(nx, ny, nz);
-      uvs.push(u, v);
-    };
 
     for (const shape of shapeList) {
       const extracted = extractShapePoints(shape, curveSegments);
@@ -1351,107 +1530,40 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
       const {mergedIndices, allVertices} = mergeHolesIntoContour(outer, holes);
       const capTris = triangulatePolygonIndices(mergedIndices, allVertices);
-      const [minX, minY, spanX, spanY] = bounds2D(allVertices);
 
-      // 1. Start cap (u = 0, normal = -T0) and End cap (u = 1, normal = +T_end)
       if (!isClosed && wantCaps && capTris.length > 0) {
-        for (const [st, sgn] of [
-          [stationData[0], -1],
-          [stationData[nSegs], 1],
-        ] as const) {
-          if (st.sx * st.sy <= 1e-8) continue;
-          const base = positions.length / 3;
-          for (const v of allVertices) {
-            pushV(
-              evalPoint3D(st, v.x, v.y),
-              (v.x - minX) / spanX,
-              (v.y - minY) / spanY,
-              st.t.x * sgn,
-              st.t.y * sgn,
-              st.t.z * sgn,
-            );
-          }
-          for (const [a, b, c] of capTris) {
-            indices.push(
-              base + a,
-              base + (sgn < 0 ? c : b),
-              base + (sgn < 0 ? b : c),
-            );
-          }
-        }
+        emitFramedCap(
+          allVertices,
+          capTris,
+          stationData[0],
+          -1,
+          positions,
+          normals,
+          uvs,
+          indices,
+        );
+        emitFramedCap(
+          allVertices,
+          capTris,
+          stationData[nSegs],
+          1,
+          positions,
+          normals,
+          uvs,
+          indices,
+        );
       }
 
-      // 2. Side walls along all stations for outer ring and each hole ring
-      const allRings: Vec2Like[][] = [outer, ...holes];
-      for (const ring of allRings) {
-        const rLen = ring.length;
-        for (let l = 0; l < nSegs; l++) {
-          const st0 = stationData[l];
-          const st1 = stationData[l + 1];
-          const collapse0 = st0.sx * st0.sy <= 1e-12;
-          const collapse1 = st1.sx * st1.sy <= 1e-12;
-          if (collapse0 && collapse1) continue;
-          for (let i = 0; i < rLen; i++) {
-            const j = (i + 1) % rLen;
-            const v0 = ring[i];
-            const v1 = ring[j];
-            const p00 = evalPoint3D(st0, v0.x, v0.y);
-            const p10 = evalPoint3D(st0, v1.x, v1.y);
-            const p11 = evalPoint3D(st1, v1.x, v1.y);
-            const p01 = evalPoint3D(st1, v0.x, v0.y);
-
-            const d1x = p11[0] - p00[0];
-            const d1y = p11[1] - p00[1];
-            const d1z = p11[2] - p00[2];
-            const d2x = p01[0] - p10[0];
-            const d2y = p01[1] - p10[1];
-            const d2z = p01[2] - p10[2];
-            let nx = d1y * d2z - d1z * d2y;
-            let ny = d1z * d2x - d1x * d2z;
-            let nz = d1x * d2y - d1y * d2x;
-            const nLen = Math.hypot(nx, ny, nz);
-            if (nLen > 1e-10) {
-              nx /= nLen;
-              ny /= nLen;
-              nz /= nLen;
-            } else {
-              const ex = v1.y - v0.y;
-              const ey = -(v1.x - v0.x);
-              const el = Math.hypot(ex, ey) || 1;
-              nx = (ex / el) * st0.rx.x + (ey / el) * st0.ry.x;
-              ny = (ex / el) * st0.rx.y + (ey / el) * st0.ry.y;
-              nz = (ex / el) * st0.rx.z + (ey / el) * st0.ry.z;
-            }
-
-            const quadBase = positions.length / 3;
-            const u0 = i / rLen;
-            const u1 = (i + 1) / rLen;
-            if (collapse1) {
-              pushV(p00, u0, st0.u, nx, ny, nz);
-              pushV(p10, u1, st0.u, nx, ny, nz);
-              pushV(p11, (u0 + u1) * 0.5, st1.u, nx, ny, nz);
-              indices.push(quadBase, quadBase + 1, quadBase + 2);
-            } else if (collapse0) {
-              pushV(p00, (u0 + u1) * 0.5, st0.u, nx, ny, nz);
-              pushV(p11, u1, st1.u, nx, ny, nz);
-              pushV(p01, u0, st1.u, nx, ny, nz);
-              indices.push(quadBase, quadBase + 1, quadBase + 2);
-            } else {
-              pushV(p00, u0, st0.u, nx, ny, nz);
-              pushV(p10, u1, st0.u, nx, ny, nz);
-              pushV(p11, u1, st1.u, nx, ny, nz);
-              pushV(p01, u0, st1.u, nx, ny, nz);
-              indices.push(
-                quadBase,
-                quadBase + 1,
-                quadBase + 2,
-                quadBase,
-                quadBase + 2,
-                quadBase + 3,
-              );
-            }
-          }
-        }
+      for (const ring of [outer, ...holes]) {
+        emitFramedWallStrip(
+          [ring],
+          stationData,
+          false,
+          positions,
+          normals,
+          uvs,
+          indices,
+        );
       }
     }
 
@@ -1618,6 +1730,609 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         caps: opts.caps !== false,
         closed: false,
       });
+    }
+  }
+
+  // Uniform arc-length resampling of a closed 2D polygon into `count` vertices.
+  function resampleRingByArcLength(
+    ring: Vec2Like[],
+    count: number,
+  ): Vec2Like[] {
+    const clean: Vec2Like[] = [];
+    for (const p of ring) {
+      if (
+        clean.length === 0 ||
+        Math.hypot(
+          p.x - clean[clean.length - 1].x,
+          p.y - clean[clean.length - 1].y,
+        ) > 1e-7
+      ) {
+        clean.push(new Vector2(num(p.x, 0), num(p.y, 0)));
+      }
+    }
+    if (
+      clean.length > 1 &&
+      Math.hypot(
+        clean[0].x - clean[clean.length - 1].x,
+        clean[0].y - clean[clean.length - 1].y,
+      ) <= 1e-7
+    ) {
+      clean.pop();
+    }
+    if (clean.length === 0) {
+      return Array.from({length: count}, () => new Vector2(0, 0));
+    }
+    if (clean.length === 1) {
+      return Array.from({length: count}, () => clean[0].clone());
+    }
+    if (signedArea2D(clean) < 0) clean.reverse();
+    const n = clean.length;
+    const cumLen: number[] = [0];
+    let totalLen = 0;
+    for (let i = 0; i < n; i++) {
+      const a = clean[i];
+      const b = clean[(i + 1) % n];
+      totalLen += Math.hypot(b.x - a.x, b.y - a.y);
+      cumLen.push(totalLen);
+    }
+    if (totalLen <= 1e-8) {
+      return Array.from({length: count}, () => clean[0].clone());
+    }
+    const out: Vec2Like[] = [];
+    let segIdx = 0;
+    for (let j = 0; j < count; j++) {
+      const target = (j / count) * totalLen;
+      while (segIdx < n - 1 && cumLen[segIdx + 1] < target) {
+        segIdx++;
+      }
+      const s0 = cumLen[segIdx];
+      const s1 = cumLen[segIdx + 1];
+      const t = s1 > s0 ? (target - s0) / (s1 - s0) : 0;
+      const a = clean[segIdx];
+      const b = clean[(segIdx + 1) % n];
+      out.push(new Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+    }
+    return out;
+  }
+
+  // Finds cyclic shift k minimizing squared normalized distance to `prevRing`.
+  function alignRingSeam(
+    prevRing: Vec2Like[],
+    currRing: Vec2Like[],
+  ): Vec2Like[] {
+    const m = prevRing.length;
+    if (m <= 1 || currRing.length !== m) return currRing.slice();
+    const normRing = (r: Vec2Like[]): Vec2Like[] => {
+      let cx = 0;
+      let cy = 0;
+      for (const p of r) {
+        cx += p.x;
+        cy += p.y;
+      }
+      cx /= m;
+      cy /= m;
+      let sq = 0;
+      for (const p of r) {
+        sq += (p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy);
+      }
+      const inv = 1 / Math.max(1e-6, Math.sqrt(sq / m));
+      return r.map((p) => new Vector2((p.x - cx) * inv, (p.y - cy) * inv));
+    };
+    const pNorm = normRing(prevRing);
+    const qNorm = normRing(currRing);
+    let bestK = 0;
+    let bestCost = Infinity;
+    for (let k = 0; k < m; k++) {
+      let cost = 0;
+      for (let j = 0; j < m; j++) {
+        const a = pNorm[j];
+        const b = qNorm[(j + k) % m];
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        cost += dx * dx + dy * dy;
+      }
+      if (cost < bestCost - 1e-9) {
+        bestCost = cost;
+        bestK = k;
+      }
+    }
+    if (bestK === 0) return currRing.slice();
+    const shifted: Vec2Like[] = [];
+    for (let j = 0; j < m; j++) {
+      shifted.push(currRing[(j + bestK) % m]);
+    }
+    return shifted;
+  }
+
+  function catmullRom1D(
+    p0: number,
+    p1: number,
+    p2: number,
+    p3: number,
+    t: number,
+  ): number {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const v =
+      0.5 *
+      (2 * p1 +
+        (-p0 + p2) * t +
+        (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+        (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+    const lo = Math.min(p0, p1, p2, p3);
+    const hi = Math.max(p0, p1, p2, p3);
+    const pad = (hi - lo) * 0.15;
+    return Math.max(lo - pad, Math.min(hi + pad, v));
+  }
+
+  function buildLoftBufferGeometry(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    targetGeo: any,
+    profilesInput: unknown,
+    options: LoftGeometryOptions = {},
+  ): void {
+    const rawList = Array.isArray(profilesInput)
+      ? profilesInput
+      : Array.isArray(options.profiles)
+        ? options.profiles
+        : [];
+    const curveSegments = Math.max(
+      1,
+      Math.min(64, Math.floor(num(options.curveSegments, 12))),
+    );
+    const M = Math.max(
+      8,
+      Math.min(256, Math.floor(num(options.profileSegments, 48))),
+    );
+    const axis =
+      options.axis === 'x' || options.axis === 'z' ? options.axis : 'y';
+
+    interface ParsedStation {
+      baseRing: Vec2Like[];
+      offset?: number;
+      sx: number;
+      sy: number;
+      twist: number;
+      tx: number;
+      ty: number;
+    }
+
+    const extractContour = (rawShape: unknown): Vec2Like[] | null => {
+      if (rawShape instanceof Path) {
+        const ext = extractShapePoints(rawShape, curveSegments);
+        return ext.shape.length >= 3 ? ext.shape : null;
+      }
+      if (Array.isArray(rawShape) && rawShape.length >= 3) {
+        const pts: Vec2Like[] = [];
+        for (const item of rawShape) {
+          if (Array.isArray(item) && item.length >= 2) {
+            pts.push(new Vector2(num(item[0], 0), num(item[1], 0)));
+          } else if (item && typeof item === 'object') {
+            const o = item as {x?: unknown; y?: unknown};
+            pts.push(new Vector2(num(o.x, 0), num(o.y, 0)));
+          }
+        }
+        return pts.length >= 3 ? pts : null;
+      }
+      return null;
+    };
+
+    const parsed: ParsedStation[] = [];
+    for (let idx = 0; idx < rawList.length; idx++) {
+      const item = rawList[idx];
+      if (!item) continue;
+      const directPts = extractContour(item);
+      if (directPts) {
+        parsed.push({
+          baseRing: resampleRingByArcLength(directPts, M),
+          offset: Array.isArray(options.offsets)
+            ? options.offsets[idx]
+            : undefined,
+          sx: 1,
+          sy: 1,
+          twist: 0,
+          tx: 0,
+          ty: 0,
+        });
+        continue;
+      }
+      if (typeof item === 'object') {
+        const spec = item as LoftStationSpec;
+        const pts = extractContour(spec.shape);
+        if (!pts) continue;
+        const sc = spec.scale;
+        const sx = Array.isArray(sc)
+          ? Math.max(0, num(sc[0], 1))
+          : Math.max(0, num(sc, 1));
+        const sy = Array.isArray(sc)
+          ? Math.max(0, num(sc[1], sx))
+          : Math.max(0, num(sc, 1));
+        const rawOff =
+          spec.offset ??
+          (axis === 'y'
+            ? (spec.y ?? spec.z ?? spec.x)
+            : axis === 'z'
+              ? (spec.z ?? spec.y ?? spec.x)
+              : (spec.x ?? spec.y ?? spec.z)) ??
+          (Array.isArray(options.offsets) ? options.offsets[idx] : undefined);
+        parsed.push({
+          baseRing: resampleRingByArcLength(pts, M),
+          offset:
+            typeof rawOff === 'number' && Number.isFinite(rawOff)
+              ? rawOff
+              : undefined,
+          sx,
+          sy,
+          twist: num(spec.twist, 0),
+          tx: Array.isArray(spec.translate) ? num(spec.translate[0], 0) : 0,
+          ty: Array.isArray(spec.translate) ? num(spec.translate[1], 0) : 0,
+        });
+      }
+    }
+
+    const totalSpan = num(options.height ?? options.length, 1);
+    if (parsed.length === 0) {
+      const fallbackRing = resampleRingByArcLength(
+        extractShapePoints(makeCircleShape(0.25, 24), curveSegments).shape,
+        M,
+      );
+      parsed.push(
+        {baseRing: fallbackRing, sx: 1, sy: 1, twist: 0, tx: 0, ty: 0},
+        {baseRing: fallbackRing.slice(), sx: 1, sy: 1, twist: 0, tx: 0, ty: 0},
+      );
+    } else if (parsed.length === 1) {
+      const s0 = parsed[0];
+      parsed.push({
+        baseRing: s0.baseRing.slice(),
+        offset: s0.offset !== undefined ? s0.offset + totalSpan : undefined,
+        sx: s0.sx,
+        sy: s0.sy,
+        twist: s0.twist,
+        tx: s0.tx,
+        ty: s0.ty,
+      });
+    }
+
+    const K = parsed.length;
+    const hasExplicitOffsets = parsed.some((s) => s.offset !== undefined);
+    const safeSpan = Math.abs(totalSpan) > 1e-6 ? totalSpan : 1;
+    const originShift =
+      !hasExplicitOffsets && options.origin === 'center' ? -safeSpan * 0.5 : 0;
+    const stationOffsets: number[] = [];
+    for (let m = 0; m < K; m++) {
+      const fallbackOff = originShift + (m / Math.max(1, K - 1)) * safeSpan;
+      stationOffsets.push(
+        parsed[m].offset !== undefined ? parsed[m].offset! : fallbackOff,
+      );
+    }
+    if (!options.path && hasExplicitOffsets) {
+      const order = parsed
+        .map((st, i) => ({st, off: stationOffsets[i]}))
+        .sort((a, b) => a.off - b.off);
+      for (let m = 0; m < K; m++) {
+        parsed[m] = order[m].st;
+        stationOffsets[m] = order[m].off;
+      }
+    }
+    if (Math.abs(stationOffsets[K - 1] - stationOffsets[0]) < 1e-6) {
+      for (let m = 0; m < K; m++) {
+        stationOffsets[m] =
+          stationOffsets[0] + (m / Math.max(1, K - 1)) * Math.abs(safeSpan);
+      }
+    }
+
+    // Align base ring seams before applying per-station twist/scale/translate.
+    const stationRings: Vec2Like[][] = [];
+    let prevAlignedBase = parsed[0].baseRing;
+    for (let m = 0; m < K; m++) {
+      const st = parsed[m];
+      const alignedBase =
+        m === 0 ? st.baseRing : alignRingSeam(prevAlignedBase, st.baseRing);
+      prevAlignedBase = alignedBase;
+      const cp = Math.cos(st.twist);
+      const sp = Math.sin(st.twist);
+      stationRings.push(
+        alignedBase.map((p) => {
+          const sx = p.x * st.sx;
+          const sy = p.y * st.sy;
+          return new Vector2(
+            sx * cp - sy * sp + st.tx,
+            sx * sp + sy * cp + st.ty,
+          );
+        }),
+      );
+    }
+
+    const openTop = Boolean(options.openTop);
+    const isClosed =
+      Boolean(options.closed && options.path != null) && !openTop;
+    if (isClosed) {
+      stationRings.push(
+        alignRingSeam(stationRings[K - 1], stationRings[0]).map((p) =>
+          p.clone(),
+        ),
+      );
+      const stepSpan =
+        (stationOffsets[K - 1] - stationOffsets[0]) / Math.max(1, K - 1);
+      stationOffsets.push(stationOffsets[K - 1] + (stepSpan || 1));
+    }
+
+    const numSpans = stationRings.length - 1;
+    const isSmooth =
+      options.interpolation === 'smooth' && stationRings.length >= 3;
+    const totalSteps = Math.max(
+      numSpans,
+      Math.min(
+        512,
+        Math.floor(
+          num(
+            options.steps,
+            isSmooth || options.path
+              ? Math.max(24, numSpans * 12)
+              : Math.max(numSpans, 16),
+          ),
+        ),
+      ),
+    );
+    const segsPerSpan = Math.max(1, Math.round(totalSteps / numSpans));
+
+    // Sample interpolated 2D cross-section rings and axial heights.
+    const rings2D: Vec2Like[][] = [];
+    const ringOffsets: number[] = [];
+    const ringUs: number[] = [];
+    const nStations = stationRings.length;
+    const getRing = (idx: number): Vec2Like[] => {
+      if (isClosed) {
+        const w = ((idx % (nStations - 1)) + (nStations - 1)) % (nStations - 1);
+        return stationRings[w];
+      }
+      if (idx < 0) {
+        return stationRings[0].map(
+          (p, j) =>
+            new Vector2(
+              2 * p.x - stationRings[1][j].x,
+              2 * p.y - stationRings[1][j].y,
+            ),
+        );
+      }
+      if (idx >= nStations) {
+        const last = stationRings[nStations - 1];
+        const prev = stationRings[nStations - 2];
+        return last.map(
+          (p, j) => new Vector2(2 * p.x - prev[j].x, 2 * p.y - prev[j].y),
+        );
+      }
+      return stationRings[idx];
+    };
+
+    const G = numSpans * segsPerSpan;
+    for (let m = 0; m < numSpans; m++) {
+      const r0 = getRing(m - 1);
+      const r1 = getRing(m);
+      const r2 = getRing(m + 1);
+      const r3 = getRing(m + 2);
+      const h1 = stationOffsets[m];
+      const h2 = stationOffsets[m + 1];
+      const sLimit = m === numSpans - 1 ? segsPerSpan : segsPerSpan - 1;
+      for (let s = 0; s <= sLimit; s++) {
+        const t = s / segsPerSpan;
+        const g = m * segsPerSpan + s;
+        ringOffsets.push(h1 + (h2 - h1) * t);
+        ringUs.push(g / Math.max(1, G));
+        const ring: Vec2Like[] = [];
+        for (let j = 0; j < M; j++) {
+          if (isSmooth) {
+            ring.push(
+              new Vector2(
+                catmullRom1D(r0[j].x, r1[j].x, r2[j].x, r3[j].x, t),
+                catmullRom1D(r0[j].y, r1[j].y, r2[j].y, r3[j].y, t),
+              ),
+            );
+          } else {
+            ring.push(
+              new Vector2(
+                r1[j].x + (r2[j].x - r1[j].x) * t,
+                r1[j].y + (r2[j].y - r1[j].y) * t,
+              ),
+            );
+          }
+        }
+        rings2D.push(ring);
+      }
+    }
+
+    // Build 3D spine frames at each sampled ring index g in [0..G].
+    const frames3D: SpineFrame3D[] = [];
+    if (options.path != null) {
+      const bf = computeBishopFrames(options.path, G, isClosed, options.up);
+      for (let g = 0; g <= G; g++) {
+        const idx = Math.min(g, bf.pts.length - 1);
+        frames3D.push({
+          p: bf.pts[idx],
+          t: bf.tangents[idx],
+          rx: bf.normals[idx],
+          ry: bf.binormals[idx],
+          u: ringUs[g],
+        });
+      }
+    } else {
+      for (let g = 0; g <= G; g++) {
+        const h = ringOffsets[g];
+        if (axis === 'x') {
+          frames3D.push({
+            p: new Vector3(h, 0, 0),
+            t: new Vector3(1, 0, 0),
+            rx: new Vector3(0, 1, 0),
+            ry: new Vector3(0, 0, 1),
+            u: ringUs[g],
+          });
+        } else if (axis === 'z') {
+          frames3D.push({
+            p: new Vector3(0, 0, h),
+            t: new Vector3(0, 0, 1),
+            rx: new Vector3(1, 0, 0),
+            ry: new Vector3(0, 1, 0),
+            u: ringUs[g],
+          });
+        } else {
+          // Default axis 'y': rx = +X, ry = -Z so rx x ry = +Y = +t.
+          frames3D.push({
+            p: new Vector3(0, h, 0),
+            t: new Vector3(0, 1, 0),
+            rx: new Vector3(1, 0, 0),
+            ry: new Vector3(0, 0, -1),
+            u: ringUs[g],
+          });
+        }
+      }
+    }
+
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const capIdx = Array.from({length: M}, (_, i) => i);
+    const emitLoftCap = (ring: Vec2Like[], fr: SpineFrame3D, sgn: 1 | -1) => {
+      if (Math.abs(signedArea2D(ring)) <= 1e-10) return;
+      emitFramedCap(
+        ring,
+        triangulatePolygonIndices(capIdx, ring),
+        fr,
+        sgn,
+        positions,
+        normals,
+        uvs,
+        indices,
+      );
+    };
+
+    const wantCaps = options.caps !== false;
+    const wallThickness = Math.max(0, num(options.wallThickness, 0));
+
+    // 1. Outer side wall
+    emitFramedWallStrip(
+      rings2D,
+      frames3D,
+      false,
+      positions,
+      normals,
+      uvs,
+      indices,
+    );
+
+    if (!isClosed) {
+      if (openTop && wallThickness > 0) {
+        // Hollow vessel mode: bottom cap + top rim annulus + inner cavity wall + inner floor cap.
+        emitLoftCap(rings2D[0], frames3D[0], -1);
+
+        const makeInnerRing = (outerRing: Vec2Like[]): Vec2Like[] => {
+          const [minX, minY, spanX, spanY] = bounds2D(outerRing);
+          const cx = minX + spanX * 0.5;
+          const cy = minY + spanY * 0.5;
+          const sx = Math.max(0.25, 1 - (wallThickness * 2) / spanX);
+          const sy = Math.max(0.25, 1 - (wallThickness * 2) / spanY);
+          return outerRing.map(
+            (p) => new Vector2(cx + (p.x - cx) * sx, cy + (p.y - cy) * sy),
+          );
+        };
+
+        // Determine inner floor cut at uFloor in [0.05, 0.45].
+        const spanLen = Math.max(
+          1e-4,
+          Math.abs(ringOffsets[G] - ringOffsets[0]),
+        );
+        const uFloor = Math.max(0.05, Math.min(0.45, wallThickness / spanLen));
+        const gFloat = uFloor * G;
+        const gIdx = Math.min(G - 1, Math.floor(gFloat));
+        const gFrac = gFloat - gIdx;
+        const floorOuter = rings2D[gIdx].map(
+          (p, j) =>
+            new Vector2(
+              p.x + (rings2D[gIdx + 1][j].x - p.x) * gFrac,
+              p.y + (rings2D[gIdx + 1][j].y - p.y) * gFrac,
+            ),
+        );
+        const fA = frames3D[gIdx];
+        const fB = frames3D[gIdx + 1];
+        const floorFrame: SpineFrame3D = {
+          p: fA.p.clone().lerp(fB.p, gFrac),
+          t: fA.t.clone().lerp(fB.t, gFrac).normalize(),
+          rx: fA.rx.clone().lerp(fB.rx, gFrac).normalize(),
+          ry: fA.ry.clone().lerp(fB.ry, gFrac).normalize(),
+          u: fA.u + (fB.u - fA.u) * gFrac,
+        };
+
+        const innerRings: Vec2Like[][] = [makeInnerRing(floorOuter)];
+        const innerFrames: SpineFrame3D[] = [floorFrame];
+        for (let g = gIdx + 1; g <= G; g++) {
+          innerRings.push(makeInnerRing(rings2D[g]));
+          innerFrames.push(frames3D[g]);
+        }
+
+        // Top rim annulus at g = G connecting outer ring rings2D[G] to innerRings[last].
+        const topOut = rings2D[G];
+        const topIn = innerRings[innerRings.length - 1];
+        const topFr = frames3D[G];
+        for (let i = 0; i < M; i++) {
+          const j = (i + 1) % M;
+          const qb = positions.length / 3;
+          const u0 = i / M;
+          const u1 = (i + 1) / M;
+          for (const [v, uu, vv] of [
+            [topOut[i], u0, 1],
+            [topOut[j], u1, 1],
+            [topIn[j], u1, 0],
+            [topIn[i], u0, 0],
+          ] as const) {
+            const pt = evalFrame3D(topFr, v.x, v.y);
+            positions.push(pt[0], pt[1], pt[2]);
+            normals.push(topFr.t.x, topFr.t.y, topFr.t.z);
+            uvs.push(uu, vv);
+          }
+          indices.push(qb, qb + 1, qb + 2, qb, qb + 2, qb + 3);
+        }
+
+        // Inner cavity wall and upward-facing inner floor cap.
+        emitFramedWallStrip(
+          innerRings,
+          innerFrames,
+          true,
+          positions,
+          normals,
+          uvs,
+          indices,
+        );
+        emitLoftCap(innerRings[0], innerFrames[0], 1);
+      } else if (wantCaps) {
+        emitLoftCap(rings2D[0], frames3D[0], -1);
+        if (!openTop) {
+          emitLoftCap(rings2D[G], frames3D[G], 1);
+        }
+      }
+    }
+
+    setGeoBuffers(targetGeo, positions, normals, uvs, indices);
+  }
+
+  class LoftGeometry extends BufferGeometry {
+    constructor(
+      // tslint:disable-next-line:no-any Array of profiles/stations or LoftGeometryOptions.
+      profilesOrOptions?: any,
+      options: LoftGeometryOptions = {},
+    ) {
+      super();
+      if (Array.isArray(profilesOrOptions)) {
+        buildLoftBufferGeometry(
+          this,
+          profilesOrOptions,
+          options && typeof options === 'object' ? options : {},
+        );
+      } else if (profilesOrOptions && typeof profilesOrOptions === 'object') {
+        const opts = profilesOrOptions as LoftGeometryOptions;
+        buildLoftBufferGeometry(this, opts.profiles, opts);
+      } else {
+        buildLoftBufferGeometry(this, [], options);
+      }
     }
   }
 
@@ -3410,6 +4125,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     SweepGeometry,
     HelixCurve3,
     HelixGeometry,
+    LoftGeometry,
     TextGeometry,
     CSG,
     MAX_CSG_TRIANGLES: maxCsgTriangles,

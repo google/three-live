@@ -71,6 +71,7 @@ const {
   SweepGeometry,
   HelixCurve3,
   HelixGeometry,
+  LoftGeometry,
   TextGeometry,
   CSG,
 } = THREE;
@@ -1763,6 +1764,166 @@ function runCadRegressionTests(
         allFinite(degHelix) &&
         countBoundaryEdges(degHelix) === 0,
       'SweepGeometry and HelixGeometry sanitize NaN/Infinity/degenerate inputs into finite watertight geometry',
+    );
+
+    // Stage 2: LoftGeometry (linear, smooth Catmull-Rom, hollow vessel shelling, 3D path, closed loop, tip collapse)
+    const sqProfile = new Shape();
+    sqProfile.moveTo(-0.15, -0.15);
+    sqProfile.lineTo(0.15, -0.15);
+    sqProfile.lineTo(0.15, 0.15);
+    sqProfile.lineTo(-0.15, 0.15);
+    sqProfile.closePath();
+
+    const circProfile = new Shape();
+    const cSegs = 24;
+    for (let i = 0; i < cSegs; i++) {
+      const a = (i / cSegs) * Math.PI * 2 + 0.7; // Intentionally rotated start angle to test seam alignment
+      const x = 0.12 * Math.cos(a);
+      const y = 0.12 * Math.sin(a);
+      if (i === 0) circProfile.moveTo(x, y);
+      else circProfile.lineTo(x, y);
+    }
+    circProfile.closePath();
+
+    const sqToCircle = new LoftGeometry([sqProfile, circProfile], {
+      height: 0.4,
+      profileSegments: 48,
+      steps: 16,
+    });
+    assert(
+      allFinite(sqToCircle) &&
+        countBoundaryEdges(sqToCircle) === 0 &&
+        countNormalWindingMismatches(sqToCircle) === 0 &&
+        meshVolume(sqToCircle) > 0.01,
+      `LoftGeometry([square, circle]) aligns seams and builds a watertight 2-manifold (vol=${meshVolume(sqToCircle).toFixed(4)})`,
+    );
+
+    // Multi-station smooth Catmull-Rom loft with per-station scale, twist, and translate
+    const smoothLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, y: 0, scale: 1.0},
+        {
+          shape: circProfile,
+          y: 0.2,
+          scale: [1.3, 1.1],
+          twist: Math.PI / 6,
+          translate: [0.02, -0.01],
+        },
+        {shape: circProfile, y: 0.45, scale: 0.75, twist: Math.PI / 3},
+        {shape: sqProfile, y: 0.65, scale: 0.9, twist: Math.PI / 2},
+      ],
+      {
+        interpolation: 'smooth',
+        profileSegments: 40,
+        steps: 36,
+      },
+    );
+    assert(
+      allFinite(smoothLoft) &&
+        countBoundaryEdges(smoothLoft) === 0 &&
+        countNormalWindingMismatches(smoothLoft) === 0 &&
+        meshVolume(smoothLoft) > 0.02,
+      `LoftGeometry(4 stations, smooth Catmull-Rom, twist/scale/translate) is watertight with outward normals (vol=${meshVolume(smoothLoft).toFixed(4)})`,
+    );
+
+    // Hollow shelled vessel mode (openTop: true, wallThickness: 0.015) vs solid vase
+    const vaseStations = [
+      {shape: circProfile, y: 0, scale: 0.9},
+      {shape: circProfile, y: 0.14, scale: 1.35},
+      {shape: circProfile, y: 0.28, scale: 0.75},
+      {shape: circProfile, y: 0.36, scale: 0.95},
+    ];
+    const solidVase = new LoftGeometry(vaseStations, {
+      interpolation: 'smooth',
+      profileSegments: 36,
+      steps: 24,
+    });
+    const hollowVase = new LoftGeometry(vaseStations, {
+      interpolation: 'smooth',
+      profileSegments: 36,
+      steps: 24,
+      openTop: true,
+      wallThickness: 0.015,
+    });
+    const solidVol = meshVolume(solidVase);
+    const hollowVol = meshVolume(hollowVase);
+    assert(
+      allFinite(hollowVase) &&
+        countBoundaryEdges(hollowVase) === 0 &&
+        countNormalWindingMismatches(hollowVase) === 0 &&
+        hollowVol > 0.001 &&
+        hollowVol < solidVol * 0.65,
+      `LoftGeometry(openTop=true, wallThickness=0.015) produces a watertight shelled vessel (hollowVol=${hollowVol.toFixed(4)} < solidVol=${solidVol.toFixed(4)})`,
+    );
+
+    // 3D curved spine loft, X/Z axes, closed loop loft, and zero-scale tip collapse
+    const spineLoft = new LoftGeometry([sqProfile, circProfile], {
+      path: sCurve,
+      profileSegments: 32,
+      steps: 24,
+    });
+    const zAxisLoft = new LoftGeometry({
+      profiles: [sqProfile, circProfile],
+      axis: 'z',
+      length: 0.5,
+      origin: 'center',
+      profileSegments: 32,
+    });
+    const xAxisTipLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, x: 0, scale: 1},
+        {shape: circProfile, x: 0.4, scale: 0},
+      ],
+      {axis: 'x', profileSegments: 32, steps: 8},
+    );
+    const closedLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, scale: 0.5},
+        {shape: circProfile, scale: 0.6},
+        {shape: sqProfile, scale: 0.45},
+      ],
+      {
+        path: closedLoop,
+        closed: true,
+        profileSegments: 24,
+        steps: 36,
+      },
+    );
+    assert(
+      allFinite(spineLoft) &&
+        countBoundaryEdges(spineLoft) === 0 &&
+        countNormalWindingMismatches(spineLoft) === 0 &&
+        allFinite(zAxisLoft) &&
+        countBoundaryEdges(zAxisLoft) === 0 &&
+        countNormalWindingMismatches(zAxisLoft) === 0 &&
+        allFinite(xAxisTipLoft) &&
+        countBoundaryEdges(xAxisTipLoft) === 0 &&
+        countNormalWindingMismatches(xAxisTipLoft) === 0 &&
+        allFinite(closedLoft) &&
+        countBoundaryEdges(closedLoft) === 0 &&
+        countNormalWindingMismatches(closedLoft) === 0,
+      'LoftGeometry along 3D path, X/Z axes, closed loop, and zero-scale tip collapse are all watertight with outward normals',
+    );
+
+    // Hostile / fallback inputs (0 profiles, 1 profile, reversed offsets, huge wallThickness)
+    const emptyLoft = new LoftGeometry([], {height: NaN, steps: NaN});
+    const singleLoft = new LoftGeometry([sqProfile], {height: 0.3});
+    const revThickLoft = new LoftGeometry(
+      [
+        {shape: circProfile, y: 0.4},
+        {shape: sqProfile, y: 0},
+      ],
+      {openTop: true, wallThickness: 999, profileSegments: 24},
+    );
+    assert(
+      allFinite(emptyLoft) &&
+        countBoundaryEdges(emptyLoft) === 0 &&
+        allFinite(singleLoft) &&
+        countBoundaryEdges(singleLoft) === 0 &&
+        allFinite(revThickLoft) &&
+        countBoundaryEdges(revThickLoft) === 0 &&
+        countNormalWindingMismatches(revThickLoft) === 0,
+      'LoftGeometry handles 0/1 station fallbacks, reversed offsets, and clamped wallThickness cleanly',
     );
   }
 

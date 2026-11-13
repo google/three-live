@@ -26,6 +26,8 @@ import {
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
   type HelixGeometryOptions,
+  type LoftGeometryOptions,
+  type LoftStationSpec,
   type SweepGeometryOptions,
   type TextGeometryOptions,
 } from './plugins/cad';
@@ -42,6 +44,8 @@ export {
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
   type HelixGeometryOptions,
+  type LoftGeometryOptions,
+  type LoftStationSpec,
   type SweepGeometryOptions,
   type TextGeometryOptions,
 };
