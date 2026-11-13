@@ -189,6 +189,8 @@ export {
   MAX_SHAPE_POINTS,
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
+  type HelixGeometryOptions,
+  type SweepGeometryOptions,
   type TextGeometryOptions,
 } from './three-live/src/plugins/cad';
 export {

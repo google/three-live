@@ -40,6 +40,113 @@ export interface ExtrudeGeometryOptions {
   bevelSize?: number;
   bevelOffset?: number;
   bevelSegments?: number;
+  /** Optional 3D curve (or array of 3D points) along which to sweep the shape. */
+  // tslint:disable-next-line:no-any Accepts any Curve3 or 3D point list.
+  extrudePath?: any;
+  /** Total twist angle in radians when `extrudePath` is provided (default 0). */
+  twist?: number;
+  /** Cross-section scale factor or [startScale, endScale] taper along `extrudePath`. */
+  scale?:
+    | number
+    | [number, number]
+    | [number, number, number]
+    | ((u: number) => number | [number, number]);
+  /** Close the swept path into a continuous loop when `extrudePath` is set. */
+  closed?: boolean;
+  /** Emit planar start/end caps when `extrudePath` is open (default true). */
+  caps?: boolean;
+  /** Optional reference up vector for the Bishop frame when `extrudePath` is set. */
+  up?: {x: number; y: number; z: number} | [number, number, number];
+}
+
+/**
+ * Options for `THREE.SweepGeometry`.
+ *
+ * Sweeps a 2D `Shape` (including interior holes) or circular cross-section
+ * along a 3D `Curve3` (or array of 3D points) using rotation-minimizing Bishop
+ * parallel-transport frames.
+ */
+export interface SweepGeometryOptions {
+  // tslint:disable-next-line:no-any Optional Shape or Shape[] when using single-object constructor.
+  shape?: any;
+  // tslint:disable-next-line:no-any Optional Curve3 or 3D point array when using single-object constructor.
+  path?: any;
+  // tslint:disable-next-line:no-any Alias for `path`.
+  curve?: any;
+  /** Circular fallback radius when `shape` is omitted (default 0.1). */
+  radius?: number;
+  tubeRadius?: number;
+  /** Radial segments for circular fallback profile (default 12, clamped to [3, 64]). */
+  radialSegments?: number;
+  /** Subdivisions along the 3D path (default 64, clamped to [2, 256]). */
+  steps?: number;
+  tubularSegments?: number;
+  /** Subdivisions per 2D curve segment on the `Shape` contour (default 12). */
+  curveSegments?: number;
+  /** Close the swept loop (default: `Boolean(path?.closed)`). */
+  closed?: boolean;
+  /** Triangulate start/end planar caps when `closed` is false (default true). */
+  caps?: boolean;
+  /** Total progressive twist angle in radians from u=0 to u=1 (default 0). */
+  twist?: number;
+  /**
+   * Cross-section scale along the path: uniform number, `[start, end]` linear
+   * taper, `[start, mid, end]` quadratic taper, or `(u: number) => number | [sx, sy]`.
+   */
+  scale?:
+    | number
+    | [number, number]
+    | [number, number, number]
+    | ((u: number) => number | [number, number]);
+  /** Alias for `scale` taper (`number` = end scale from 1.0, or `[start, end]`). */
+  taper?: number | [number, number];
+  /** Optional initial reference up vector `[x, y, z]` or `Vector3` for the Bishop frame. */
+  up?: {x: number; y: number; z: number} | [number, number, number];
+}
+
+/**
+ * Options for `THREE.HelixCurve3` and `THREE.HelixGeometry`.
+ */
+export interface HelixGeometryOptions {
+  /** Base coil radius in meters (default 0.5). */
+  radius?: number;
+  /** Optional top coil radius for conical/tapered helices (defaults to `radius`). */
+  topRadius?: number;
+  /** Axial rise per full revolution in meters (default 0.25). */
+  pitch?: number;
+  /** Number of revolutions (default 4, clamped to [0.05, 64]). */
+  turns?: number;
+  /** Optional total axial height override (`turns * pitch` when omitted). */
+  height?: number;
+  /** Circular wire/tube radius when `shape` is not provided (default 0.05). */
+  tubeRadius?: number;
+  wireRadius?: number;
+  tube?: number;
+  // tslint:disable-next-line:no-any Optional custom 2D Shape cross-section.
+  shape?: any;
+  /** Coil handedness: `'right'` (default, CCW rising) or `'left'`. */
+  handedness?: 'right' | 'left';
+  /** Path subdivisions per revolution (default 24; total steps clamped to [4, 512]). */
+  segmentsPerTurn?: number;
+  /** Explicit total path subdivisions override (clamped to [4, 512]). */
+  steps?: number;
+  tubularSegments?: number;
+  /** Radial segments when using circular `tubeRadius` (default 12, clamped to [3, 64]). */
+  radialSegments?: number;
+  /** Subdivisions per 2D curve segment when `shape` is provided (default 12). */
+  curveSegments?: number;
+  /** Total additional twist in radians along the helix (default 0). */
+  twist?: number;
+  /** Cross-section scale or `[startScale, endScale]` wire taper along the helix. */
+  scale?:
+    | number
+    | [number, number]
+    | [number, number, number]
+    | ((u: number) => number | [number, number]);
+  /** Triangulate flat start/end caps (default true). */
+  caps?: boolean;
+  /** Vertical origin placement: `'center'` (default) or `'bottom'`. */
+  origin?: 'center' | 'bottom';
 }
 
 /**
@@ -99,6 +206,25 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   const Material = threeNs.Material;
   const MeshStandardMaterial = threeNs.MeshStandardMaterial;
   const Mesh = threeNs.Mesh;
+  // tslint:disable-next-line:no-any Dynamic Curve3 base class from threeNs.
+  const Curve3Base: any =
+    threeNs.Curve3 ||
+    threeNs.Curve ||
+    class {
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      getPoint(_t: number, out: any = new Vector3()): any {
+        return out;
+      }
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      getPoints(divisions = 5): any[] {
+        const d = Math.max(1, Math.min(512, Math.floor(Number(divisions) || 5)));
+        // tslint:disable-next-line:no-any Dynamic Vector3.
+        const pts: any[] = [];
+        for (let i = 0; i <= d; i++) pts.push(this.getPoint(i / d));
+        return pts;
+      }
+    };
+  const CatmullRomCurve3 = threeNs.CatmullRomCurve3;
 
   const maxCsgTriangles = 8192;
   const maxBspDepth = 2048;
@@ -754,7 +880,12 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       if (v.x > maxX) maxX = v.x;
       if (v.y > maxY) maxY = v.y;
     }
-    return [minX, minY, Math.max(1e-6, maxX - minX), Math.max(1e-6, maxY - minY)];
+    return [
+      minX,
+      minY,
+      Math.max(1e-6, maxX - minX),
+      Math.max(1e-6, maxY - minY),
+    ];
   }
 
   class ShapeGeometry extends BufferGeometry {
@@ -843,6 +974,653 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     return out;
   }
 
+  // Evaluates progressive cross-section [sx, sy] scale at normalized u in [0, 1].
+  function evalSweepScale(
+    scaleSpec: unknown,
+    taperSpec: unknown,
+    u: number,
+  ): [number, number] {
+    const raw = scaleSpec !== undefined ? scaleSpec : taperSpec;
+    if (raw == null) return [1, 1];
+    if (typeof raw === 'function') {
+      try {
+        const res = raw(u);
+        if (Array.isArray(res) && res.length >= 2) {
+          return [Math.max(0, num(res[0], 1)), Math.max(0, num(res[1], 1))];
+        }
+        const s = Math.max(0, num(res, 1));
+        return [s, s];
+      } catch {
+        return [1, 1];
+      }
+    }
+    if (Array.isArray(raw)) {
+      if (raw.length >= 3) {
+        const s0 = Math.max(0, num(raw[0], 1));
+        const s1 = Math.max(0, num(raw[1], 1));
+        const s2 = Math.max(0, num(raw[2], 1));
+        const mt = 1 - u;
+        const s = mt * mt * s0 + 2 * mt * u * s1 + u * u * s2;
+        return [s, s];
+      }
+      if (raw.length >= 2) {
+        const s0 = Math.max(0, num(raw[0], 1));
+        const s1 = Math.max(0, num(raw[1], 1));
+        const s = s0 + (s1 - s0) * u;
+        return [s, s];
+      }
+      if (raw.length === 1) {
+        const s = Math.max(0, num(raw[0], 1));
+        return [s, s];
+      }
+      return [1, 1];
+    }
+    if (scaleSpec === undefined && typeof taperSpec === 'number') {
+      const sEnd = Math.max(0, num(taperSpec, 1));
+      const s = 1 + (sEnd - 1) * u;
+      return [s, s];
+    }
+    const s = Math.max(0, num(raw, 1));
+    return [s, s];
+  }
+
+  function makeCircleShape(radius: number, segments: number): Shape {
+    const r = Math.max(1e-4, num(radius, 0.1));
+    const segs = Math.max(3, Math.min(64, Math.floor(num(segments, 12))));
+    const sh = new Shape();
+    for (let i = 0; i < segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      const x = r * Math.cos(a);
+      const y = r * Math.sin(a);
+      if (i === 0) sh.moveTo(x, y);
+      else sh.lineTo(x, y);
+    }
+    sh.closePath();
+    return sh;
+  }
+
+  // Rotation-minimizing Bishop (parallel transport) frames along a 3D curve or
+  // point list, with automatic holonomy untwisting when `closed` is true.
+  function computeBishopFrames(
+    // tslint:disable-next-line:no-any Curve3 or array of 3D points.
+    rawPath: any,
+    stepsInput: number,
+    closedInput?: boolean,
+    upInput?: unknown,
+  ): {
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    pts: any[];
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    tangents: any[];
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    normals: any[];
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    binormals: any[];
+    closed: boolean;
+  } {
+    const steps = Math.max(2, Math.min(512, Math.floor(num(stepsInput, 64))));
+    // tslint:disable-next-line:no-any Dynamic Curve3 instance.
+    let curveObj: any = rawPath;
+    if (Array.isArray(rawPath)) {
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      const vecPts: any[] = [];
+      for (const item of rawPath) {
+        if (Array.isArray(item) && item.length >= 2) {
+          vecPts.push(
+            new Vector3(num(item[0], 0), num(item[1], 0), num(item[2], 0)),
+          );
+        } else if (item && typeof item === 'object') {
+          vecPts.push(
+            new Vector3(num(item.x, 0), num(item.y, 0), num(item.z, 0)),
+          );
+        }
+      }
+      if (vecPts.length >= 2 && typeof CatmullRomCurve3 === 'function') {
+        curveObj = new CatmullRomCurve3(vecPts, Boolean(closedInput));
+      }
+    }
+
+    const isClosed = Boolean(
+      closedInput !== undefined ? closedInput : curveObj?.closed,
+    );
+    const sampleFn = curveObj?.getPointAt ?? curveObj?.getPoint;
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    const pts: any[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const p = new Vector3(0, 0, u);
+      if (typeof sampleFn === 'function') {
+        const res = sampleFn.call(curveObj, u, p);
+        const src = res && res !== p ? res : p;
+        p.set(num(src.x, 0), num(src.y, 0), num(src.z, 0));
+      }
+      pts.push(p);
+    }
+
+    let totalSpan = 0;
+    for (let i = 1; i < pts.length; i++) {
+      totalSpan += pts[i].distanceTo(pts[i - 1]);
+    }
+    if (totalSpan < 1e-6) {
+      const p0 = pts[0].clone();
+      for (let i = 0; i <= steps; i++) {
+        pts[i].set(p0.x, p0.y, p0.z + i / steps);
+      }
+    } else if (isClosed) {
+      if (pts[pts.length - 1].distanceTo(pts[0]) > 1e-4) {
+        pts.push(pts[0].clone());
+      } else {
+        pts[pts.length - 1].copy(pts[0]);
+      }
+    }
+
+    const nSegs = pts.length - 1;
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    const tangents: any[] = [];
+    for (let i = 0; i <= nSegs; i++) {
+      const closedEnd = isClosed && (i === 0 || i === nSegs);
+      const t = new Vector3().subVectors(
+        pts[closedEnd ? 1 : Math.min(nSegs, i + 1)],
+        pts[closedEnd ? nSegs - 1 : Math.max(0, i - 1)],
+      );
+      for (let d = 1; t.length() < 1e-8 && d <= nSegs; d++) {
+        t.subVectors(pts[Math.min(nSegs, i + d)], pts[Math.max(0, i - d)]);
+      }
+      tangents.push(
+        t.length() < 1e-8
+          ? i > 0
+            ? tangents[i - 1].clone()
+            : new Vector3(0, 0, 1)
+          : t.normalize(),
+      );
+    }
+    if (isClosed) tangents[nSegs].copy(tangents[0]);
+
+    // Initial Bishop frame (N0, B0) at i = 0 such that N0 x B0 = T0 and B0
+    // aligns with the projected reference `up` vector (+Y by default).
+    const t0 = tangents[0];
+    const up = new Vector3(0, 1, 0);
+    if (Array.isArray(upInput) && upInput.length >= 3) {
+      up.set(num(upInput[0], 0), num(upInput[1], 1), num(upInput[2], 0));
+    } else if (upInput && typeof upInput === 'object') {
+      const uo = upInput as {x?: unknown; y?: unknown; z?: unknown};
+      up.set(num(uo.x, 0), num(uo.y, 1), num(uo.z, 0));
+    }
+    if (up.length() < 1e-6) up.set(0, 1, 0);
+    else up.normalize();
+    if (Math.abs(up.dot(t0)) > 0.95) {
+      if (Math.abs(t0.y) < 0.9) up.set(0, 1, 0);
+      else if (Math.abs(t0.z) < 0.9) up.set(0, 0, 1);
+      else up.set(1, 0, 0);
+    }
+    const b0 = up.clone().addScaledVector(t0, -up.dot(t0)).normalize();
+    const n0 = new Vector3().crossVectors(b0, t0).normalize();
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    const normals: any[] = [n0];
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    const binormals: any[] = [b0];
+    const axis = new Vector3();
+    const cross = new Vector3();
+
+    for (let i = 1; i <= nSegs; i++) {
+      const prevT = tangents[i - 1];
+      const currT = tangents[i];
+      const prevB = binormals[i - 1];
+      axis.crossVectors(prevT, currT);
+      const s = axis.length();
+      const c = Math.max(-1, Math.min(1, prevT.dot(currT)));
+      const b = prevB.clone();
+      if (s > 1e-7) {
+        axis.multiplyScalar(1 / s);
+        cross.crossVectors(axis, prevB);
+        b.multiplyScalar(c)
+          .addScaledVector(cross, s)
+          .addScaledVector(axis, axis.dot(prevB) * (1 - c));
+      } else if (c < 0) {
+        b.multiplyScalar(-1);
+      }
+      b.addScaledVector(currT, -b.dot(currT)).normalize();
+      normals.push(new Vector3().crossVectors(b, currT).normalize());
+      binormals.push(b);
+    }
+
+    if (isClosed && nSegs > 0) {
+      const holonomy = Math.atan2(
+        binormals[nSegs].dot(normals[0]),
+        binormals[nSegs].dot(binormals[0]),
+      );
+      if (Math.abs(holonomy) > 1e-6) {
+        for (let i = 1; i <= nSegs; i++) {
+          const phi = -holonomy * (i / nSegs);
+          const cp = Math.cos(phi);
+          const sp = Math.sin(phi);
+          const ni = normals[i].clone();
+          const bi = binormals[i].clone();
+          normals[i].copy(ni).multiplyScalar(cp).addScaledVector(bi, -sp);
+          binormals[i].copy(ni).multiplyScalar(sp).addScaledVector(bi, cp);
+        }
+      }
+      normals[nSegs].copy(normals[0]);
+      binormals[nSegs].copy(binormals[0]);
+    }
+
+    return {pts, tangents, normals, binormals, closed: isClosed};
+  }
+
+  function buildSweepBufferGeometry(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry.
+    targetGeo: any,
+    shapesInput: unknown,
+    // tslint:disable-next-line:no-any Curve3 or array of 3D points.
+    pathInput: any,
+    options: SweepGeometryOptions = {},
+  ): void {
+    const rawShapes =
+      shapesInput !== undefined && shapesInput !== null
+        ? shapesInput
+        : options.shape;
+    const radFallback = num(options.radius ?? options.tubeRadius, 0.1);
+    const rSegsFallback = Math.max(
+      3,
+      Math.min(64, Math.floor(num(options.radialSegments, 12))),
+    );
+    const shapeList: Path[] = Array.isArray(rawShapes)
+      ? rawShapes.filter((s): s is Path => s instanceof Path)
+      : rawShapes instanceof Path
+        ? [rawShapes]
+        : [makeCircleShape(radFallback, rSegsFallback)];
+    if (shapeList.length === 0) {
+      shapeList.push(makeCircleShape(radFallback, rSegsFallback));
+    }
+
+    const curveSegments = Math.max(
+      1,
+      Math.min(64, Math.floor(num(options.curveSegments, 12))),
+    );
+    const steps = Math.max(
+      2,
+      Math.min(
+        512,
+        Math.floor(num(options.steps ?? options.tubularSegments, 64)),
+      ),
+    );
+    const twistTotal = num(options.twist, 0);
+    const wantCaps = options.caps !== false;
+
+    const frames = computeBishopFrames(
+      pathInput ?? options.path ?? options.curve,
+      steps,
+      options.closed,
+      options.up,
+    );
+    const nSegs = frames.pts.length - 1;
+    const isClosed = frames.closed;
+
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+
+    // Precompute twisted/scaled frame basis at each path station l in [0..nSegs]
+    const stationData: Array<{
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      p: any;
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      t: any;
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      rx: any;
+      // tslint:disable-next-line:no-any Dynamic Vector3.
+      ry: any;
+      sx: number;
+      sy: number;
+      u: number;
+    }> = [];
+    for (let l = 0; l <= nSegs; l++) {
+      const u = l / nSegs;
+      const phi = twistTotal * u;
+      const cp = Math.cos(phi);
+      const sp = Math.sin(phi);
+      const [sx, sy] = evalSweepScale(options.scale, options.taper, u);
+      const n = frames.normals[l];
+      const b = frames.binormals[l];
+      stationData.push({
+        p: frames.pts[l].clone(),
+        t: frames.tangents[l],
+        rx: n.clone().multiplyScalar(cp).addScaledVector(b, -sp),
+        ry: n.clone().multiplyScalar(sp).addScaledVector(b, cp),
+        sx,
+        sy,
+        u,
+      });
+    }
+    if (isClosed && nSegs > 0) {
+      const s0 = stationData[0];
+      const sEnd = stationData[nSegs];
+      sEnd.p.copy(s0.p);
+      if (
+        sEnd.rx.distanceTo(s0.rx) < 1e-5 &&
+        Math.abs(sEnd.sx - s0.sx) < 1e-5 &&
+        Math.abs(sEnd.sy - s0.sy) < 1e-5
+      ) {
+        sEnd.rx.copy(s0.rx);
+        sEnd.ry.copy(s0.ry);
+        sEnd.sx = s0.sx;
+        sEnd.sy = s0.sy;
+      }
+    }
+
+    const evalPoint3D = (
+      st: (typeof stationData)[number],
+      vx: number,
+      vy: number,
+    ): [number, number, number] => {
+      const x = vx * st.sx;
+      const y = vy * st.sy;
+      return [
+        st.p.x + x * st.rx.x + y * st.ry.x,
+        st.p.y + x * st.rx.y + y * st.ry.y,
+        st.p.z + x * st.rx.z + y * st.ry.z,
+      ];
+    };
+    const pushV = (
+      pt: [number, number, number],
+      u: number,
+      v: number,
+      nx: number,
+      ny: number,
+      nz: number,
+    ) => {
+      positions.push(pt[0], pt[1], pt[2]);
+      normals.push(nx, ny, nz);
+      uvs.push(u, v);
+    };
+
+    for (const shape of shapeList) {
+      const extracted = extractShapePoints(shape, curveSegments);
+      if (extracted.shape.length < 3) continue;
+
+      const outer = extracted.shape.slice();
+      if (signedArea2D(outer) < 0) outer.reverse();
+      const holes: Vec2Like[][] = [];
+      for (const h of extracted.holes) {
+        if (h.length < 3) continue;
+        const hc = h.slice();
+        if (signedArea2D(hc) > 0) hc.reverse();
+        holes.push(hc);
+      }
+
+      const {mergedIndices, allVertices} = mergeHolesIntoContour(outer, holes);
+      const capTris = triangulatePolygonIndices(mergedIndices, allVertices);
+      const [minX, minY, spanX, spanY] = bounds2D(allVertices);
+
+      // 1. Start cap (u = 0, normal = -T0) and End cap (u = 1, normal = +T_end)
+      if (!isClosed && wantCaps && capTris.length > 0) {
+        for (const [st, sgn] of [
+          [stationData[0], -1],
+          [stationData[nSegs], 1],
+        ] as const) {
+          if (st.sx * st.sy <= 1e-8) continue;
+          const base = positions.length / 3;
+          for (const v of allVertices) {
+            pushV(
+              evalPoint3D(st, v.x, v.y),
+              (v.x - minX) / spanX,
+              (v.y - minY) / spanY,
+              st.t.x * sgn,
+              st.t.y * sgn,
+              st.t.z * sgn,
+            );
+          }
+          for (const [a, b, c] of capTris) {
+            indices.push(
+              base + a,
+              base + (sgn < 0 ? c : b),
+              base + (sgn < 0 ? b : c),
+            );
+          }
+        }
+      }
+
+      // 2. Side walls along all stations for outer ring and each hole ring
+      const allRings: Vec2Like[][] = [outer, ...holes];
+      for (const ring of allRings) {
+        const rLen = ring.length;
+        for (let l = 0; l < nSegs; l++) {
+          const st0 = stationData[l];
+          const st1 = stationData[l + 1];
+          const collapse0 = st0.sx * st0.sy <= 1e-12;
+          const collapse1 = st1.sx * st1.sy <= 1e-12;
+          if (collapse0 && collapse1) continue;
+          for (let i = 0; i < rLen; i++) {
+            const j = (i + 1) % rLen;
+            const v0 = ring[i];
+            const v1 = ring[j];
+            const p00 = evalPoint3D(st0, v0.x, v0.y);
+            const p10 = evalPoint3D(st0, v1.x, v1.y);
+            const p11 = evalPoint3D(st1, v1.x, v1.y);
+            const p01 = evalPoint3D(st1, v0.x, v0.y);
+
+            const d1x = p11[0] - p00[0];
+            const d1y = p11[1] - p00[1];
+            const d1z = p11[2] - p00[2];
+            const d2x = p01[0] - p10[0];
+            const d2y = p01[1] - p10[1];
+            const d2z = p01[2] - p10[2];
+            let nx = d1y * d2z - d1z * d2y;
+            let ny = d1z * d2x - d1x * d2z;
+            let nz = d1x * d2y - d1y * d2x;
+            const nLen = Math.hypot(nx, ny, nz);
+            if (nLen > 1e-10) {
+              nx /= nLen;
+              ny /= nLen;
+              nz /= nLen;
+            } else {
+              const ex = v1.y - v0.y;
+              const ey = -(v1.x - v0.x);
+              const el = Math.hypot(ex, ey) || 1;
+              nx = (ex / el) * st0.rx.x + (ey / el) * st0.ry.x;
+              ny = (ex / el) * st0.rx.y + (ey / el) * st0.ry.y;
+              nz = (ex / el) * st0.rx.z + (ey / el) * st0.ry.z;
+            }
+
+            const quadBase = positions.length / 3;
+            const u0 = i / rLen;
+            const u1 = (i + 1) / rLen;
+            if (collapse1) {
+              pushV(p00, u0, st0.u, nx, ny, nz);
+              pushV(p10, u1, st0.u, nx, ny, nz);
+              pushV(p11, (u0 + u1) * 0.5, st1.u, nx, ny, nz);
+              indices.push(quadBase, quadBase + 1, quadBase + 2);
+            } else if (collapse0) {
+              pushV(p00, (u0 + u1) * 0.5, st0.u, nx, ny, nz);
+              pushV(p11, u1, st1.u, nx, ny, nz);
+              pushV(p01, u0, st1.u, nx, ny, nz);
+              indices.push(quadBase, quadBase + 1, quadBase + 2);
+            } else {
+              pushV(p00, u0, st0.u, nx, ny, nz);
+              pushV(p10, u1, st0.u, nx, ny, nz);
+              pushV(p11, u1, st1.u, nx, ny, nz);
+              pushV(p01, u0, st1.u, nx, ny, nz);
+              indices.push(
+                quadBase,
+                quadBase + 1,
+                quadBase + 2,
+                quadBase,
+                quadBase + 2,
+                quadBase + 3,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    setGeoBuffers(targetGeo, positions, normals, uvs, indices);
+  }
+
+  class SweepGeometry extends BufferGeometry {
+    constructor(
+      // tslint:disable-next-line:no-any Shape, Shape[], Curve3, or SweepGeometryOptions.
+      shapeOrOptions?: any,
+      // tslint:disable-next-line:no-any Curve3, 3D point list, or SweepGeometryOptions.
+      pathOrOptions?: any,
+      options: SweepGeometryOptions = {},
+    ) {
+      super();
+      const isShapeFirst =
+        shapeOrOptions instanceof Path ||
+        (Array.isArray(shapeOrOptions) && shapeOrOptions[0] instanceof Path);
+      if (isShapeFirst) {
+        buildSweepBufferGeometry(
+          this,
+          shapeOrOptions,
+          pathOrOptions,
+          options && typeof options === 'object' ? options : {},
+        );
+      } else if (
+        shapeOrOptions &&
+        typeof shapeOrOptions === 'object' &&
+        !Array.isArray(shapeOrOptions) &&
+        typeof shapeOrOptions.getPoint !== 'function' &&
+        typeof shapeOrOptions.getPointAt !== 'function'
+      ) {
+        // Single options-bag call: new THREE.SweepGeometry({ shape, path, ... })
+        const opts = shapeOrOptions as SweepGeometryOptions;
+        buildSweepBufferGeometry(
+          this,
+          opts.shape,
+          opts.path ?? opts.curve ?? pathOrOptions,
+          opts,
+        );
+      } else {
+        // Path-first call: new THREE.SweepGeometry(curve, { shape?, radius?, ... })
+        const opts =
+          pathOrOptions && typeof pathOrOptions === 'object'
+            ? (pathOrOptions as SweepGeometryOptions)
+            : options;
+        buildSweepBufferGeometry(this, opts?.shape, shapeOrOptions, opts);
+      }
+    }
+  }
+
+  class HelixCurve3 extends Curve3Base {
+    declare radius: number;
+    declare topRadius: number;
+    declare pitch: number;
+    declare turns: number;
+    declare height: number;
+    declare handedness: 'right' | 'left';
+    declare origin: 'center' | 'bottom';
+    declare closed: boolean;
+
+    constructor(
+      radiusOrOptions: number | HelixGeometryOptions = 0.5,
+      pitchInput = 0.25,
+      turnsInput = 4,
+      topRadiusInput?: number,
+      handednessInput: 'right' | 'left' = 'right',
+    ) {
+      super();
+      this.closed = false;
+      const o: HelixGeometryOptions =
+        radiusOrOptions && typeof radiusOrOptions === 'object'
+          ? radiusOrOptions
+          : {
+              radius: radiusOrOptions,
+              pitch: pitchInput,
+              turns: turnsInput,
+              topRadius: topRadiusInput,
+              handedness: handednessInput,
+            };
+      this.radius = Math.max(0, num(o.radius, 0.5));
+      this.topRadius = Math.max(0, num(o.topRadius, this.radius));
+      this.turns = Math.max(0.05, Math.min(64, num(o.turns, 4)));
+      this.pitch = num(
+        o.pitch,
+        o.height !== undefined ? num(o.height, 1) / this.turns : 0.25,
+      );
+      this.height = num(o.height, this.turns * this.pitch);
+      this.handedness = o.handedness === 'left' ? 'left' : 'right';
+      this.origin = o.origin === 'bottom' ? 'bottom' : 'center';
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector3.
+    getPoint(t: number, out: any = new Vector3()): any {
+      const u = Math.max(0, Math.min(1, num(t, 0)));
+      const r = this.radius + (this.topRadius - this.radius) * u;
+      const sign = this.handedness === 'left' ? -1 : 1;
+      const theta = sign * this.turns * Math.PI * 2 * u;
+      const y0 = this.origin === 'bottom' ? 0 : -this.height * 0.5;
+      return out.set(
+        r * Math.cos(theta),
+        y0 + this.height * u,
+        r * Math.sin(theta),
+      );
+    }
+  }
+
+  class HelixGeometry extends BufferGeometry {
+    constructor(
+      optionsOrRadius: HelixGeometryOptions | number = {},
+      pitchInput?: number,
+      turnsInput?: number,
+      tubeRadiusInput?: number,
+      extraOptions: HelixGeometryOptions = {},
+    ) {
+      super();
+      const opts: HelixGeometryOptions =
+        optionsOrRadius && typeof optionsOrRadius === 'object'
+          ? optionsOrRadius
+          : {
+              ...extraOptions,
+              radius: num(optionsOrRadius, 0.5),
+              ...(pitchInput !== undefined ? {pitch: pitchInput} : {}),
+              ...(turnsInput !== undefined ? {turns: turnsInput} : {}),
+              ...(tubeRadiusInput !== undefined
+                ? {tubeRadius: tubeRadiusInput}
+                : {}),
+            };
+      const helixCurve = new HelixCurve3(opts);
+      const segsPerTurn = Math.max(
+        4,
+        Math.min(128, Math.floor(num(opts.segmentsPerTurn, 24))),
+      );
+      const steps = Math.max(
+        4,
+        Math.min(
+          512,
+          Math.floor(
+            num(
+              opts.steps ?? opts.tubularSegments,
+              Math.round(helixCurve.turns * segsPerTurn),
+            ),
+          ),
+        ),
+      );
+      const wireRad = Math.max(
+        1e-4,
+        num(opts.tubeRadius ?? opts.wireRadius ?? opts.tube, 0.05),
+      );
+      const rSegs = Math.max(
+        3,
+        Math.min(64, Math.floor(num(opts.radialSegments, 12))),
+      );
+      const profile =
+        opts.shape instanceof Path ||
+        (Array.isArray(opts.shape) && opts.shape[0] instanceof Path)
+          ? opts.shape
+          : makeCircleShape(wireRad, rSegs);
+      buildSweepBufferGeometry(this, profile, helixCurve, {
+        steps,
+        curveSegments: opts.curveSegments,
+        twist: opts.twist,
+        scale: opts.scale,
+        caps: opts.caps !== false,
+        closed: false,
+      });
+    }
+  }
+
   class ExtrudeGeometry extends BufferGeometry {
     constructor(
       shapes: Shape | Shape[] = new Shape(),
@@ -850,6 +1628,18 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     ) {
       super();
       const shapeList = Array.isArray(shapes) ? shapes : [shapes];
+      if (options && options.extrudePath != null) {
+        buildSweepBufferGeometry(this, shapeList, options.extrudePath, {
+          steps: options.steps ?? 64,
+          curveSegments: options.curveSegments,
+          twist: options.twist,
+          scale: options.scale,
+          closed: options.closed,
+          caps: options.caps,
+          up: options.up,
+        });
+        return;
+      }
       const curveSegments = Math.max(
         1,
         Math.min(64, Math.floor(num(options.curveSegments, 12))),
@@ -2617,6 +3407,9 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     Shape,
     ShapeGeometry,
     ExtrudeGeometry,
+    SweepGeometry,
+    HelixCurve3,
+    HelixGeometry,
     TextGeometry,
     CSG,
     MAX_CSG_TRIANGLES: maxCsgTriangles,

@@ -34,8 +34,9 @@ Procedural `<script type="text/three">` + `InstancedMesh` +
 Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`,
 `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` |
 `three-live-studio.min.js` | `< 36 KB gz` Add-on: 2D `Shape`/`ExtrudeGeometry`,
-3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` |
-`three-live-cad.min.js` | `< 10 KB gz` Domain Kit (a la carte): Parametric
+3D `SweepGeometry`/`HelixGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font
+`TextGeometry` | `<three-live>` |
+`three-live-cad.min.js` | `< 14 KB gz` Domain Kit (a la carte): Parametric
 `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow
 blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js`
 | `< 18 KB gz` Domain Kit (a la carte): Parametric `THREE.Architecture` walls,
@@ -65,7 +66,7 @@ opt-in WebGPU `GPURenderBundle` scene accelerator
 `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) |
 `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` Full 3D viewer +
 studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain
-kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 224 KB gz` 6DoF
+kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 227 KB gz` 6DoF
 WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) +
 `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 90 KB gz` Add-on:
 hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator,
@@ -77,7 +78,7 @@ audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` Add-on: opt-in WebGPU
 Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` |
 `xr-live-webgpu.min.js` | `< 12 KB gz` Full Spatial Computing + Depth Physics +
 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` |
-`xr-live-full.min.js` | `< 333 KB gz`
+`xr-live-full.min.js` | `< 336 KB gz`
 
 ---
 

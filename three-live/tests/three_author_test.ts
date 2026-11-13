@@ -63,7 +63,17 @@ import THREE, {
 
 registerPlugin(cadPlugin);
 registerPlugin(lodPlugin);
-const {Path, Shape, ShapeGeometry, ExtrudeGeometry, TextGeometry, CSG} = THREE;
+const {
+  Path,
+  Shape,
+  ShapeGeometry,
+  ExtrudeGeometry,
+  SweepGeometry,
+  HelixCurve3,
+  HelixGeometry,
+  TextGeometry,
+  CSG,
+} = THREE;
 
 let passed = 0;
 let failed = 0;
@@ -342,7 +352,14 @@ function runThreeAuthorTests() {
       'Native CapsuleGeometry, RingGeometry, and CircleGeometry generate true hemispherical caps, annulus holes, and planar disks',
     );
 
-    const spotLight = new THREE.SpotLight(0xffaa00, 2.5, 15, Math.PI / 4, 0.5, 2);
+    const spotLight = new THREE.SpotLight(
+      0xffaa00,
+      2.5,
+      15,
+      Math.PI / 4,
+      0.5,
+      2,
+    );
     spotLight.position.set(0, 5, 5);
     spotLight.lookAt(1, 0, -2);
     assert(
@@ -364,12 +381,17 @@ function runThreeAuthorTests() {
       new THREE.Float32BufferAttribute([0, 0, 0, 1, 1, 1, -1, 2, 0], 3),
     );
 
-    const edgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1), 15);
+    const edgesGeo = new THREE.EdgesGeometry(
+      new THREE.BoxGeometry(1, 1, 1),
+      15,
+    );
     const lineSegs = new THREE.LineSegments(
       edgesGeo,
       new THREE.LineBasicMaterial({color: 0xffffff}),
     );
-    const wireGeo = new THREE.WireframeGeometry(new THREE.TetrahedronGeometry(1, 0));
+    const wireGeo = new THREE.WireframeGeometry(
+      new THREE.TetrahedronGeometry(1, 0),
+    );
     const wireLine = new THREE.LineSegments(
       wireGeo,
       new THREE.LineDashedMaterial({color: 0xff0088}),
@@ -1022,6 +1044,40 @@ function allFinite(geo: TestGeometry): boolean {
   return arr.length > 0;
 }
 
+/**
+ * Counts unmatched directed half-edges (boundary or non-manifold edges) by
+ * welding vertices on a 1e-5 spatial grid. A closed 2-manifold has 0.
+ */
+function countBoundaryEdges(geo: TestGeometry): number {
+  const q = (x: number) => Math.round(x * 1e5);
+  const vKey = (i: number) => {
+    const p = vtx(geo, i);
+    return `${q(p[0])},${q(p[1])},${q(p[2])}`;
+  };
+  const directed = new Map<string, number>();
+  forEachTri(geo, (a, b, c) => {
+    const ka = vKey(a);
+    const kb = vKey(b);
+    const kc = vKey(c);
+    if (ka === kb || kb === kc || kc === ka) return;
+    for (const [u, v] of [
+      [ka, kb],
+      [kb, kc],
+      [kc, ka],
+    ]) {
+      const k = `${u}->${v}`;
+      directed.set(k, (directed.get(k) ?? 0) + 1);
+    }
+  });
+  let boundary = 0;
+  for (const [edge, count] of directed.entries()) {
+    const [u, v] = edge.split('->');
+    const revCount = directed.get(`${v}->${u}`) ?? 0;
+    if (count !== revCount) boundary += Math.abs(count - revCount);
+  }
+  return boundary;
+}
+
 /** Asserts a ShapeGeometry covers exactly `expected` area with no flipped tris. */
 function assertShapeArea(
   geo: TestGeometry,
@@ -1485,8 +1541,228 @@ function runCadRegressionTests(
     sq.closePath();
     assert(
       new fresh.ShapeGeometry(sq).index.count === 3 &&
+        typeof fresh.SweepGeometry === 'function' &&
+        typeof fresh.HelixCurve3 === 'function' &&
+        typeof fresh.HelixGeometry === 'function' &&
         typeof fresh.CSG.subtract === 'function',
       'installCadExtension is self-contained (toString round-trip works)',
+    );
+  }
+
+  // Stage 1: SweepGeometry, HelixCurve3, HelixGeometry, and ExtrudeGeometry.extrudePath
+  {
+    const rect = new Shape();
+    rect.moveTo(-0.1, -0.06);
+    rect.lineTo(0.1, -0.06);
+    rect.lineTo(0.1, 0.06);
+    rect.lineTo(-0.1, 0.06);
+    rect.closePath();
+
+    const sCurve = new THREE.CatmullRomCurve3([
+      new Vector3(0, 0, 0),
+      new Vector3(0.4, 0.4, 0.6),
+      new Vector3(-0.2, 0.9, 1.3),
+      new Vector3(0.2, 1.4, 2.0),
+    ]);
+    const sweptRect = new SweepGeometry(rect, sCurve, {steps: 32});
+    assert(
+      allFinite(sweptRect) &&
+        countBoundaryEdges(sweptRect) === 0 &&
+        countNormalWindingMismatches(sweptRect) === 0 &&
+        meshVolume(sweptRect) > 0.02,
+      `SweepGeometry(rect, sCurve) is a watertight 2-manifold with outward normals (vol=${meshVolume(sweptRect).toFixed(4)})`,
+    );
+
+    // Holed cross-section (hollow square duct with circular bore) swept along 3D curve
+    const duct = new Shape();
+    duct.moveTo(-0.12, -0.12);
+    duct.lineTo(0.12, -0.12);
+    duct.lineTo(0.12, 0.12);
+    duct.lineTo(-0.12, 0.12);
+    duct.closePath();
+    const ductHole = new Path();
+    ductHole.absarc(0, 0, 0.06, 0, Math.PI * 2, true);
+    duct.holes.push(ductHole);
+
+    const sweptDuct = new SweepGeometry(duct, sCurve, {
+      steps: 24,
+      curveSegments: 12,
+      twist: Math.PI * 0.5,
+      scale: [1.0, 0.7],
+    });
+    assert(
+      allFinite(sweptDuct) &&
+        countBoundaryEdges(sweptDuct) === 0 &&
+        countNormalWindingMismatches(sweptDuct) === 0 &&
+        meshVolume(sweptDuct) > 0.02,
+      `SweepGeometry(holed duct, twist, taper) is watertight with outward normals (vol=${meshVolume(sweptDuct).toFixed(4)})`,
+    );
+
+    // Closed-loop 3D curve with out-of-plane points (exercises Bishop holonomy untwisting)
+    const closedLoop = new THREE.CatmullRomCurve3(
+      [
+        new Vector3(1, 0, 0),
+        new Vector3(0, 0.35, 1),
+        new Vector3(-1, 0, 0),
+        new Vector3(0, -0.35, -1),
+      ],
+      true,
+    );
+    const closedSweep = new SweepGeometry(rect, closedLoop, {
+      steps: 48,
+      closed: true,
+    });
+    const closedSweepFullTwist = new SweepGeometry(rect, closedLoop, {
+      steps: 48,
+      closed: true,
+      twist: Math.PI * 2,
+    });
+    assert(
+      allFinite(closedSweep) &&
+        countBoundaryEdges(closedSweep) === 0 &&
+        countNormalWindingMismatches(closedSweep) === 0 &&
+        countBoundaryEdges(closedSweepFullTwist) === 0 &&
+        meshVolume(closedSweep) > 0.1,
+      `SweepGeometry(closed=true) untwists Bishop holonomy with 0 seam boundary edges (vol=${meshVolume(closedSweep).toFixed(4)})`,
+    );
+
+    // Zero-tip taper [1, 0] and [0, 1] must close into a watertight tip without degenerate triangles
+    const hornSweep = new SweepGeometry(
+      rect,
+      [
+        [0, 0, 0],
+        [0, 0.5, 0.5],
+        [0, 1.2, 0.2],
+      ],
+      {steps: 16, scale: [1, 0]},
+    );
+    const revHornSweep = new SweepGeometry(
+      rect,
+      [
+        [0, 0, 0],
+        [0, 0.5, 0.5],
+        [0, 1.2, 0.2],
+      ],
+      {steps: 16, scale: [0, 1]},
+    );
+    assert(
+      allFinite(hornSweep) &&
+        countBoundaryEdges(hornSweep) === 0 &&
+        countNormalWindingMismatches(hornSweep) === 0 &&
+        allFinite(revHornSweep) &&
+        countBoundaryEdges(revHornSweep) === 0 &&
+        countNormalWindingMismatches(revHornSweep) === 0,
+      'SweepGeometry with scale=[1,0] and scale=[0,1] closes zero-scale tips into watertight 2-manifolds',
+    );
+
+    // Constructor overloads: single options bag & path-first circular fallback + quadratic/fn scale
+    const optBagSweep = new SweepGeometry({
+      path: sCurve,
+      radius: 0.08,
+      radialSegments: 10,
+      steps: 20,
+      scale: [1, 1.4, 0.8],
+    });
+    const pathFirstSweep = new SweepGeometry(sCurve, {
+      radius: 0.08,
+      radialSegments: 10,
+      steps: 20,
+      scale: (u: number) => [1 - 0.2 * u, 1 + 0.2 * u],
+    });
+    const extrudePathGeo = new ExtrudeGeometry(rect, {
+      extrudePath: sCurve,
+      steps: 24,
+      twist: 0.4,
+      scale: [1, 0.8],
+    });
+    assert(
+      allFinite(optBagSweep) &&
+        countBoundaryEdges(optBagSweep) === 0 &&
+        allFinite(pathFirstSweep) &&
+        countBoundaryEdges(pathFirstSweep) === 0 &&
+        allFinite(extrudePathGeo) &&
+        countBoundaryEdges(extrudePathGeo) === 0 &&
+        countNormalWindingMismatches(extrudePathGeo) === 0,
+      'SweepGeometry constructor overloads and ExtrudeGeometry.extrudePath produce watertight meshes',
+    );
+
+    // HelixCurve3 and HelixGeometry (cylindrical, conical, left-handed, custom Shape, positional args)
+    const hCurveR = new HelixCurve3({
+      radius: 0.4,
+      topRadius: 0.2,
+      pitch: 0.2,
+      turns: 3,
+      handedness: 'right',
+      origin: 'bottom',
+    });
+    const hCurveL = new HelixCurve3(0.4, 0.2, 3, 0.4, 'left');
+    const pStart = hCurveR.getPoint(0);
+    const pEnd = hCurveR.getPoint(1);
+    const pQuarterR = hCurveR.getPoint(1 / 12);
+    const pQuarterL = hCurveL.getPoint(1 / 12);
+    assert(
+      Math.abs(pStart.x - 0.4) < 1e-6 &&
+        Math.abs(pStart.y) < 1e-6 &&
+        Math.abs(Math.hypot(pEnd.x, pEnd.z) - 0.2) < 1e-6 &&
+        Math.abs(pEnd.y - 0.6) < 1e-6 &&
+        pQuarterR.z > 0 &&
+        pQuarterL.z < 0 &&
+        hCurveR.getPoints(16).length === 17,
+      'HelixCurve3 evaluates cylindrical/conical radius, pitch/height, origin, and right/left handedness',
+    );
+
+    const springGeo = new HelixGeometry({
+      radius: 0.35,
+      topRadius: 0.2,
+      pitch: 0.18,
+      turns: 3.5,
+      tubeRadius: 0.035,
+      radialSegments: 10,
+      segmentsPerTurn: 16,
+    });
+    const squareSpring = new HelixGeometry({
+      radius: 0.3,
+      height: 0.6,
+      turns: 2.5,
+      shape: rect,
+      handedness: 'left',
+      origin: 'bottom',
+    });
+    const posHelix = new HelixGeometry(0.3, 0.15, 2, 0.03);
+    assert(
+      allFinite(springGeo) &&
+        countBoundaryEdges(springGeo) === 0 &&
+        countNormalWindingMismatches(springGeo) === 0 &&
+        allFinite(squareSpring) &&
+        countBoundaryEdges(squareSpring) === 0 &&
+        countNormalWindingMismatches(squareSpring) === 0 &&
+        allFinite(posHelix) &&
+        countBoundaryEdges(posHelix) === 0 &&
+        meshVolume(springGeo) > 0.005,
+      `HelixGeometry (conical, custom Shape, left-handed, positional) produces watertight 2-manifolds (vol=${meshVolume(springGeo).toFixed(4)})`,
+    );
+
+    // Hostile / degenerate inputs (zero-length path, NaN options) produce finite geometry
+    const degSweep = new SweepGeometry(
+      rect,
+      [
+        [1, 2, 3],
+        [1, 2, 3],
+      ],
+      {steps: NaN, twist: Infinity, scale: NaN},
+    );
+    const degHelix = new HelixGeometry({
+      radius: NaN,
+      pitch: Infinity,
+      turns: -5,
+      tubeRadius: NaN,
+    });
+    assert(
+      allFinite(degSweep) &&
+        countBoundaryEdges(degSweep) === 0 &&
+        allFinite(degHelix) &&
+        countBoundaryEdges(degHelix) === 0,
+      'SweepGeometry and HelixGeometry sanitize NaN/Infinity/degenerate inputs into finite watertight geometry',
     );
   }
 
@@ -1681,13 +1957,22 @@ function runCadRegressionTests(
       const g = new THREE.BufferGeometry();
       g.setAttribute(
         'position',
-        new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3),
+        new THREE.BufferAttribute(
+          new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+          3,
+        ),
       );
       g.setAttribute(
         'normal',
-        new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]), 3),
+        new THREE.BufferAttribute(
+          new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+          3,
+        ),
       );
-      g.setAttribute('color', new THREE.BufferAttribute(colorArr as any, itemSize));
+      g.setAttribute(
+        'color',
+        new THREE.BufferAttribute(colorArr as any, itemSize),
+      );
       g.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
       return g;
     };
@@ -1699,18 +1984,29 @@ function runCadRegressionTests(
       3,
     );
     const gFloat4 = makeColoredTri(
-      new Float32Array([0.2, 0.4, 0.8, 1.0, 0.8, 0.4, 0.2, 0.5, 0.1, 0.9, 0.3, 1.0]),
+      new Float32Array([
+        0.2, 0.4, 0.8, 1.0, 0.8, 0.4, 0.2, 0.5, 0.1, 0.9, 0.3, 1.0,
+      ]),
       4,
     );
-    const gU8 = makeColoredTri(new Uint8Array([255, 0, 128, 0, 255, 64, 128, 128, 255]), 3);
+    const gU8 = makeColoredTri(
+      new Uint8Array([255, 0, 128, 0, 255, 64, 128, 128, 255]),
+      3,
+    );
     const gU16 = makeColoredTri(
       new Uint16Array([65535, 0, 0, 0, 65535, 0, 0, 0, 65535]),
       3,
     );
     // Custom tint without vertexColors: true MUST omit COLOR_0
-    const gTintedOmit = makeColoredTri(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), 3);
+    const gTintedOmit = makeColoredTri(
+      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      3,
+    );
     // Explicit vertexColors: false MUST omit COLOR_0
-    const gExplicitOff = makeColoredTri(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), 3);
+    const gExplicitOff = makeColoredTri(
+      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      3,
+    );
     // Custom tint WITH explicit vertexColors: true MUST export COLOR_0
     const gTintedExplicitOn = makeColoredTri(
       new Float32Array([1, 0.5, 0.25, 0.25, 1, 0.5, 0.5, 0.25, 1]),
@@ -1795,7 +2091,9 @@ function runCadRegressionTests(
       vcUsdzText.includes('color3f[] primvars:displayColor = [') &&
         vcUsdzText.includes('interpolation = "vertex"') &&
         vcUsdzText.includes('def Shader "DisplayColorReader"') &&
-        vcUsdzText.includes('uniform token info:id = "UsdPrimvarReader_float3"') &&
+        vcUsdzText.includes(
+          'uniform token info:id = "UsdPrimvarReader_float3"',
+        ) &&
         vcUsdzText.includes('string inputs:varname = "displayColor"') &&
         vcUsdzText.includes('DisplayColorReader.outputs:result>'),
       'scene.toUSDZ() emits vertex-interpolated primvars:displayColor and wires UsdPrimvarReader_float3 into UsdPreviewSurface.inputs:diffuseColor',
