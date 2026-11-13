@@ -78,12 +78,15 @@ export interface SweepGeometryOptions {
   tubeRadius?: number;
   /** Radial segments for circular fallback profile (default 12, clamped to [3, 64]). */
   radialSegments?: number;
-  /** Subdivisions along the 3D path (default 64, clamped to [2, 256]). */
+  /** Subdivisions along the 3D path (default 64, clamped to [2, 512]). */
   steps?: number;
   tubularSegments?: number;
   /** Subdivisions per 2D curve segment on the `Shape` contour (default 12). */
   curveSegments?: number;
-  /** Close the swept loop (default: `Boolean(path?.closed)`). */
+  /**
+   * Close the swept loop (default: `Boolean(path?.closed)`). Closed sweeps
+   * round `twist` to whole turns and weld the end cross-section to the start.
+   */
   closed?: boolean;
   /** Triangulate start/end planar caps when `closed` is false (default true). */
   caps?: boolean;
@@ -151,11 +154,17 @@ export interface HelixGeometryOptions {
 
 /**
  * Per-station profile descriptor for `THREE.LoftGeometry`.
+ *
+ * Only the outer contour of each station `Shape` is lofted; `shape.holes` are
+ * ignored (use `wallThickness` for hollow vessels or `CSG.subtract` for bores).
  */
 export interface LoftStationSpec {
   // tslint:disable-next-line:no-any 2D Shape, Path, or Vec2Like[] contour.
   shape: any;
-  /** Axial position along the loft axis or spine. */
+  /**
+   * Position along the loft axis (stations are sorted by it). With a `path`,
+   * offsets are mapped proportionally onto the spine from start to end.
+   */
   offset?: number;
   y?: number;
   z?: number;
@@ -183,21 +192,33 @@ export interface LoftGeometryOptions {
   axis?: 'x' | 'y' | 'z';
   // tslint:disable-next-line:no-any Optional 3D spine Curve3 or 3D point array.
   path?: any;
-  /** Axial subdivisions across the loft (default: 16 for linear, 32 for smooth/curved). */
+  /**
+   * Axial subdivisions across the loft (default: max(16, stations) for linear,
+   * max(24, 12 per span) for smooth/path lofts; total clamped to 512).
+   */
   steps?: number;
   /** Uniform arc-length vertex count per resampled profile ring (default 48, clamped to [8, 256]). */
   profileSegments?: number;
   /** Subdivisions per 2D curve segment before arc-length resampling (default 12). */
   curveSegments?: number;
-  /** Station blending mode: `'linear'` (default) or `'smooth'` (Catmull-Rom spline). */
-  interpolation?: 'linear' | 'smooth';
+  /**
+   * Station blending mode: `'linear'` (default) or `'smooth'` / `'catmull-rom'`
+   * (overshoot-clamped Catmull-Rom; needs >= 3 stations, else linear).
+   */
+  interpolation?: 'linear' | 'smooth' | 'catmull-rom';
   /** Triangulate start/end planar caps (default true). */
   caps?: boolean;
   /** Leave the top station open (or shell the vessel when `wallThickness > 0`). */
   openTop?: boolean;
-  /** Wall thickness in meters when `openTop` is true to create a watertight hollow vessel. */
+  /**
+   * Wall thickness in meters; only applies together with `openTop: true` to
+   * create a watertight hollow vessel (cavity, rim, and inner floor). The inner
+   * wall is the outer ring contracted about its bounding-box center, so the
+   * thickness is exact for centered circles/rectangles and approximate for
+   * other profiles; it never contracts below 25% of the outer size.
+   */
   wallThickness?: number;
-  /** Close the loft loop from the last station back to the first (default false). */
+  /** Close the loft loop back to the first station (requires `path`; default false). */
   closed?: boolean;
   /** Origin along the loft axis when explicit offsets are omitted: `'bottom'` (default) or `'center'`. */
   origin?: 'bottom' | 'center';
@@ -289,6 +310,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   const maxBspDepth = 2048;
   const maxTextGeometryChars = 128;
   const maxShapePoints = 4096;
+  const maxGeneratedVertices = 100000;
 
   // Numeric option coercion: missing, NaN, or non-finite values fall back to
   // the default instead of propagating NaN into positions or loop bounds.
@@ -1294,6 +1316,22 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     ];
   }
 
+  // A ring collapses to a single point (rather than a flat line) only when both
+  // its scaled extents vanish; flattened rings keep full quads.
+  function ringIsPoint(ring: Vec2Like[], fr: SpineFrame3D): boolean {
+    let ex = 0;
+    let ey = 0;
+    for (const p of ring) {
+      ex = Math.max(ex, Math.abs(p.x - ring[0].x));
+      ey = Math.max(ey, Math.abs(p.y - ring[0].y));
+    }
+    return Math.max(ex * (fr.sx ?? 1), ey * (fr.sy ?? 1)) <= 1e-9;
+  }
+
+  // Emits side walls between consecutive rings. Each quad owns its 4 vertices
+  // (so UVs and creases stay exact), but vertex normals are averaged across
+  // neighboring quads: always along the spine, and around the ring unless the
+  // profile has a crease sharper than ~50 degrees (e.g. square/hex corners).
   function emitFramedWallStrip(
     rList: Vec2Like[][],
     fList: SpineFrame3D[],
@@ -1302,90 +1340,114 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     normals: number[],
     uvs: number[],
     indices: number[],
+    wrap = false,
   ): void {
-    const pushV = (
-      pt: [number, number, number],
-      u: number,
-      v: number,
-      nx: number,
-      ny: number,
-      nz: number,
-    ) => {
-      positions.push(pt[0], pt[1], pt[2]);
-      normals.push(nx, ny, nz);
-      uvs.push(u, v);
-    };
     const flip = inward ? -1 : 1;
-    for (let g = 0; g < fList.length - 1; g++) {
-      const r0 = rList[Math.min(g, rList.length - 1)];
-      const r1 = rList[Math.min(g + 1, rList.length - 1)];
-      const f0 = fList[g];
-      const f1 = fList[g + 1];
-      const rLen = r0.length;
-      const c0 =
-        (f0.sx ?? 1) * (f0.sy ?? 1) <= 1e-12 ||
-        Math.abs(signedArea2D(r0)) <= 1e-10;
-      const c1 =
-        (f1.sx ?? 1) * (f1.sy ?? 1) <= 1e-12 ||
-        Math.abs(signedArea2D(r1)) <= 1e-10;
-      if (c0 && c1) continue;
+    const nStrips = fList.length - 1;
+    if (nStrips < 1) return;
+    const ringAt = (g: number) => rList[Math.min(g, rList.length - 1)];
+    const rLen = ringAt(0).length;
+    const pts: Array<Array<[number, number, number]>> = [];
+    const point: boolean[] = [];
+    for (let g = 0; g <= nStrips; g++) {
+      const r = ringAt(g);
+      pts.push(r.map((v) => evalFrame3D(fList[g], v.x, v.y)));
+      point.push(ringIsPoint(r, fList[g]));
+    }
+    // Pass 1: one unit face normal per quad (zero for degenerate quads).
+    const faceN: number[][][] = [];
+    for (let g = 0; g < nStrips; g++) {
+      const row: number[][] = [];
       for (let i = 0; i < rLen; i++) {
         const j = (i + 1) % rLen;
-        const v00 = r0[i];
-        const v10 = r0[j];
-        const v11 = r1[j];
-        const v01 = r1[i];
-        const p00 = evalFrame3D(f0, v00.x, v00.y);
-        const p10 = evalFrame3D(f0, v10.x, v10.y);
-        const p11 = evalFrame3D(f1, v11.x, v11.y);
-        const p01 = evalFrame3D(f1, v01.x, v01.y);
-        const d1x = p11[0] - p00[0];
-        const d1y = p11[1] - p00[1];
-        const d1z = p11[2] - p00[2];
-        const d2x = p01[0] - p10[0];
-        const d2y = p01[1] - p10[1];
-        const d2z = p01[2] - p10[2];
-        let nx = (d1y * d2z - d1z * d2y) * flip;
-        let ny = (d1z * d2x - d1x * d2z) * flip;
-        let nz = (d1x * d2y - d1y * d2x) * flip;
-        const nl = Math.hypot(nx, ny, nz);
-        if (nl > 1e-10) {
-          nx /= nl;
-          ny /= nl;
-          nz /= nl;
-        } else {
-          const ex = (v10.y - v00.y) * flip;
-          const ey = -(v10.x - v00.x) * flip;
-          const el = Math.hypot(ex, ey) || 1;
-          nx = (ex / el) * f0.rx.x + (ey / el) * f0.ry.x;
-          ny = (ex / el) * f0.rx.y + (ey / el) * f0.ry.y;
-          nz = (ex / el) * f0.rx.z + (ey / el) * f0.ry.z;
+        const p00 = pts[g][i];
+        const p10 = pts[g][j];
+        const p11 = pts[g + 1][j];
+        const p01 = pts[g + 1][i];
+        const d1 = [p11[0] - p00[0], p11[1] - p00[1], p11[2] - p00[2]];
+        const d2 = [p01[0] - p10[0], p01[1] - p10[1], p01[2] - p10[2]];
+        let n = [
+          (d1[1] * d2[2] - d1[2] * d2[1]) * flip,
+          (d1[2] * d2[0] - d1[0] * d2[2]) * flip,
+          (d1[0] * d2[1] - d1[1] * d2[0]) * flip,
+        ];
+        let l = Math.hypot(n[0], n[1], n[2]);
+        if (l <= 1e-12) {
+          // Degenerate quad: fall back to the in-plane outward edge normal.
+          const v0 = ringAt(g)[i];
+          const v1 = ringAt(g)[j];
+          const ex = (v1.y - v0.y) * flip;
+          const ey = -(v1.x - v0.x) * flip;
+          const f = fList[g];
+          n = [
+            ex * f.rx.x + ey * f.ry.x,
+            ex * f.rx.y + ey * f.ry.y,
+            ex * f.rx.z + ey * f.ry.z,
+          ];
+          l = Math.hypot(n[0], n[1], n[2]);
         }
-        const qb = positions.length / 3;
+        row.push(l > 1e-12 ? n.map((c) => c / l) : [0, 0, 0]);
+      }
+      faceN.push(row);
+    }
+    const dot = (a: number[], b: number[]) =>
+      a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    // Smoothed normal for corner (ring row `r`, column `col`) of quad (g, q).
+    const cornerN = (g: number, q: number, r: number, col: number) => {
+      const own = faceN[g][q];
+      const acc = [0, 0, 0];
+      const strips = [r - 1, r].map((s) =>
+        wrap ? (s + nStrips) % nStrips : s,
+      );
+      const other = col === q ? (q - 1 + rLen) % rLen : (q + 1) % rLen;
+      for (const s of strips) {
+        if (s < 0 || s >= nStrips) continue;
+        for (const c of [q, other]) {
+          const n = faceN[s][c];
+          // Blend only quads within ~50 deg around the ring (so octagons and
+          // finer stay round while hexagons/squares keep sharp creases) and
+          // within ~60 deg along the spine.
+          const lim = c === q ? (s === g ? -2 : 0.5) : 0.64;
+          if (dot(n, own) > lim) {
+            acc[0] += n[0];
+            acc[1] += n[1];
+            acc[2] += n[2];
+          }
+        }
+      }
+      const l = Math.hypot(acc[0], acc[1], acc[2]);
+      return l > 1e-12 ? acc.map((c) => c / l) : own;
+    };
+    for (let g = 0; g < nStrips; g++) {
+      const c0 = point[g];
+      const c1 = point[g + 1];
+      if (c0 && c1) continue;
+      const v0 = fList[g].u;
+      const v1 = fList[g + 1].u;
+      for (let i = 0; i < rLen; i++) {
+        const j = (i + 1) % rLen;
         const u0 = i / rLen;
         const u1 = (i + 1) / rLen;
-        const i1 = inward ? 2 : 1;
-        const i2 = inward ? 1 : 2;
-        if (c1) {
-          pushV(p00, u0, f0.u, nx, ny, nz);
-          pushV(p10, u1, f0.u, nx, ny, nz);
-          pushV(p11, (u0 + u1) * 0.5, f1.u, nx, ny, nz);
-          indices.push(qb, qb + i1, qb + i2);
-        } else if (c0) {
-          pushV(p00, (u0 + u1) * 0.5, f0.u, nx, ny, nz);
-          pushV(p11, u1, f1.u, nx, ny, nz);
-          pushV(p01, u0, f1.u, nx, ny, nz);
-          indices.push(qb, qb + i1, qb + i2);
+        const qb = positions.length / 3;
+        // [ring row, column, u, v] for the corners actually emitted.
+        const corners: Array<[number, number, number, number]> = c1
+          ? [[g, i, u0, v0], [g, j, u1, v0], [g + 1, j, (u0 + u1) / 2, v1]]
+          : c0
+            ? [[g, i, (u0 + u1) / 2, v0], [g + 1, j, u1, v1], [g + 1, i, u0, v1]]
+            : [[g, i, u0, v0], [g, j, u1, v0], [g + 1, j, u1, v1], [g + 1, i, u0, v1]];
+        for (const [r, col, uu, vv] of corners) {
+          const p = pts[r][col];
+          positions.push(p[0], p[1], p[2]);
+          const n = cornerN(g, i, r, col);
+          normals.push(n[0], n[1], n[2]);
+          uvs.push(uu, vv);
+        }
+        if (corners.length === 3) {
+          indices.push(qb, qb + (inward ? 2 : 1), qb + (inward ? 1 : 2));
+        } else if (inward) {
+          indices.push(qb, qb + 2, qb + 1, qb, qb + 3, qb + 2);
         } else {
-          pushV(p00, u0, f0.u, nx, ny, nz);
-          pushV(p10, u1, f0.u, nx, ny, nz);
-          pushV(p11, u1, f1.u, nx, ny, nz);
-          pushV(p01, u0, f1.u, nx, ny, nz);
-          if (inward) {
-            indices.push(qb, qb + 2, qb + 1, qb, qb + 3, qb + 2);
-          } else {
-            indices.push(qb, qb + 1, qb + 2, qb, qb + 2, qb + 3);
-          }
+          indices.push(qb, qb + 1, qb + 2, qb, qb + 2, qb + 3);
         }
       }
     }
@@ -1462,7 +1524,6 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         Math.floor(num(options.steps ?? options.tubularSegments, 64)),
       ),
     );
-    const twistTotal = num(options.twist, 0);
     const wantCaps = options.caps !== false;
 
     const frames = computeBishopFrames(
@@ -1473,6 +1534,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     );
     const nSegs = frames.pts.length - 1;
     const isClosed = frames.closed;
+    // A closed tube can only join seamlessly after whole turns of twist.
+    const twistTotal = isClosed
+      ? Math.round(num(options.twist, 0) / (Math.PI * 2)) * Math.PI * 2
+      : num(options.twist, 0);
 
     const positions: number[] = [];
     const normals: number[] = [];
@@ -1499,24 +1564,29 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       });
     }
     if (isClosed && nSegs > 0) {
+      // Weld the seam: the end station must coincide with the start station
+      // (scale tapers on closed loops snap back to the start scale).
       const s0 = stationData[0];
       const sEnd = stationData[nSegs];
       sEnd.p.copy(s0.p);
-      if (
-        sEnd.rx.distanceTo(s0.rx) < 1e-5 &&
-        Math.abs((sEnd.sx ?? 1) - (s0.sx ?? 1)) < 1e-5 &&
-        Math.abs((sEnd.sy ?? 1) - (s0.sy ?? 1)) < 1e-5
-      ) {
-        sEnd.rx.copy(s0.rx);
-        sEnd.ry.copy(s0.ry);
-        sEnd.sx = s0.sx;
-        sEnd.sy = s0.sy;
-      }
+      sEnd.rx.copy(s0.rx);
+      sEnd.ry.copy(s0.ry);
+      sEnd.sx = s0.sx;
+      sEnd.sy = s0.sy;
     }
 
-    for (const shape of shapeList) {
+    let vertexBudget = 0;
+    for (const shape of shapeList.slice(0, 64)) {
       const extracted = extractShapePoints(shape, curveSegments);
       if (extracted.shape.length < 3) continue;
+      let ringTotal = extracted.shape.length;
+      for (const h of extracted.holes) ringTotal += h.length;
+      vertexBudget += ringTotal * (nSegs * 4 + 2);
+      if (vertexBudget > maxGeneratedVertices) {
+        throw new RangeError(
+          `SecurityError: SweepGeometry would emit ~${vertexBudget} vertices (max ${maxGeneratedVertices}); reduce steps, curveSegments, or shape detail`,
+        );
+      }
 
       const outer = extracted.shape.slice();
       if (signedArea2D(outer) < 0) outer.reverse();
@@ -1563,6 +1633,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           normals,
           uvs,
           indices,
+          isClosed,
         );
       }
     }
@@ -1663,10 +1734,11 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const sign = this.handedness === 'left' ? -1 : 1;
       const theta = sign * this.turns * Math.PI * 2 * u;
       const y0 = this.origin === 'bottom' ? 0 : -this.height * 0.5;
+      // Right-handed (y-up): counter-clockwise when viewed from +Y as it rises.
       return out.set(
         r * Math.cos(theta),
         y0 + this.height * u,
-        r * Math.sin(theta),
+        -r * Math.sin(theta),
       );
     }
   }
@@ -1871,11 +1943,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     profilesInput: unknown,
     options: LoftGeometryOptions = {},
   ): void {
-    const rawList = Array.isArray(profilesInput)
-      ? profilesInput
-      : Array.isArray(options.profiles)
-        ? options.profiles
-        : [];
+    const rawList = (
+      Array.isArray(profilesInput)
+        ? profilesInput
+        : Array.isArray(options.profiles)
+          ? options.profiles
+          : []
+    ).slice(0, 256);
     const curveSegments = Math.max(
       1,
       Math.min(64, Math.floor(num(options.curveSegments, 12))),
@@ -1970,7 +2044,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       }
     }
 
-    const totalSpan = num(options.height ?? options.length, 1);
+    const totalSpan = Math.abs(num(options.height ?? options.length, 1));
     if (parsed.length === 0) {
       const fallbackRing = resampleRingByArcLength(
         extractShapePoints(makeCircleShape(0.25, 24), curveSegments).shape,
@@ -2005,7 +2079,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         parsed[m].offset !== undefined ? parsed[m].offset! : fallbackOff,
       );
     }
-    if (!options.path && hasExplicitOffsets) {
+    if (hasExplicitOffsets) {
       const order = parsed
         .map((st, i) => ({st, off: stationOffsets[i]}))
         .sort((a, b) => a.off - b.off);
@@ -2058,8 +2132,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     }
 
     const numSpans = stationRings.length - 1;
+    const interp = String(options.interpolation ?? 'linear').toLowerCase();
     const isSmooth =
-      options.interpolation === 'smooth' && stationRings.length >= 3;
+      (interp === 'smooth' ||
+        interp === 'catmull-rom' ||
+        interp === 'catmullrom' ||
+        interp === 'spline') &&
+      stationRings.length >= 3;
     const totalSteps = Math.max(
       numSpans,
       Math.min(
@@ -2074,7 +2153,14 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         ),
       ),
     );
-    const segsPerSpan = Math.max(1, Math.round(totalSteps / numSpans));
+    // Keep the total ring count G <= 512 (bounded geometry, exact frame lookups).
+    const segsPerSpan = Math.max(
+      1,
+      Math.min(
+        Math.round(totalSteps / numSpans),
+        Math.floor(512 / numSpans),
+      ),
+    );
 
     // Sample interpolated 2D cross-section rings and axial heights.
     const rings2D: Vec2Like[][] = [];
@@ -2082,9 +2168,14 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const ringUs: number[] = [];
     const nStations = stationRings.length;
     const getRing = (idx: number): Vec2Like[] => {
+      // In-range indices always use their own (seam-aligned) ring; closed
+      // loops wrap only for the Catmull-Rom neighbors outside that range.
+      if (idx >= 0 && idx < nStations) return stationRings[idx];
       if (isClosed) {
-        const w = ((idx % (nStations - 1)) + (nStations - 1)) % (nStations - 1);
-        return stationRings[w];
+        // Re-align the wrapped neighbor to the ring it sits next to.
+        return idx < 0
+          ? alignRingSeam(stationRings[0], stationRings[nStations - 2])
+          : alignRingSeam(stationRings[nStations - 1], stationRings[1]);
       }
       if (idx < 0) {
         return stationRings[0].map(
@@ -2106,6 +2197,14 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     };
 
     const G = numSpans * segsPerSpan;
+    const loftVerts =
+      G * M * 4 * (options.openTop && num(options.wallThickness, 0) > 0 ? 2 : 1) +
+      M * 4;
+    if (loftVerts > maxGeneratedVertices) {
+      throw new RangeError(
+        `SecurityError: LoftGeometry would emit ~${loftVerts} vertices (max ${maxGeneratedVertices}); reduce steps or profileSegments`,
+      );
+    }
     for (let m = 0; m < numSpans; m++) {
       const r0 = getRing(m - 1);
       const r1 = getRing(m);
@@ -2144,14 +2243,28 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     // Build 3D spine frames at each sampled ring index g in [0..G].
     const frames3D: SpineFrame3D[] = [];
     if (options.path != null) {
-      const bf = computeBishopFrames(options.path, G, isClosed, options.up);
+      // Station offsets map to normalized arc-length fractions along the spine.
+      const off0 = ringOffsets[0];
+      const offSpan = ringOffsets[G] - off0;
+      const bf = computeBishopFrames(
+        options.path,
+        Math.max(G, 128),
+        isClosed,
+        options.up,
+      );
+      const bfSegs = bf.pts.length - 1;
       for (let g = 0; g <= G; g++) {
-        const idx = Math.min(g, bf.pts.length - 1);
+        const u =
+          Math.abs(offSpan) > 1e-9 ? (ringOffsets[g] - off0) / offSpan : g / G;
+        const f = Math.max(0, Math.min(1, u)) * bfSegs;
+        const j = Math.min(bfSegs, Math.floor(f));
+        const j1 = Math.min(bfSegs, j + 1);
+        const k = f - j < 0.5 ? j : j1;
         frames3D.push({
-          p: bf.pts[idx],
-          t: bf.tangents[idx],
-          rx: bf.normals[idx],
-          ry: bf.binormals[idx],
+          p: bf.pts[j].clone().lerp(bf.pts[j1], f - j),
+          t: bf.tangents[k],
+          rx: bf.normals[k],
+          ry: bf.binormals[k],
           u: ringUs[g],
         });
       }
@@ -2218,6 +2331,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       normals,
       uvs,
       indices,
+      isClosed,
     );
 
     if (!isClosed) {

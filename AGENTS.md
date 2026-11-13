@@ -31,7 +31,7 @@ This file provides high-signal context, architectural invariants, and authoring 
 | `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 31 KB gz` |
 | Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 78 KB gz` |
 | Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js` | `< 36 KB gz` |
-| Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` | `three-live-cad.min.js` | `< 16 KB gz` |
+| Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` | `three-live-cad.min.js` | `< 17 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Architecture` walls, slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways | `<three-live>` | `three-live-kit-architecture.min.js` | `< 16 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Industrial` process pipes, valves, pumps, pallet racks, conveyors, ladders, catwalks, tanks | `<three-live>` | `three-live-kit-industrial.min.js` | `< 14 KB gz` |
@@ -43,13 +43,13 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 33 KB gz` |
 | Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 23 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
-| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 230 KB gz` |
+| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 231 KB gz` |
 | 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 90 KB gz` |
 | Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP | `<xr-live>` | `xr-live-sensors.min.js` | `< 10 KB gz` |
 | Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins | `<xr-live>` | `xr-live-spatial.min.js` | `< 63 KB gz` |
 | Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` |
 | Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` | `xr-live-webgpu.min.js` | `< 12 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 339 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 340 KB gz` |
 <!-- mdformat on -->
 
 ---
@@ -109,7 +109,8 @@ This file provides high-signal context, architectural invariants, and authoring 
         `new THREE.SweepGeometry(shape, pathOrOptions)`,
         `new THREE.HelixGeometry({ radius, height, turns, wireRadius, shape })`,
         `new THREE.LoftGeometry(stations, { steps, interpolation, path,
-        wallThickness })`.
+        openTop, wallThickness })` (`wallThickness` shells a hollow vessel only
+        with `openTop: true`; station `shape.holes` are ignored).
     -   **CSG Booleans:** `THREE.CSG.union(meshA, meshB)`,
         `THREE.CSG.subtract(meshA, meshB)`, `THREE.CSG.intersect(meshA, meshB)`
         (returns a new `THREE.Mesh` with normals; polygon soup, not guaranteed

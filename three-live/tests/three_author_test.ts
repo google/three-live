@@ -1701,15 +1701,28 @@ function runCadRegressionTests(
     const pEnd = hCurveR.getPoint(1);
     const pQuarterR = hCurveR.getPoint(1 / 12);
     const pQuarterL = hCurveL.getPoint(1 / 12);
+    // Right-handed helix: tangent x (next tangent) has a positive component
+    // along the rise axis (positive torsion), i.e. CCW seen from +Y.
+    const torsionSign = (c: {getPoint(t: number): Vector3}) => {
+      const a = c.getPoint(0.1);
+      const b = c.getPoint(0.11);
+      const d = c.getPoint(0.12);
+      const t1 = [b.x - a.x, b.y - a.y, b.z - a.z];
+      const t2 = [d.x - b.x, d.y - b.y, d.z - b.z];
+      // Horizontal turning direction about +Y: (t1 x t2).y
+      return t1[2] * t2[0] - t1[0] * t2[2];
+    };
     assert(
       Math.abs(pStart.x - 0.4) < 1e-6 &&
         Math.abs(pStart.y) < 1e-6 &&
         Math.abs(Math.hypot(pEnd.x, pEnd.z) - 0.2) < 1e-6 &&
         Math.abs(pEnd.y - 0.6) < 1e-6 &&
-        pQuarterR.z > 0 &&
-        pQuarterL.z < 0 &&
+        pQuarterR.z < 0 &&
+        pQuarterL.z > 0 &&
+        torsionSign(hCurveR) > 0 &&
+        torsionSign(hCurveL) < 0 &&
         hCurveR.getPoints(16).length === 17,
-      'HelixCurve3 evaluates cylindrical/conical radius, pitch/height, origin, and right/left handedness',
+      'HelixCurve3 evaluates cylindrical/conical radius, pitch/height, origin, and true right/left handedness (CCW rising seen from +Y)',
     );
 
     const springGeo = new HelixGeometry({
@@ -1924,6 +1937,148 @@ function runCadRegressionTests(
         countBoundaryEdges(revThickLoft) === 0 &&
         countNormalWindingMismatches(revThickLoft) === 0,
       'LoftGeometry handles 0/1 station fallbacks, reversed offsets, and clamped wallThickness cleanly',
+    );
+
+    // Audit regressions: seams, quotas, spine mapping, smooth normals.
+    const throwsRange = (fn: () => unknown) => {
+      try {
+        fn();
+        return false;
+      } catch (e) {
+        return e instanceof RangeError;
+      }
+    };
+    const loopPath = new THREE.CatmullRomCurve3(
+      [
+        new Vector3(1, 0, 0),
+        new Vector3(0, 0.3, 1),
+        new Vector3(-1, 0, 0),
+        new Vector3(0, -0.3, -1),
+      ],
+      true,
+    );
+    const oddTwistLoop = new SweepGeometry(rect, loopPath, {
+      steps: 48,
+      twist: 1,
+      scale: [1, 0.5],
+    });
+    const flatScaleSweep = new SweepGeometry(rect, [[0, 0, 0], [0, 0, 1]], {
+      steps: 8,
+      scale: (u: number) => [u, 1],
+    });
+    const rotCirc = new Shape();
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + 1.1;
+      if (i === 0) rotCirc.moveTo(0.2 * Math.cos(a), 0.2 * Math.sin(a));
+      else rotCirc.lineTo(0.2 * Math.cos(a), 0.2 * Math.sin(a));
+    }
+    rotCirc.closePath();
+    const seamLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, twist: 0},
+        {shape: rotCirc, twist: 0.8},
+        {shape: sqProfile, twist: 1.9},
+      ],
+      {path: loopPath, closed: true, interpolation: 'catmull-rom'},
+    );
+    const lineSpine = [
+      [0, 0, 0],
+      [0, 0, 2],
+    ];
+    const oneStepLoft = new LoftGeometry([sqProfile, circProfile], {
+      path: lineSpine,
+      steps: 1,
+    });
+    const offsetPathLoft = new LoftGeometry(
+      [
+        {shape: sqProfile, offset: 0},
+        {shape: circProfile, offset: 0.25},
+        {shape: sqProfile, offset: 1},
+      ],
+      {path: lineSpine, steps: 300},
+    );
+    oneStepLoft.computeBoundingBox();
+    offsetPathLoft.computeBoundingBox();
+    // The middle station (offset 0.25 of 1) sits at z = 0.5 on the 2 m spine,
+    // so the first span's 151 rings all land in z <= 0.5 (uniform u: only 76).
+    const ringZs = new Set<number>();
+    {
+      const pos = offsetPathLoft.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        if (pos.getZ(i) <= 0.5 + 1e-6) ringZs.add(Math.round(pos.getZ(i) * 1e6));
+      }
+    }
+    const midZ = ringZs.size > 140 ? 0.5 : NaN;
+    const negLoft = new LoftGeometry([sqProfile, circProfile], {height: -0.5});
+    assert(
+      countBoundaryEdges(oddTwistLoop) === 0 &&
+        countNormalWindingMismatches(oddTwistLoop) === 0 &&
+        countBoundaryEdges(flatScaleSweep) === 0 &&
+        countBoundaryEdges(seamLoft) === 0 &&
+        countNormalWindingMismatches(seamLoft) === 0 &&
+        Math.abs((oneStepLoft.boundingBox?.max.z ?? 0) - 2) < 1e-4 &&
+        Math.abs((offsetPathLoft.boundingBox?.max.z ?? 0) - 2) < 1e-4 &&
+        Math.abs(midZ - 0.5) < 0.02 &&
+        meshVolume(negLoft) > 0 &&
+        countNormalWindingMismatches(negLoft) === 0,
+      'Closed sweeps with odd twist/taper and closed seam-shifted lofts stay watertight; path lofts reach the spine end and honor station offsets; negative height stays outward',
+    );
+
+    const hugeSweepThrows = throwsRange(
+      () =>
+        new SweepGeometry({
+          path: loopPath,
+          steps: 512,
+          radius: 0.1,
+          radialSegments: 64,
+        }),
+    );
+    const hugeLoftThrows = throwsRange(
+      () =>
+        new LoftGeometry([sqProfile, circProfile, sqProfile], {
+          steps: 512,
+          profileSegments: 256,
+        }),
+    );
+    assert(
+      hugeSweepThrows && hugeLoftThrows,
+      'SweepGeometry and LoftGeometry reject inputs that would exceed the 100k vertex quota with a RangeError',
+    );
+
+    // Smooth shading: on a round tube, corner normals point radially, not per face.
+    const tube = new SweepGeometry({
+      path: lineSpine,
+      radius: 0.5,
+      radialSegments: 8,
+      steps: 4,
+      caps: false,
+    });
+    let maxRadialErr = 0;
+    {
+      const pos = tube.attributes.position;
+      const nrm = tube.attributes.normal;
+      for (let i = 0; i < pos.count; i++) {
+        const r = Math.hypot(pos.getX(i), pos.getY(i));
+        const err = Math.hypot(
+          nrm.getX(i) - pos.getX(i) / r,
+          nrm.getY(i) - pos.getY(i) / r,
+          nrm.getZ(i),
+        );
+        maxRadialErr = Math.max(maxRadialErr, err);
+      }
+    }
+    const boxSweep = new SweepGeometry(rect, lineSpine, {steps: 2, caps: false});
+    let boxCreaseOk = true;
+    {
+      const nrm = boxSweep.attributes.normal;
+      for (let i = 0; i < nrm.count; i++) {
+        const ax = [nrm.getX(i), nrm.getY(i), nrm.getZ(i)].map(Math.abs);
+        if (Math.max(...ax) < 0.999) boxCreaseOk = false;
+      }
+    }
+    assert(
+      maxRadialErr < 1e-5 && boxCreaseOk,
+      `Sweep walls are smooth-shaded around round profiles (err=${maxRadialErr.toExponential(1)}) while keeping sharp profile creases flat`,
     );
   }
 

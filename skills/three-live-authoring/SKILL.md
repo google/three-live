@@ -22,7 +22,9 @@ description: >-
         replacement) with built-in `EXT_meshopt_compression` decoding and
         `KHR_materials_variants` (`variant-name`)
     -   A procedural Three.js scene (including 2D `Shape`/`ExtrudeGeometry`,
-        `THREE.CSG` Booleans, 3D `TextGeometry`, optional a la carte domain kits
+        3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry` sweeps, coils, and
+        lofted vessels, `THREE.CSG` Booleans, 3D `TextGeometry`, optional a la
+        carte domain kits
         `THREE.Mechanical`, `THREE.Architecture`, `THREE.Industrial`,
         `THREE.Science`, and `THREE.Electronics` via `three-live-kits.min.js` or
         `three-live-kit-<domain>.min.js`, and `THREE.InstancedMesh` GPU
