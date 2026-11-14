@@ -311,7 +311,7 @@ and the `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close`
 closed-loop agent gym):
 
 ```bash
-# 1. Static + Spatial Linting (Structured JSON Diagnostics TL100-TL402 + Frustum/Grounding/Lighting)
+# 1. Static + Spatial + Accessibility Linting (Structured JSON Diagnostics TL100-TL606 + Frustum/Grounding/Lighting/A11y)
 three-live-cli validate scene.js --json
 
 # 2. Visual Verification (2x2 Orthographic + Camera Contact Sheet with 1m Grid & AABB Annotations)

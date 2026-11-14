@@ -96,7 +96,7 @@ enum Commands {
         format: Option<Format>,
     },
 
-    /// Validate Three.js script or HTML file and report compiler/schema/spatial diagnostics
+    /// Validate Three.js script or HTML file and report compiler/schema/spatial/a11y diagnostics
     Validate {
         /// Input JavaScript (.js) or HTML (.html) file path
         input: PathBuf,

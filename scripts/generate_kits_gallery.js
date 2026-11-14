@@ -229,6 +229,15 @@ function runChromeShard(chromeBin, tmpDir, shardIdx, shardSpecs) {
       return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
     }
 
+    const srgbLut = new Float32Array(256);
+    for (let c = 0; c < 256; c++) {
+      const s = c / 255;
+      srgbLut[c] = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    }
+    function pixelLum(r, g, b) {
+      return 0.2126 * srgbLut[r] + 0.7152 * srgbLut[g] + 0.0722 * srgbLut[b];
+    }
+
     const report = [];
     for (const spec of specs) {
       try {
@@ -281,13 +290,45 @@ function runChromeShard(chromeBin, tmpDir, shardIdx, shardSpecs) {
         outCtx.fillStyle = accentGrad;
         outCtx.fillRect(0, 0, W, H);
 
+        const bgData = outCtx.getImageData(0, 0, W, H).data;
+
         el.viewer?.render?.();
         outCtx.drawImage(el.canvas, 0, 0, W, H);
+        const compData = outCtx.getImageData(0, 0, W, H).data;
+
+        let fgLumSum = 0;
+        let bgLumSum = 0;
+        let opaqueCount = 0;
+        const fgLums = [];
+        for (let i = 0; i < fgData.length; i += 4) {
+          if (fgData[i + 3] > 160) {
+            const fl = pixelLum(compData[i], compData[i + 1], compData[i + 2]);
+            const bl = pixelLum(bgData[i], bgData[i + 1], bgData[i + 2]);
+            fgLumSum += fl;
+            bgLumSum += bl;
+            fgLums.push(fl);
+            opaqueCount++;
+          }
+        }
+        fgLums.sort((a, b) => a - b);
+        const meanFgLum = opaqueCount > 0 ? fgLumSum / opaqueCount : 0;
+        const meanBgLum = opaqueCount > 0 ? bgLumSum / opaqueCount : 0.012;
+        const p75FgLum = fgLums.length > 0 ? fgLums[Math.floor(fgLums.length * 0.75)] : 0;
+        const contrastRatio = +(
+          (Math.max(meanFgLum, meanBgLum) + 0.05) /
+          (Math.min(meanFgLum, meanBgLum) + 0.05)
+        ).toFixed(2);
+        const litContrastRatio = +(
+          (Math.max(p75FgLum, meanBgLum) + 0.05) /
+          (Math.min(p75FgLum, meanBgLum) + 0.05)
+        ).toFixed(2);
 
         const dataUrl = outCanvas.toDataURL('image/webp', 0.85);
         report.push({
           file: spec.file,
           fgCoverage: +((fgPixels / (W * H)) * 100).toFixed(1),
+          contrastRatio,
+          litContrastRatio,
           webpB64: dataUrl.split(',')[1],
         });
       } catch (err) {
@@ -438,6 +479,8 @@ async function renderThumbnails() {
     const report = shardReports.flat();
 
     let totalBytes = 0;
+    let minContrast = Infinity;
+    let minContrastFile = '';
     const problems = [];
     for (const entry of report) {
       if (entry.error) {
@@ -453,13 +496,26 @@ async function renderThumbnails() {
                 entry.fgCoverage}%)`,
         );
       }
+      if (entry.contrastRatio < minContrast) {
+        minContrast = entry.contrastRatio;
+        minContrastFile = entry.file;
+      }
+      if (entry.contrastRatio < 3.0) {
+        problems.push(
+            `${entry.file}: WCAG 2.1 AA non-text contrast failure (${
+                entry.contrastRatio}:1 mean, ${
+                entry.litContrastRatio}:1 p75 < 3.0:1)`,
+        );
+      }
     }
 
     console.log(
         `--> Rendered ${report.length} Retina WebP thumbnails in ${
             ((Date.now() - t0) / 1000).toFixed(1)}s — total ${
             (totalBytes / 1024).toFixed(1)} KB (avg ${
-            (totalBytes / 1024 / report.length).toFixed(1)} KB)`,
+            (totalBytes / 1024 / report.length)
+                .toFixed(1)} KB), min WCAG contrast ${minContrast}:1 (${
+            minContrastFile})`,
     );
 
     if (problems.length > 0) {
