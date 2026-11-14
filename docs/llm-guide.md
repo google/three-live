@@ -466,7 +466,7 @@ For scripts and RL harnesses, `three-live-cli gym play level.js` prints the
 (`{"actions": [...], "ticks": 30, "frame": "f.png"}`) and prints one observation
 (or `{"error": ...}`) per line, keeping state in memory.
 
-### Diagnostic Code Summary (`TL100–TL402`)
+### Diagnostic Code Summary (`TL100-TL606`)
 
 | Code    | Category | Meaning & Fix                        |
 | :------ | :------- | :----------------------------------- |
@@ -550,3 +550,20 @@ For scripts and RL harnesses, `three-live-cli gym play level.js` prints the
 :         :          : (`xr-hands`, `gemini-live`,          :
 :         :          : `plugins`, `slot="spatial"`) placed  :
 :         :          : on `<three-live>`.                   :
+| `TL601` | A11y     | Foreground mesh luminance contrast   |
+:         :          : `< 3.0:1` (WCAG 2.1 SC 1.4.11)       :
+:         :          : against dark studio viewport.        :
+| `TL602` | A11y     | 3D text / label contrast `< 4.5:1`   |
+:         :          : (WCAG 2.1 SC 1.4.3).                 :
+| `TL603` | A11y     | Interactive target covers `< 0.4%`   |
+:         :          : of viewport (`< 2.5°` XR visual      :
+:         :          : angle, WCAG 2.2 SC 2.5.8).           :
+| `TL604` | A11y     | Interactive node missing descriptive |
+:         :          : `mesh.name` or `userData.xr.label`   :
+:         :          : (`info` suggestion).                 :
+| `TL605` | A11y     | Continuous `orbit.speed > 2.5 rad/s` |
+:         :          : or `follow.stiffness > 25` (`info`   :
+:         :          : vestibular comfort suggestion).      :
+| `TL606` | A11y     | Interactive siblings of identical    |
+:         :          : size rely on red-green hue alone     :
+:         :          : (`info` CVD suggestion).             :

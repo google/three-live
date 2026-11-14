@@ -578,7 +578,7 @@ fn mcp_tool_definitions_base() -> Value {
     json!([
         {
             "name": "three_live_validate",
-            "description": "Validate a Three.js script (.js), HTML document (<three-live>/<xr-live>), or .glb binary and run the 3D spatial, camera frustum, grounding, AABB collision, and lighting linter (TL100-TL402).",
+            "description": "Validate a Three.js script (.js), HTML document (<three-live>/<xr-live>), or .glb binary and run the 3D spatial, camera frustum, grounding, AABB collision, lighting, and 3D/XR accessibility linter (TL100-TL606).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

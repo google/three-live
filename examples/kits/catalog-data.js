@@ -22,14 +22,14 @@ if (typeof module === 'object' && module.exports) {
 }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
 const STUDIO_RIG = [
-  'const key = new THREE.DirectionalLight(0xfff7ed, 2.2);',
+  'const key = new THREE.DirectionalLight(0xfff7ed, 2.25);',
   'key.position.set(3.5, 5.2, 4.0);',
   'key.castShadow = true;',
   'scene.add(key);',
-  'const fill = new THREE.DirectionalLight(0x93c5fd, 0.95);',
-  'fill.position.set(-4.0, 2.4, -2.6);',
+  'const fill = new THREE.DirectionalLight(0xbae6fd, 1.18);',
+  'fill.position.set(-4.0, 2.5, 2.8);',
   'scene.add(fill);',
-  'scene.add(new THREE.HemisphereLight(0xe0f2fe, 0x1e293b, 0.65));',
+  'scene.add(new THREE.HemisphereLight(0xe0f2fe, 0x64748b, 0.9));',
 ].join('\n');
 
 function wrapScene(bodyLines) {
@@ -164,7 +164,7 @@ const
               {
                 label: '24T Helical + Hub',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.24 });',
                   'const gear = new THREE.Mesh(',
                   '  new THREE.Mechanical.SpurGearGeometry({',
                   '    module: 0.04, teeth: 24, thickness: 0.14,',
@@ -180,7 +180,7 @@ const
               {
                 label: '16T Straight Pinion',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.85, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.53, roughness: 0.26 });',
                   'const gear = new THREE.Mesh(',
                   '  new THREE.Mechanical.SpurGearGeometry({',
                   '    module: 0.05, teeth: 16, thickness: 0.18, bore: 0.16, keywayWidth: 0.04, keywayDepth: 0.02',
@@ -205,7 +205,7 @@ const
               {
                 label: '20T Miter Gear',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.86, roughness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.53, roughness: 0.25 });',
                   'const bevel = new THREE.Mesh(',
                   '  new THREE.Mechanical.BevelGearGeometry({',
                   '    module: 0.045, teeth: 20, mateTeeth: 20, faceWidth: 0.16,',
@@ -220,7 +220,7 @@ const
               {
                 label: '14T:28T Pinion',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.24 });',
                   'const bevel = new THREE.Mesh(',
                   '  new THREE.Mechanical.BevelGearGeometry({',
                   '    module: 0.05, teeth: 14, mateTeeth: 28, bore: 0.14, hubRadius: 0.2, hubLength: 0.14',
@@ -245,7 +245,7 @@ const
               {
                 label: '42T Planetary Ring',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.88, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.28 });',
                   'const ring = new THREE.Mesh(',
                   '  new THREE.Mechanical.InternalRingGearGeometry({',
                   '    module: 0.035, teeth: 42, thickness: 0.16, boltCount: 8, boltHoleDiameter: 0.075',
@@ -259,7 +259,7 @@ const
               {
                 label: '32T Compact Housing',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.75, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.5, roughness: 0.28 });',
                   'const ring = new THREE.Mesh(',
                   '  new THREE.Mechanical.InternalRingGearGeometry({',
                   '    module: 0.04, teeth: 32, thickness: 0.18, boltCount: 6, boltHoleDiameter: 0.08',
@@ -284,7 +284,7 @@ const
               {
                 label: '12-Tooth Linear Rack',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.26 });',
                   'const rack = new THREE.Mesh(',
                   '  new THREE.Mechanical.RackGeometry({',
                   '    module: 0.05, teeth: 12, thickness: 0.18, backHeight: 0.14',
@@ -297,7 +297,7 @@ const
               {
                 label: '18-Tooth Fine Pitch',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.9, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.54, roughness: 0.24 });',
                   'const rack = new THREE.Mesh(',
                   '  new THREE.Mechanical.RackGeometry({',
                   '    module: 0.035, teeth: 18, thickness: 0.14, backHeight: 0.11',
@@ -321,7 +321,7 @@ const
               {
                 label: 'Toothed Timing Pulley',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.9, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.54, roughness: 0.22 });',
                   'const pulley = new THREE.Mesh(',
                   '  new THREE.Mechanical.PulleyGeometry({',
                   '    profile: "timing", pitchRadius: 0.42, width: 0.22, teeth: 28,',
@@ -336,7 +336,7 @@ const
               {
                 label: 'Dual-Groove V-Belt',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.85, roughness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.3 });',
                   'const pulley = new THREE.Mesh(',
                   '  new THREE.Mechanical.PulleyGeometry({',
                   '    profile: "v-belt", pitchRadius: 0.48, width: 0.3, grooves: 2, bore: 0.18, hubRadius: 0.22',
@@ -350,7 +350,7 @@ const
               {
                 label: 'Flat Crowned Drum',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.82, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.52, roughness: 0.28 });',
                   'const pulley = new THREE.Mesh(',
                   '  new THREE.Mechanical.PulleyGeometry({',
                   '    profile: "flat", pitchRadius: 0.44, width: 0.32, bore: 0.16',
@@ -376,7 +376,7 @@ const
               {
                 label: 'Socket Cap M10×35',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.88, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.26 });',
                   'const bolt = new THREE.Mesh(',
                   '  new THREE.Mechanical.BoltGeometry({',
                   '    preset: "M10x35", headType: "socket", cosmeticThreads: true, scale: 15, origin: "center"',
@@ -390,7 +390,7 @@ const
               {
                 label: 'Hex Bolt M12×40',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.54, roughness: 0.22 });',
                   'const bolt = new THREE.Mesh(',
                   '  new THREE.Mechanical.BoltGeometry({',
                   '    preset: "M12x40", headType: "hex", cosmeticThreads: true, scale: 14, origin: "center"',
@@ -404,7 +404,7 @@ const
               {
                 label: 'Countersunk M8×25',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.85, roughness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.53, roughness: 0.25 });',
                   'const bolt = new THREE.Mesh(',
                   '  new THREE.Mechanical.BoltGeometry({',
                   '    preset: "M8x25", headType: "countersunk", cosmeticThreads: true, scale: 18, origin: "center"',
@@ -429,7 +429,7 @@ const
               {
                 label: 'Nyloc Lock Nut M12',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.9, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.54, roughness: 0.22 });',
                   'const nut = new THREE.Mesh(',
                   '  new THREE.Mechanical.NutGeometry({ preset: "M12", nutType: "nyloc", cosmeticThreads: true, scale: 25 }),',
                   '  mat',
@@ -441,7 +441,7 @@ const
               {
                 label: 'Flange Nut M10',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.86, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.53, roughness: 0.24 });',
                   'const nut = new THREE.Mesh(',
                   '  new THREE.Mechanical.NutGeometry({ preset: "M10", nutType: "flange", cosmeticThreads: true, scale: 28 }),',
                   '  mat',
@@ -453,7 +453,7 @@ const
               {
                 label: 'Standard Hex M12',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.24 });',
                   'const nut = new THREE.Mesh(',
                   '  new THREE.Mechanical.NutGeometry({ preset: "M12", nutType: "hex", cosmeticThreads: true, scale: 25 }),',
                   '  mat',
@@ -476,7 +476,7 @@ const
               {
                 label: 'Chamfered ISO M12',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.92, roughness: 0.2 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.54, roughness: 0.2 });',
                   'const washer = new THREE.Mesh(',
                   '  new THREE.Mechanical.WasherGeometry({ preset: "M12", chamfer: 0.0005, scale: 24 }),',
                   '  mat',
@@ -488,7 +488,7 @@ const
               {
                 label: 'Wide Fender Washer',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.86, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.53, roughness: 0.24 });',
                   'const washer = new THREE.Mesh(',
                   '  new THREE.Mechanical.WasherGeometry({ innerDiameter: 0.18, outerDiameter: 0.68, thickness: 0.055, chamfer: 0.01 }),',
                   '  mat',
@@ -511,7 +511,7 @@ const
               {
                 label: '3-Step CNC Drive Shaft',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.92, roughness: 0.18 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.54, roughness: 0.18 });',
                   'const shaft = new THREE.Mesh(',
                   '  new THREE.Mechanical.ShaftGeometry({',
                   '    steps: [',
@@ -529,7 +529,7 @@ const
               {
                 label: 'D-Cut Motor Shaft',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.54, roughness: 0.22 });',
                   'const shaft = new THREE.Mesh(',
                   '  new THREE.Mechanical.ShaftGeometry({ diameter: 0.28, length: 1.1, dCut: 0.045, chamfer: 0.02 }),',
                   '  mat',
@@ -552,7 +552,7 @@ const
               {
                 label: 'Jaw-Spider Coupling',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.78, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.51, roughness: 0.26 });',
                   'const coupler = new THREE.Mesh(',
                   '  new THREE.Mechanical.ShaftCouplerGeometry({',
                   '    style: "jaw-spider", outerDiameter: 0.55, length: 0.75, bore1: 0.16, bore2: 0.2, jaws: 3',
@@ -566,7 +566,7 @@ const
               {
                 label: 'Rigid Split-Clamp',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.22 });',
                   'const coupler = new THREE.Mesh(',
                   '  new THREE.Mechanical.ShaftCouplerGeometry({',
                   '    style: "rigid-clamp", outerDiameter: 0.52, length: 0.78, bore1: 0.18, bore2: 0.18, clampScrews: true',
@@ -591,7 +591,7 @@ const
               {
                 label: 'Open Deep-Groove Bearing',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.94, roughness: 0.16 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.55, roughness: 0.16 });',
                   'const brg = new THREE.Mesh(',
                   '  new THREE.Mechanical.BearingGeometry({',
                   '    innerDiameter: 0.36, outerDiameter: 0.88, width: 0.24, balls: 9, shielded: false',
@@ -605,7 +605,7 @@ const
               {
                 label: 'Flanged Shielded Bearing',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.54, roughness: 0.22 });',
                   'const brg = new THREE.Mesh(',
                   '  new THREE.Mechanical.BearingGeometry({',
                   '    innerDiameter: 0.34, outerDiameter: 0.82, width: 0.24, shielded: true, flanged: true, flangeDiameter: 0.94',
@@ -630,7 +630,7 @@ const
               {
                 label: 'UCP Pedestal Bearing',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x0ea5e9, metalness: 0.55, roughness: 0.42 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.55, roughness: 0.42 });',
                   'const block = new THREE.Mesh(',
                   '  new THREE.Mechanical.PillowBlockGeometry({',
                   '    bore: 0.28, centerHeight: 0.48, baseLength: 1.35, baseWidth: 0.38, housingRadius: 0.42',
@@ -654,7 +654,7 @@ const
               {
                 label: '7-Coil Compression Spring',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.2 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.54, roughness: 0.2 });',
                   'const spring = new THREE.Mesh(',
                   '  new THREE.Mechanical.HelicalSpringGeometry({',
                   '    meanRadius: 0.32, wireRadius: 0.055, coils: 7, length: 1.15, flatEnds: true',
@@ -667,7 +667,7 @@ const
               {
                 label: 'Heavy 4.5-Coil Die Spring',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.45, roughness: 0.38 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf87171, metalness: 0.45, roughness: 0.38 });',
                   'const spring = new THREE.Mesh(',
                   '  new THREE.Mechanical.HelicalSpringGeometry({',
                   '    meanRadius: 0.34, wireRadius: 0.075, coils: 4.5, length: 1.0, flatEnds: true',
@@ -687,38 +687,41 @@ const
                 'Circular weld-neck & slip-on mounting flange with center bore & bolt-circle holes.',
             tags: ['flange', 'plate', 'weld-neck', 'bolt-circle', 'mount'],
             orbit: {theta: 28, phi: 30, zoom: 1.22},
-            variants: [
-              {
-                label: '8-Bolt Weld-Neck Flange',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.25 });',
-                  'const flange = new THREE.Mesh(',
-                  '  new THREE.Mechanical.FlangePlateGeometry({',
-                  '    outerRadius: 0.62, thickness: 0.12, bore: 0.42,',
-                  '    boltCount: 8, boltCircleRadius: 0.48, boltHoleDiameter: 0.085,',
-                  '    neckRadius: 0.28, neckHeight: 0.22',
-                  '  }),',
-                  '  mat',
-                  ');',
-                  'flange.rotation.x = -0.25;',
-                  'scene.add(flange);',
-                ]),
-              },
-              {
-                label: '4-Bolt Flat Plate',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.84, roughness: 0.28 });',
-                  'const flange = new THREE.Mesh(',
-                  '  new THREE.Mechanical.FlangePlateGeometry({',
-                  '    outerRadius: 0.55, thickness: 0.1, bore: 0.3, boltCount: 4, boltCircleRadius: 0.4, boltHoleDiameter: 0.09',
-                  '  }),',
-                  '  mat',
-                  ');',
-                  'flange.rotation.x = -0.25;',
-                  'scene.add(flange);',
-                ]),
-              },
-            ],
+            variants:
+                [
+                  {
+                    label: '8-Bolt Weld-Neck Flange',
+                    code: wrapScene([
+                      'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.25 });',
+                      'const flange = new THREE.Mesh(',
+                      '  new THREE.Mechanical.FlangePlateGeometry({',
+                      '    outerRadius: 0.62, thickness: 0.12, bore: 0.42,',
+                      '    boltCount: 8, boltCircleRadius: 0.48, boltHoleDiameter: 0.085,',
+                      '    neckRadius: 0.28, neckHeight: 0.22',
+                      '  }),',
+                      '  mat',
+                      ');',
+                      'flange.rotation.x = -0.25;',
+                      'scene.add(flange);',
+                    ]),
+                  },
+                  {
+                    label: '4-Bolt Flat Plate',
+                    code:
+                        wrapScene(
+                            [
+                              'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.52, roughness: 0.28 });',
+                              'const flange = new THREE.Mesh(',
+                              '  new THREE.Mechanical.FlangePlateGeometry({',
+                              '    outerRadius: 0.55, thickness: 0.1, bore: 0.3, boltCount: 4, boltCircleRadius: 0.4, boltHoleDiameter: 0.09',
+                              '  }),',
+                              '  mat',
+                              ');',
+                              'flange.rotation.x = -0.25;',
+                              'scene.add(flange);',
+                            ]),
+                  },
+                ],
           },
           {
             slug: 'mechanical-profile-extrusion',
@@ -734,7 +737,7 @@ const
               {
                 label: 'T-Slot Aluminum Extrusion',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.88, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.24 });',
                   'const beam = new THREE.Mesh(',
                   '  new THREE.Mechanical.ProfileExtrusionGeometry({',
                   '    profile: "t-slot", width: 0.45, height: 0.45, length: 1.25',
@@ -748,7 +751,7 @@ const
               {
                 label: 'Wide-Flange Steel I-Beam',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.85, roughness: 0.32 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.32, roughness: 0.28 });',
                   'const beam = new THREE.Mesh(',
                   '  new THREE.Mechanical.ProfileExtrusionGeometry({',
                   '    profile: "i-beam", width: 0.48, height: 0.58, length: 1.35, wallThickness: 0.055',
@@ -762,7 +765,7 @@ const
               {
                 label: 'Structural C-Channel',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.65, roughness: 0.35 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.28, roughness: 0.32 });',
                   'const beam = new THREE.Mesh(',
                   '  new THREE.Mechanical.ProfileExtrusionGeometry({',
                   '    profile: "c-channel", width: 0.36, height: 0.54, length: 1.3, wallThickness: 0.055',
@@ -776,7 +779,7 @@ const
               {
                 label: 'L-Angle Steel Bracket',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.86, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.32, roughness: 0.26 });',
                   'const beam = new THREE.Mesh(',
                   '  new THREE.Mechanical.ProfileExtrusionGeometry({',
                   '    profile: "l-angle", width: 0.46, height: 0.46, length: 1.3, wallThickness: 0.06',
@@ -790,7 +793,7 @@ const
               {
                 label: 'Hollow Rectangular Tube',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.78, roughness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x7dd3fc, metalness: 0.3, roughness: 0.25 });',
                   'const beam = new THREE.Mesh(',
                   '  new THREE.Mechanical.ProfileExtrusionGeometry({',
                   '    profile: "rect-tube", width: 0.52, height: 0.36, length: 1.35, wallThickness: 0.05',
@@ -898,7 +901,7 @@ const
               {
                 label: 'Spiral Staircase',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.42, metalness: 0.35 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.42, metalness: 0.35 });',
                   'const stair = new THREE.Mesh(',
                   '  new THREE.Architecture.StaircaseGeometry({',
                   '    mode: "spiral", rise: 2.9, width: 0.95, turns: 1.15, origin: "center"',
@@ -937,7 +940,7 @@ const
               {
                 label: 'Open-Stringer Straight',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.65, roughness: 0.35 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.35, roughness: 0.32 });',
                   'const stair = new THREE.Mesh(',
                   '  new THREE.Architecture.StaircaseGeometry({',
                   '    mode: "straight", rise: 2.6, width: 1.1, solid: false, origin: "center"',
@@ -961,7 +964,7 @@ const
               {
                 label: 'Gambrel Vaulted Shell',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.55, metalness: 0.15 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.55, metalness: 0.15 });',
                   'const roof = new THREE.Mesh(',
                   '  new THREE.Architecture.RoofGeometry({',
                   '    style: "gambrel", width: 5.2, depth: 6.4, height: 2.3, solid: false, origin: "center"',
@@ -974,7 +977,7 @@ const
               {
                 label: 'Hip Roof',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.6, metalness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xa78bfa, roughness: 0.6, metalness: 0.25 });',
                   'const roof = new THREE.Mesh(',
                   '  new THREE.Architecture.RoofGeometry({',
                   '    style: "hip", width: 5.5, depth: 7.5, pitchDeg: 32, origin: "center"',
@@ -987,7 +990,7 @@ const
               {
                 label: 'Mansard Dual-Pitch',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5, metalness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.5, metalness: 0.3 });',
                   'const roof = new THREE.Mesh(',
                   '  new THREE.Architecture.RoofGeometry({',
                   '    style: "mansard", width: 5.6, depth: 7.0, height: 2.2, origin: "center"',
@@ -1013,7 +1016,7 @@ const
               {
                 label: 'Classic Gable Roof',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.58, metalness: 0.12 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf87171, roughness: 0.58, metalness: 0.12 });',
                   'const roof = new THREE.Mesh(',
                   '  new THREE.Architecture.RoofGeometry({',
                   '    style: "gable", width: 5.4, depth: 7.0, pitchDeg: 34, origin: "center"',
@@ -1052,7 +1055,7 @@ const
               {
                 label: 'Double Arched Swing (40% Open)',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.45, metalness: 0.12 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xfb923c, roughness: 0.45, metalness: 0.12 });',
                   'const door = new THREE.Mesh(',
                   '  new THREE.Architecture.DoorGeometry({',
                   '    style: "arched", operation: "swing", leaves: 2, width: 1.65, height: 2.25,',
@@ -1066,7 +1069,7 @@ const
               {
                 label: 'Exposed-Rail Barn Door',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.48, metalness: 0.2 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.48, metalness: 0.2 });',
                   'const door = new THREE.Mesh(',
                   '  new THREE.Architecture.DoorGeometry({',
                   '    style: "panel-2", operation: "barn", width: 1.05, height: 2.15, openFraction: 0.55, origin: "center"',
@@ -1105,7 +1108,7 @@ const
               {
                 label: 'OXO Sliding Patio Door',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.38, metalness: 0.45 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.38, metalness: 0.45 });',
                   'const door = new THREE.Mesh(',
                   '  new THREE.Architecture.DoorGeometry({',
                   '    style: "french", operation: "slider", trackPattern: "OXO", width: 2.4, height: 2.15, openFraction: 0.6, origin: "center"',
@@ -1140,80 +1143,73 @@ const
               'window', 'casement', 'double-hung', 'sash', 'mullion', 'arched'
             ],
             orbit: {theta: 26, phi: 18, zoom: 1.22},
-            variants:
-                [
-                  {
-                    label: 'Arched Fanlight Window',
-                    code: wrapScene([
-                      'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.52, metalness: 0.15 });',
-                      'const win = new THREE.Mesh(',
-                      '  new THREE.Architecture.WindowGeometry({',
-                      '    style: "arched", width: 1.3, height: 1.75, cols: 2, rows: 2, sill: true, origin: "center"',
-                      '  }),',
-                      '  mat',
-                      ');',
-                      'scene.add(win);',
-                    ]),
-                  },
-                  {
-                    label: 'Double Casement (Open)',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4, metalness: 0.45 });',
-                              'const win = new THREE.Mesh(',
-                              '  new THREE.Architecture.WindowGeometry({',
-                              '    style: "casement", leaves: 2, width: 1.4, height: 1.35, openFraction: 0.55, casing: true, sill: true, origin: "center"',
-                              '  }),',
-                              '  mat',
-                              ');',
-                              'scene.add(win);',
-                            ]),
-                  },
-                  {
-                    label: 'Double-Hung Sash',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.58 });',
-                              'const win = new THREE.Mesh(',
-                              '  new THREE.Architecture.WindowGeometry({',
-                              '    style: "double-hung", width: 1.15, height: 1.55, cols: 2, rows: 2, openFraction: 0.45, topOpenFraction: 0.3, casing: true, origin: "center"',
-                              '  }),',
-                              '  mat',
-                              ');',
-                              'scene.add(win);',
-                            ]),
-                  },
-                  {
-                    label: 'Top-Hinged Awning Window',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.42, metalness: 0.35 });',
-                              'const win = new THREE.Mesh(',
-                              '  new THREE.Architecture.WindowGeometry({',
-                              '    style: "awning", width: 1.35, height: 0.95, openFraction: 0.65, casing: true, sill: true, origin: "center"',
-                              '  }),',
-                              '  mat',
-                              ');',
-                              'scene.add(win);',
-                            ]),
-                  },
-                  {
-                    label: '3-Track Sliding Window',
-                    code: wrapScene([
-                      'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.45, metalness: 0.4 });',
-                      'const win = new THREE.Mesh(',
-                      '  new THREE.Architecture.WindowGeometry({',
-                      '    style: "slider", trackPattern: "XOX", width: 1.85, height: 1.2, openFraction: 0.55, sill: true, origin: "center"',
-                      '  }),',
-                      '  mat',
-                      ');',
-                      'scene.add(win);',
-                    ]),
-                  },
-                ],
+            variants: [
+              {
+                label: 'Arched Fanlight Window',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.52, metalness: 0.15 });',
+                  'const win = new THREE.Mesh(',
+                  '  new THREE.Architecture.WindowGeometry({',
+                  '    style: "arched", width: 1.3, height: 1.75, cols: 2, rows: 2, sill: true, origin: "center"',
+                  '  }),',
+                  '  mat',
+                  ');',
+                  'scene.add(win);',
+                ]),
+              },
+              {
+                label: 'Double Casement (Open)',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4, metalness: 0.45 });',
+                  'const win = new THREE.Mesh(',
+                  '  new THREE.Architecture.WindowGeometry({',
+                  '    style: "casement", leaves: 2, width: 1.4, height: 1.35, openFraction: 0.55, casing: true, sill: true, origin: "center"',
+                  '  }),',
+                  '  mat',
+                  ');',
+                  'scene.add(win);',
+                ]),
+              },
+              {
+                label: 'Double-Hung Sash',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.58 });',
+                  'const win = new THREE.Mesh(',
+                  '  new THREE.Architecture.WindowGeometry({',
+                  '    style: "double-hung", width: 1.15, height: 1.55, cols: 2, rows: 2, openFraction: 0.45, topOpenFraction: 0.3, casing: true, origin: "center"',
+                  '  }),',
+                  '  mat',
+                  ');',
+                  'scene.add(win);',
+                ]),
+              },
+              {
+                label: 'Top-Hinged Awning Window',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.42, metalness: 0.35 });',
+                  'const win = new THREE.Mesh(',
+                  '  new THREE.Architecture.WindowGeometry({',
+                  '    style: "awning", width: 1.35, height: 0.95, openFraction: 0.65, casing: true, sill: true, origin: "center"',
+                  '  }),',
+                  '  mat',
+                  ');',
+                  'scene.add(win);',
+                ]),
+              },
+              {
+                label: '3-Track Sliding Window',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.45, metalness: 0.4 });',
+                  'const win = new THREE.Mesh(',
+                  '  new THREE.Architecture.WindowGeometry({',
+                  '    style: "slider", trackPattern: "XOX", width: 1.85, height: 1.2, openFraction: 0.55, sill: true, origin: "center"',
+                  '  }),',
+                  '  mat',
+                  ');',
+                  'scene.add(win);',
+                ]),
+              },
+            ],
           },
           {
             slug: 'architecture-railing',
@@ -1227,7 +1223,7 @@ const
               {
                 label: 'IBC Baluster Guardrail',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.78, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.51, roughness: 0.28 });',
                   'const rail = new THREE.Mesh(',
                   '  new THREE.Architecture.RailingGeometry({',
                   '    style: "baluster", length: 2.8, height: 1.07, origin: "center"',
@@ -1240,7 +1236,7 @@ const
               {
                 label: 'Horizontal-Bar Cable Rail',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.85, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.22 });',
                   'const rail = new THREE.Mesh(',
                   '  new THREE.Architecture.RailingGeometry({',
                   '    style: "horizontal-bar", length: 2.8, height: 1.07, horizontalBars: 6, origin: "center"',
@@ -1316,7 +1312,7 @@ const
               {
                 label: 'Structural Steel H-Column',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.82, roughness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.52, roughness: 0.3 });',
                   'const col = new THREE.Mesh(',
                   '  new THREE.Architecture.ColumnGeometry({',
                   '    style: "h-column", height: 2.8, radius: 0.24, origin: "center"',
@@ -1383,7 +1379,7 @@ const
               {
                 label: '3D Z-Bend DN100 Run',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.72, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.49, roughness: 0.28 });',
                   'const pipe = new THREE.Mesh(',
                   '  new THREE.Industrial.PipeRunGeometry({',
                   '    size: "DN100", flangedEnds: true,',
@@ -1397,7 +1393,7 @@ const
               {
                 label: 'U-Loop Manifold DN80',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.22 });',
                   'const pipe = new THREE.Mesh(',
                   '  new THREE.Industrial.PipeRunGeometry({',
                   '    size: "DN80", flangedEnds: true,',
@@ -1422,7 +1418,7 @@ const
               {
                 label: 'Flanged Reducing Tee',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.85, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.26 });',
                   'const tee = new THREE.Mesh(',
                   '  new THREE.Industrial.PipeFittingGeometry({',
                   '    kind: "tee", size: "DN125", secondarySize: "DN80", flanged: true',
@@ -1435,7 +1431,7 @@ const
               {
                 label: 'Flanged 90° Elbow',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.88, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.24 });',
                   'const elbow = new THREE.Mesh(',
                   '  new THREE.Industrial.PipeFittingGeometry({ kind: "elbow-90", size: "DN125", flanged: true }),',
                   '  mat',
@@ -1446,7 +1442,7 @@ const
               {
                 label: '4-Way Flanged Cross',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.72, roughness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.49, roughness: 0.3 });',
                   'const cross = new THREE.Mesh(',
                   '  new THREE.Industrial.PipeFittingGeometry({ kind: "cross", size: "DN100", flanged: true }),',
                   '  mat',
@@ -1457,7 +1453,7 @@ const
               {
                 label: 'Concentric Flanged Reducer',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.78, roughness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.51, roughness: 0.25 });',
                   'const red = new THREE.Mesh(',
                   '  new THREE.Industrial.PipeFittingGeometry({ kind: "reducer", size: "DN150", secondarySize: "DN80", flanged: true }),',
                   '  mat',
@@ -1482,7 +1478,7 @@ const
               {
                 label: 'Rising-Stem Gate Valve',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.58, roughness: 0.34 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xfca5a5, metalness: 0.28, roughness: 0.32 });',
                   'const valve = new THREE.Mesh(',
                   '  new THREE.Industrial.ValveGeometry({ kind: "gate-handwheel", size: "DN125", openFraction: 0.75 }),',
                   '  mat',
@@ -1504,7 +1500,7 @@ const
               {
                 label: 'Quarter-Turn Ball Valve',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.82, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.52, roughness: 0.26 });',
                   'const valve = new THREE.Mesh(',
                   '  new THREE.Industrial.ValveGeometry({ kind: "ball-lever", size: "DN100", openFraction: 0.35 }),',
                   '  mat',
@@ -1515,7 +1511,7 @@ const
               {
                 label: 'Wafer Butterfly Valve',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, metalness: 0.65, roughness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.47, roughness: 0.3 });',
                   'const valve = new THREE.Mesh(',
                   '  new THREE.Industrial.ValveGeometry({ kind: "butterfly", size: "DN150", openFraction: 0.45 }),',
                   '  mat',
@@ -1526,7 +1522,7 @@ const
               {
                 label: 'Swing Check Valve',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.85, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.53, roughness: 0.24 });',
                   'const valve = new THREE.Mesh(',
                   '  new THREE.Industrial.ValveGeometry({ kind: "check", size: "DN125" }),',
                   '  mat',
@@ -1548,7 +1544,7 @@ const
               {
                 label: '22 kW Process Pump Skid',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x0ea5e9, metalness: 0.62, roughness: 0.34 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.47, roughness: 0.34 });',
                   'const pump = new THREE.Mesh(',
                   '  new THREE.Industrial.CentrifugalPumpGeometry({',
                   '    suctionSize: "DN100", dischargeSize: "DN80", motorPowerKw: 22, origin: "center"',
@@ -1572,7 +1568,7 @@ const
               {
                 label: '2-Bay × 3-Level Rack',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf97316, metalness: 0.52, roughness: 0.4 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xfb923c, metalness: 0.52, roughness: 0.4 });',
                   'const rack = new THREE.Mesh(',
                   '  new THREE.Industrial.PalletRackGeometry({',
                   '    bays: 2, levels: 3, bayWidth: 2.3, depth: 1.05, height: 3.8, origin: "center"',
@@ -1597,7 +1593,7 @@ const
               {
                 label: 'Live-Roller Conveyor',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.51, roughness: 0.28 });',
                   'const conv = new THREE.Mesh(',
                   '  new THREE.Industrial.ConveyorGeometry({',
                   '    kind: "roller", length: 2.8, width: 0.75, height: 0.85, sideGuides: true, origin: "center"',
@@ -1610,7 +1606,7 @@ const
               {
                 label: 'Inclined Belt Conveyor',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.68, roughness: 0.36 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.48, roughness: 0.36 });',
                   'const conv = new THREE.Mesh(',
                   '  new THREE.Industrial.ConveyorGeometry({',
                   '    kind: "belt", length: 3.0, width: 0.75, height: 0.8, inclineDeg: 14, sideGuides: true, origin: "center"',
@@ -1636,7 +1632,7 @@ const
               {
                 label: 'Dual-Guardrail Catwalk',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.58, roughness: 0.36 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.46, roughness: 0.36 });',
                   'const catwalk = new THREE.Mesh(',
                   '  new THREE.Industrial.CatwalkPlatformGeometry({',
                   '    length: 3.2, width: 1.1, height: 1.6, guardrail: "both", origin: "center"',
@@ -1673,7 +1669,7 @@ const
               {
                 label: 'Uncaged Wall Ladder',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.82, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.52, roughness: 0.26 });',
                   'const ladder = new THREE.Mesh(',
                   '  new THREE.Industrial.IndustrialLadderGeometry({',
                   '    height: 3.2, width: 0.5, includeCage: false, origin: "center"',
@@ -1693,34 +1689,35 @@ const
                 'Forklift crash guardrails, tubular safety handrails & heavy baseplate bollards.',
             tags: ['barrier', 'bollard', 'guardrail', 'forklift', 'safety'],
             orbit: {theta: 28, phi: 22, zoom: 1.22},
-            variants: [
-              {
-                label: 'Double Crash Guardrail',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.48, roughness: 0.38 });',
-                  'const barrier = new THREE.Mesh(',
-                  '  new THREE.Industrial.SafetyBarrierGeometry({',
-                  '    kind: "guardrail-double", length: 2.6, height: 0.95, origin: "center"',
-                  '  }),',
-                  '  mat',
-                  ');',
-                  'scene.add(barrier);',
-                ]),
-              },
-              {
-                label: 'Heavy Steel Bollard',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf97316, metalness: 0.45, roughness: 0.4 });',
-                  'const barrier = new THREE.Mesh(',
-                  '  new THREE.Industrial.SafetyBarrierGeometry({',
-                  '    kind: "bollard", height: 1.05, postRadius: 0.085, origin: "center"',
-                  '  }),',
-                  '  mat',
-                  ');',
-                  'scene.add(barrier);',
-                ]),
-              },
-            ],
+            variants:
+                [
+                  {
+                    label: 'Double Crash Guardrail',
+                    code: wrapScene([
+                      'const mat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.48, roughness: 0.38 });',
+                      'const barrier = new THREE.Mesh(',
+                      '  new THREE.Industrial.SafetyBarrierGeometry({',
+                      '    kind: "guardrail-double", length: 2.6, height: 0.95, origin: "center"',
+                      '  }),',
+                      '  mat',
+                      ');',
+                      'scene.add(barrier);',
+                    ]),
+                  },
+                  {
+                    label: 'Heavy Steel Bollard',
+                    code: wrapScene([
+                      'const mat = new THREE.MeshStandardMaterial({ color: 0xfb923c, metalness: 0.45, roughness: 0.4 });',
+                      'const barrier = new THREE.Mesh(',
+                      '  new THREE.Industrial.SafetyBarrierGeometry({',
+                      '    kind: "bollard", height: 1.05, postRadius: 0.085, origin: "center"',
+                      '  }),',
+                      '  mat',
+                      ');',
+                      'scene.add(barrier);',
+                    ]),
+                  },
+                ],
           },
           {
             slug: 'industrial-storage-tank',
@@ -1734,7 +1731,7 @@ const
               {
                 label: 'Vertical Dished on Legs',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.88, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.22 });',
                   'const tank = new THREE.Mesh(',
                   '  new THREE.Industrial.StorageTankGeometry({',
                   '    kind: "vertical-dished", radius: 0.75, shellHeight: 1.6, legHeight: 0.7, manway: true, origin: "center"',
@@ -1747,7 +1744,7 @@ const
               {
                 label: 'Horizontal Saddle Vessel',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.82, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.52, roughness: 0.26 });',
                   'const tank = new THREE.Mesh(',
                   '  new THREE.Industrial.StorageTankGeometry({',
                   '    kind: "horizontal-saddle", radius: 0.65, length: 2.4, manway: true, origin: "center"',
@@ -1760,7 +1757,7 @@ const
               {
                 label: 'Cone-Hopper Silo',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.75, roughness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.5, roughness: 0.3 });',
                   'const tank = new THREE.Mesh(',
                   '  new THREE.Industrial.StorageTankGeometry({',
                   '    kind: "cone-hopper", radius: 0.8, shellHeight: 1.4, hopperHeight: 0.85, legHeight: 0.9, origin: "center"',
@@ -1773,7 +1770,7 @@ const
               {
                 label: 'API 650 Flat-Bottom Tank',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, metalness: 0.65, roughness: 0.34 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, metalness: 0.47, roughness: 0.34 });',
                   'const tank = new THREE.Mesh(',
                   '  new THREE.Industrial.StorageTankGeometry({',
                   '    kind: "flat-api650", radius: 1.15, shellHeight: 1.5, manway: true, origin: "center"',
@@ -2151,41 +2148,44 @@ const
               'metaballs'
             ],
             orbit: {theta: 32, phi: 24, zoom: 1.2},
-            variants: [
-              {
-                label: 'Gyroid TPMS (Viridis)',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.12 });',
-                  'const iso = new THREE.Mesh(',
-                  '  new THREE.Science.IsoSurfaceGeometry({ preset: "gyroid", resolution: 28, colormap: "viridis" }),',
-                  '  mat',
-                  ');',
-                  'scene.add(iso);',
-                ]),
-              },
-              {
-                label: 'Schwarz-P Minimal Surface',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.12 });',
-                  'const iso = new THREE.Mesh(',
-                  '  new THREE.Science.IsoSurfaceGeometry({ preset: "schwarz-p", resolution: 28, colormap: "plasma" }),',
-                  '  mat',
-                  ');',
-                  'scene.add(iso);',
-                ]),
-              },
-              {
-                label: 'Metaball Cluster',
-                code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.22, metalness: 0.15 });',
-                  'const iso = new THREE.Mesh(',
-                  '  new THREE.Science.IsoSurfaceGeometry({ preset: "metaballs", resolution: 28, colormap: "turbo" }),',
-                  '  mat',
-                  ');',
-                  'scene.add(iso);',
-                ]),
-              },
-            ],
+            variants:
+                [
+                  {
+                    label: 'Gyroid TPMS (Viridis)',
+                    code: wrapScene([
+                      'const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.12 });',
+                      'const iso = new THREE.Mesh(',
+                      '  new THREE.Science.IsoSurfaceGeometry({ preset: "gyroid", resolution: 28, colormap: "viridis" }),',
+                      '  mat',
+                      ');',
+                      'scene.add(iso);',
+                    ]),
+                  },
+                  {
+                    label: 'Schwarz-P Minimal Surface',
+                    code:
+                        wrapScene(
+                            [
+                              'const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.12 });',
+                              'const iso = new THREE.Mesh(',
+                              '  new THREE.Science.IsoSurfaceGeometry({ preset: "schwarz-p", resolution: 28, colormap: "plasma" }),',
+                              '  mat',
+                              ');',
+                              'scene.add(iso);',
+                            ]),
+                  },
+                  {
+                    label: 'Metaball Cluster',
+                    code: wrapScene([
+                      'const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.22, metalness: 0.15 });',
+                      'const iso = new THREE.Mesh(',
+                      '  new THREE.Science.IsoSurfaceGeometry({ preset: "metaballs", resolution: 28, colormap: "turbo" }),',
+                      '  mat',
+                      ');',
+                      'scene.add(iso);',
+                    ]),
+                  },
+                ],
           },
           {
             slug: 'science-streamline',
@@ -2399,7 +2399,7 @@ const
               {
                 label: '85×56 mm SBC Carrier Board',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.38, metalness: 0.12 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.38, metalness: 0.12 });',
                   'const pcb = new THREE.Mesh(',
                   '  new THREE.Electronics.PcbBoardGeometry({',
                   '    width: 0.085, length: 0.056, thickness: 0.0024, cornerRadius: 0.004, cornerHoles: true,',
@@ -2414,7 +2414,7 @@ const
               {
                 label: 'Circular Sensor Daughterboard',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.36, metalness: 0.16 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.36, metalness: 0.16 });',
                   'const pcb = new THREE.Mesh(',
                   '  new THREE.Electronics.PcbBoardGeometry({',
                   '    width: 0.06, length: 0.06, thickness: 0.002, cornerRadius: 0.026, cornerHoles: false,',
@@ -2441,7 +2441,7 @@ const
               {
                 label: 'Vented Base + Bosses & Cutouts',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.42, metalness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.42, metalness: 0.25 });',
                   'const box = new THREE.Mesh(',
                   '  new THREE.Electronics.EnclosureGeometry({',
                   '    part: "base", width: 0.11, length: 0.08, height: 0.042,',
@@ -2458,7 +2458,7 @@ const
               {
                 label: 'Closed Flanged Wall Box',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.38, metalness: 0.35 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.38, metalness: 0.35 });',
                   'const box = new THREE.Mesh(',
                   '  new THREE.Electronics.EnclosureGeometry({',
                   '    part: "closed", flanges: true, ventSlots: 6, scale: 10, origin: "center"',
@@ -2482,7 +2482,7 @@ const
               {
                 label: '13-Fin Anodized Heatsink',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.84, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.52, roughness: 0.24 });',
                   'const sink = new THREE.Mesh(',
                   '  new THREE.Electronics.HeatsinkGeometry({',
                   '    width: 0.065, length: 0.065, height: 0.032, finCount: 13, taperRatio: 0.65, origin: "center"',
@@ -2496,7 +2496,7 @@ const
               {
                 label: 'Silver Extruded Heatsink',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.9, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.54, roughness: 0.22 });',
                   'const sink = new THREE.Mesh(',
                   '  new THREE.Electronics.HeatsinkGeometry({',
                   '    width: 0.075, length: 0.05, height: 0.024, finCount: 15, origin: "center"',
@@ -2521,7 +2521,7 @@ const
               {
                 label: 'Slotted TS35×7.5 Rail',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.9, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.54, roughness: 0.24 });',
                   'const rail = new THREE.Mesh(',
                   '  new THREE.Electronics.DinRailGeometry({ profile: "ts35x7.5", length: 0.14, slotted: true }),',
                   '  mat',
@@ -2533,7 +2533,7 @@ const
               {
                 label: 'Deep TS35×15 Top-Hat Rail',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.84, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.52, roughness: 0.26 });',
                   'const rail = new THREE.Mesh(',
                   '  new THREE.Electronics.DinRailGeometry({ profile: "ts35x15", length: 0.14, slotted: true }),',
                   '  mat',
@@ -2552,84 +2552,77 @@ const
                 'JEDEC gull-wing QFP/SOIC, through-hole DIP, QFN, BGA ball-grid, SOT-23, TO-220 & D2PAK packages.',
             tags: ['ic', 'chip', 'qfp', 'dip', 'soic', 'bga', 'to220', 'jedec'],
             orbit: {theta: 32, phi: 30, zoom: 1.22},
-            variants:
-                [
-                  {
-                    label: 'LQFP-64 Microcontroller',
-                    code: wrapScene([
-                      'const mat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.42, metalness: 0.28 });',
-                      'const ic = new THREE.Mesh(',
-                      '  new THREE.Electronics.IcPackageGeometry({ preset: "LQFP-64", scale: 65, origin: "center" }),',
-                      '  mat',
-                      ');',
-                      'scene.add(ic);',
-                    ]),
-                  },
-                  {
-                    label: 'DIP-16 Through-Hole IC',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.45, metalness: 0.25 });',
-                              'const ic = new THREE.Mesh(',
-                              '  new THREE.Electronics.IcPackageGeometry({ preset: "DIP-16", scale: 45, origin: "center" }),',
-                              '  mat',
-                              ');',
-                              'scene.add(ic);',
-                            ]),
-                  },
-                  {
-                    label: 'TO-220 Power MOSFET',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.38, metalness: 0.45 });',
-                              'const ic = new THREE.Mesh(',
-                              '  new THREE.Electronics.IcPackageGeometry({ preset: "TO-220", scale: 55, origin: "center" }),',
-                              '  mat',
-                              ');',
-                              'scene.add(ic);',
-                            ]),
-                  },
-                  {
-                    label: 'BGA-64 Ball-Grid Package',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.3 });',
-                              'const ic = new THREE.Mesh(',
-                              '  new THREE.Electronics.IcPackageGeometry({ preset: "BGA-64", scale: 80, origin: "center" }),',
-                              '  mat',
-                              ');',
-                              'ic.rotation.x = Math.PI * 0.72;',
-                              'scene.add(ic);',
-                            ]),
-                  },
-                  {
-                    label: 'SOIC-8 Gull-Wing IC',
-                    code:
-                        wrapScene(
-                            [
-                              'const mat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.32 });',
-                              'const ic = new THREE.Mesh(',
-                              '  new THREE.Electronics.IcPackageGeometry({ preset: "SOIC-8", scale: 110, origin: "center" }),',
-                              '  mat',
-                              ');',
-                              'scene.add(ic);',
-                            ]),
-                  },
-                  {
-                    label: 'D2PAK Surface-Mount Power',
-                    code: wrapScene([
-                      'const mat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.35, metalness: 0.55 });',
-                      'const ic = new THREE.Mesh(',
-                      '  new THREE.Electronics.IcPackageGeometry({ preset: "D2PAK", scale: 55, origin: "center" }),',
-                      '  mat',
-                      ');',
-                      'scene.add(ic);',
-                    ]),
-                  },
-                ],
+            variants: [
+              {
+                label: 'LQFP-64 Microcontroller',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.42, metalness: 0.28 });',
+                  'const ic = new THREE.Mesh(',
+                  '  new THREE.Electronics.IcPackageGeometry({ preset: "LQFP-64", scale: 65, origin: "center" }),',
+                  '  mat',
+                  ');',
+                  'scene.add(ic);',
+                ]),
+              },
+              {
+                label: 'DIP-16 Through-Hole IC',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.45, metalness: 0.25 });',
+                  'const ic = new THREE.Mesh(',
+                  '  new THREE.Electronics.IcPackageGeometry({ preset: "DIP-16", scale: 45, origin: "center" }),',
+                  '  mat',
+                  ');',
+                  'scene.add(ic);',
+                ]),
+              },
+              {
+                label: 'TO-220 Power MOSFET',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.38, metalness: 0.45 });',
+                  'const ic = new THREE.Mesh(',
+                  '  new THREE.Electronics.IcPackageGeometry({ preset: "TO-220", scale: 55, origin: "center" }),',
+                  '  mat',
+                  ');',
+                  'scene.add(ic);',
+                ]),
+              },
+              {
+                label: 'BGA-64 Ball-Grid Package',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x34d399, roughness: 0.4, metalness: 0.3 });',
+                  'const ic = new THREE.Mesh(',
+                  '  new THREE.Electronics.IcPackageGeometry({ preset: "BGA-64", scale: 80, origin: "center" }),',
+                  '  mat',
+                  ');',
+                  'ic.rotation.x = Math.PI * 0.72;',
+                  'scene.add(ic);',
+                ]),
+              },
+              {
+                label: 'SOIC-8 Gull-Wing IC',
+                code: wrapScene([
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.4, metalness: 0.32 });',
+                  'const ic = new THREE.Mesh(',
+                  '  new THREE.Electronics.IcPackageGeometry({ preset: "SOIC-8", scale: 110, origin: "center" }),',
+                  '  mat',
+                  ');',
+                  'scene.add(ic);',
+                ]),
+              },
+              {
+                label: 'D2PAK Surface-Mount Power',
+                code:
+                    wrapScene(
+                        [
+                          'const mat = new THREE.MeshStandardMaterial({ color: 0xa78bfa, roughness: 0.35, metalness: 0.55 });',
+                          'const ic = new THREE.Mesh(',
+                          '  new THREE.Electronics.IcPackageGeometry({ preset: "D2PAK", scale: 55, origin: "center" }),',
+                          '  mat',
+                          ');',
+                          'scene.add(ic);',
+                        ]),
+              },
+            ],
           },
           {
             slug: 'electronics-pin-header',
@@ -2643,7 +2636,7 @@ const
               {
                 label: '2×8 Shrouded IDC Box Header',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.45, metalness: 0.25 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.45, metalness: 0.25 });',
                   'const hdr = new THREE.Mesh(',
                   '  new THREE.Electronics.PinHeaderGeometry({ gender: "shrouded", rows: 2, cols: 8, scale: 35 }),',
                   '  mat',
@@ -2654,7 +2647,7 @@ const
               {
                 label: '1×8 Right-Angle Male GPIO',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.78, roughness: 0.26 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.51, roughness: 0.26 });',
                   'const hdr = new THREE.Mesh(',
                   '  new THREE.Electronics.PinHeaderGeometry({ gender: "male", rows: 1, cols: 8, rightAngle: true, scale: 40 }),',
                   '  mat',
@@ -2679,7 +2672,7 @@ const
               {
                 label: 'USB-C Receptacle',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.88, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.22 });',
                   'const conn = new THREE.Mesh(',
                   '  new THREE.Electronics.ConnectorGeometry({ kind: "usb-c", scale: 80, origin: "center" }),',
                   '  mat',
@@ -2690,7 +2683,7 @@ const
               {
                 label: 'RJ45 Ethernet Jack',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.75, roughness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.5, roughness: 0.28 });',
                   'const conn = new THREE.Mesh(',
                   '  new THREE.Electronics.ConnectorGeometry({ kind: "rj45", scale: 45, origin: "center" }),',
                   '  mat',
@@ -2701,7 +2694,7 @@ const
               {
                 label: '4-Pole Screw Terminal Block',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x16a34a, roughness: 0.42, metalness: 0.15 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.42, metalness: 0.15 });',
                   'const conn = new THREE.Mesh(',
                   '  new THREE.Electronics.ConnectorGeometry({ kind: "terminal-block", poles: 4, scale: 42, origin: "center" }),',
                   '  mat',
@@ -2712,7 +2705,7 @@ const
               {
                 label: 'SMA RF Coax Bulkhead',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.88, roughness: 0.2 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.53, roughness: 0.2 });',
                   'const conn = new THREE.Mesh(',
                   '  new THREE.Electronics.ConnectorGeometry({ kind: "sma", scale: 65, origin: "center" }),',
                   '  mat',
@@ -2723,7 +2716,7 @@ const
               {
                 label: 'HDMI Type-A Receptacle',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.88, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.22 });',
                   'const conn = new THREE.Mesh(',
                   '  new THREE.Electronics.ConnectorGeometry({ kind: "hdmi", scale: 55, origin: "center" }),',
                   '  mat',
@@ -2734,7 +2727,7 @@ const
               {
                 label: 'DC Barrel Power Jack',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.42, metalness: 0.28 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.42, metalness: 0.28 });',
                   'const conn = new THREE.Mesh(',
                   '  new THREE.Electronics.ConnectorGeometry({ kind: "barrel-jack", scale: 55, origin: "center" }),',
                   '  mat',
@@ -2756,7 +2749,7 @@ const
               {
                 label: 'M3 Brass Male-Female Hex',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.88, roughness: 0.22 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.53, roughness: 0.22 });',
                   'const spacer = new THREE.Mesh(',
                   '  new THREE.Electronics.StandoffSpacerGeometry({',
                   '    shape: "hex", thread: "M3", length: 0.012, maleStudLength: 0.005, origin: "center"',
@@ -2771,7 +2764,7 @@ const
               {
                 label: 'M4 Cylindrical Spacer',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.85, roughness: 0.24 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.53, roughness: 0.24 });',
                   'const spacer = new THREE.Mesh(',
                   '  new THREE.Electronics.StandoffSpacerGeometry({',
                   '    shape: "round", thread: "M4", length: 0.015, origin: "center"',
@@ -2799,7 +2792,7 @@ const
               {
                 label: '6×6 mm Tactile Push Switch',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4, metalness: 0.35 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4, metalness: 0.35 });',
                   'const part = new THREE.Mesh(',
                   '  new THREE.Electronics.DiscreteComponentGeometry({ kind: "tactile-switch", scale: 95, origin: "center" }),',
                   '  mat',
@@ -2810,7 +2803,7 @@ const
               {
                 label: 'Radial Electrolytic Capacitor',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.32, metalness: 0.45 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.32, metalness: 0.45 });',
                   'const part = new THREE.Mesh(',
                   '  new THREE.Electronics.DiscreteComponentGeometry({ kind: "electrolytic-cap", scale: 55, origin: "center" }),',
                   '  mat',
@@ -2821,7 +2814,7 @@ const
               {
                 label: '5 mm Domed Indicator LED',
                 code: wrapScene([
-                  'const mat = new THREE.MeshPhysicalMaterial({ color: 0xef4444, roughness: 0.12, metalness: 0.05, clearcoat: 1.0 });',
+                  'const mat = new THREE.MeshPhysicalMaterial({ color: 0xf87171, roughness: 0.12, metalness: 0.05, clearcoat: 1.0 });',
                   'const part = new THREE.Mesh(',
                   '  new THREE.Electronics.DiscreteComponentGeometry({ kind: "led-domed", scale: 65, origin: "center" }),',
                   '  mat',
@@ -2832,7 +2825,7 @@ const
               {
                 label: 'HC-49U Quartz Crystal',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.92, roughness: 0.18 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.54, roughness: 0.18 });',
                   'const part = new THREE.Mesh(',
                   '  new THREE.Electronics.DiscreteComponentGeometry({ kind: "crystal-hc49", scale: 55, origin: "center" }),',
                   '  mat',
@@ -2843,7 +2836,7 @@ const
               {
                 label: '0805 SMD Chip Passive',
                 code: wrapScene([
-                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.65, roughness: 0.3 });',
+                  'const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.47, roughness: 0.3 });',
                   'const part = new THREE.Mesh(',
                   '  new THREE.Electronics.DiscreteComponentGeometry({ kind: "smd-chip", package: "0805", scale: 180, origin: "center" }),',
                   '  mat',

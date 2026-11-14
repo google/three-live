@@ -5721,3 +5721,130 @@ fn test_stage3_science_crystal_miller_planes_and_callouts() {
     assert!(usda.contains("HydrogenBondDashes"));
     assert!(usda.contains("BondAngleArc"));
 }
+
+#[test]
+fn test_a11y_linter_tl601_to_tl606() {
+    use serde_json::json;
+    use three_live_compiler::{handle_mcp_request, validate_and_lint_scene};
+
+    let a11y_script = r#"
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+        sun.position.set(2, 4, 3);
+        scene.add(sun);
+
+        // TL601: Low non-text contrast (< 3.0:1 against #0d1629 dark studio background)
+        const darkChip = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 0.2, 0.6),
+            new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.4, roughness: 0.5 })
+        );
+        darkChip.name = 'DarkGullWingIC';
+        darkChip.position.set(-1.2, 0.1, 0);
+        scene.add(darkChip);
+
+        // TL602: 3D text / label contrast (< 4.5:1 WCAG AA text threshold)
+        const dimLabel = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.2, 0.05),
+            new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5 })
+        );
+        dimLabel.name = 'StatusLabel';
+        dimLabel.position.set(0, 0.8, 0);
+        dimLabel.userData.xr = { text: { text: 'LOW CONTRAST', size: 0.12 } };
+        scene.add(dimLabel);
+
+        // TL603 (tiny interactive target < 0.4% coverage) + TL604 (missing accessible name)
+        const tinyUnnamedBtn = new THREE.Mesh(
+            new THREE.SphereGeometry(0.03, 12, 8),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        tinyUnnamedBtn.position.set(0.8, 0.5, -1.5);
+        tinyUnnamedBtn.userData.xr = { grab: true };
+        scene.add(tinyUnnamedBtn);
+
+        // TL605: Vestibular comfort (orbit speed > 2.5 rad/s)
+        const fastSpinner = new THREE.Mesh(
+            new THREE.BoxGeometry(0.4, 0.4, 0.4),
+            new THREE.MeshStandardMaterial({ color: 0xfacc15 })
+        );
+        fastSpinner.name = 'RapidOrbitOrb';
+        fastSpinner.position.set(1.2, 0.5, 0);
+        fastSpinner.userData.xr = { orbit: { radius: 0.5, speed: 4.2 } };
+        scene.add(fastSpinner);
+
+        // TL606: Red-green interactive siblings of identical dimensions
+        const redBtn = new THREE.Mesh(
+            new THREE.BoxGeometry(0.35, 0.35, 0.35),
+            new THREE.MeshStandardMaterial({ color: 0xdc2626 })
+        );
+        redBtn.name = 'StopButton';
+        redBtn.position.set(-0.35, 0.2, 0.5);
+        redBtn.userData.xr = { grab: '1-hand' };
+        scene.add(redBtn);
+
+        const greenBtn = new THREE.Mesh(
+            new THREE.BoxGeometry(0.35, 0.35, 0.35),
+            new THREE.MeshStandardMaterial({ color: 0x16a34a })
+        );
+        greenBtn.name = 'StartButton';
+        greenBtn.position.set(0.35, 0.2, 0.5);
+        greenBtn.userData.xr = { grab: '1-hand' };
+        scene.add(greenBtn);
+
+        camera.position.set(0, 1.2, 3.5);
+        camera.lookAt(0, 0.4, 0);
+    "#;
+
+    let report = validate_and_lint_scene(a11y_script, "a11y.js", 1.5);
+    assert!(
+        report.valid,
+        "Default validation should keep valid=true when only warnings/infos are present: {:?}",
+        report.diagnostics
+    );
+
+    for expected_code in ["TL601", "TL602", "TL603", "TL604", "TL605", "TL606"] {
+        assert!(
+            report.diagnostics.iter().any(|d| d.code == expected_code),
+            "Expected {} diagnostic in report, got: {:?}",
+            expected_code,
+            report.diagnostics
+        );
+    }
+
+    // Verify severities: TL601–TL603 are warnings; TL604–TL606 are info suggestions
+    for warn_code in ["TL601", "TL602", "TL603"] {
+        let diag = report.diagnostics.iter().find(|d| d.code == warn_code).unwrap();
+        assert_eq!(diag.severity, "warning", "{} should be warning by default", warn_code);
+        assert!(diag.hint.is_some(), "{} should include an actionable hint", warn_code);
+    }
+    for info_code in ["TL604", "TL605", "TL606"] {
+        let diag = report.diagnostics.iter().find(|d| d.code == info_code).unwrap();
+        assert_eq!(diag.severity, "info", "{} should be info suggestion by default", info_code);
+        assert!(diag.hint.is_some(), "{} should include an actionable hint", info_code);
+    }
+
+    // Verify MCP `three_live_validate` returns the TL601–TL606 diagnostics in its JSON report
+    let mcp_req = json!({
+        "jsonrpc": "2.0",
+        "id": 601,
+        "method": "tools/call",
+        "params": {
+            "name": "three_live_validate",
+            "arguments": {
+                "code": a11y_script
+            }
+        }
+    });
+    let mcp_resp = handle_mcp_request(&mcp_req).expect("MCP response");
+    assert_eq!(mcp_resp["result"]["isError"], false);
+    let mcp_report: serde_json::Value =
+        serde_json::from_str(mcp_resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(mcp_report["valid"], true);
+    let mcp_diags = mcp_report["diagnostics"].as_array().unwrap();
+    for expected_code in ["TL601", "TL602", "TL603", "TL604", "TL605", "TL606"] {
+        assert!(
+            mcp_diags.iter().any(|d| d["code"] == expected_code),
+            "MCP three_live_validate missing {}",
+            expected_code
+        );
+    }
+}

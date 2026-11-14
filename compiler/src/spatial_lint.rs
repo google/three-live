@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Automated 3D Spatial, Frustum, Grounding, and Lighting Linter (`TL301–TL307`).
+//! Automated 3D Spatial, Frustum, Grounding, Lighting, and Accessibility Linter (`TL301–TL307`,
+//! `TL601–TL606`).
 
 use crate::scene::{CameraConfig, Diagnostic, SceneGraph};
 use serde::{Deserialize, Serialize};
@@ -584,6 +585,124 @@ fn is_environment_or_container_name(name: &str) -> bool {
     ENV_KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
+fn is_background_or_floor_name(name: &str) -> bool {
+    if is_environment_or_container_name(name) {
+        return true;
+    }
+    let lower = name.to_ascii_lowercase();
+    const FLOOR_KEYWORDS: &[&str] = &["floor", "ground", "pedestal", "workbench", "grid"];
+    FLOOR_KEYWORDS.iter().any(|kw| lower.contains(kw))
+}
+
+fn is_3d_text_node(node_name: &str, xr_traits_val: Option<&serde_json::Value>) -> bool {
+    if xr_traits_val.and_then(|v| v.as_object()).is_some_and(|obj| obj.contains_key("text")) {
+        return true;
+    }
+    let lower = node_name.to_ascii_lowercase();
+    lower.contains("text") || lower.contains("label")
+}
+
+fn is_interactive_node(
+    xr_keys: &[String],
+    inter_events: &[String],
+    has_interactivity_obj: bool,
+) -> bool {
+    if !inter_events.is_empty() || has_interactivity_obj {
+        return true;
+    }
+    xr_keys.iter().any(|k| matches!(k.as_str(), "grab" | "handles" | "gaze" | "holdToAsk"))
+}
+
+fn has_accessible_name(raw_name: &str, xr_traits_val: Option<&serde_json::Value>) -> bool {
+    if let Some(obj) = xr_traits_val.and_then(|v| v.as_object()) {
+        for key in ["label", "name", "ariaLabel"] {
+            if obj.get(key).and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty()) {
+                return true;
+            }
+        }
+        if obj
+            .get("holdToAsk")
+            .and_then(|h| h.as_object())
+            .and_then(|h| h.get("prompt"))
+            .and_then(|p| p.as_str())
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            return true;
+        }
+    }
+    let trimmed = raw_name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "mesh" | "node" | "object" | "object3d" | "group" | "primitive" | "unnamed"
+    ) {
+        return false;
+    }
+    if lower
+        .strip_prefix("mesh_")
+        .or_else(|| lower.strip_prefix("node_"))
+        .or_else(|| lower.strip_prefix("object_"))
+        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    {
+        return false;
+    }
+    true
+}
+
+fn linear_to_srgb_channel(c: f32) -> f32 {
+    let x = c.clamp(0.0, 1.0);
+    if x <= 0.0031308 {
+        x * 12.92
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Computes the estimated shaded surface luminance and WCAG 2.1 contrast ratio against the
+/// default dark studio viewport background (`#0d1629` -> `#04070e`, `L_bg = 0.010`).
+/// Returns `None` when the material color is driven by a procedural `TSL` shader graph.
+fn compute_mesh_luminance_and_contrast(scene: &SceneGraph, mesh_idx: usize) -> Option<(f32, f32)> {
+    let mesh = scene.meshes.get(mesh_idx)?;
+    let mat =
+        mesh.material_index.and_then(|idx| scene.materials.get(idx)).cloned().unwrap_or_default();
+    if mat.tsl.is_some() {
+        return None;
+    }
+    let mat_lum = 0.2126 * mat.base_color[0].clamp(0.0, 1.0)
+        + 0.7152 * mat.base_color[1].clamp(0.0, 1.0)
+        + 0.0722 * mat.base_color[2].clamp(0.0, 1.0);
+    let base_lum = if !mesh.colors.is_empty() {
+        let v_sum: f32 = mesh
+            .colors
+            .iter()
+            .map(|c| {
+                0.2126 * c[0].clamp(0.0, 1.0)
+                    + 0.7152 * c[1].clamp(0.0, 1.0)
+                    + 0.0722 * c[2].clamp(0.0, 1.0)
+            })
+            .sum();
+        (v_sum / (mesh.colors.len() as f32)) * mat_lum
+    } else {
+        mat_lum
+    };
+    let emissive_lum = (0.2126 * mat.emissive_factor[0].max(0.0)
+        + 0.7152 * mat.emissive_factor[1].max(0.0)
+        + 0.0722 * mat.emissive_factor[2].max(0.0))
+    .min(1.0);
+
+    let light_scale = if scene.lights.is_empty() { 0.70 } else { 1.05 };
+    let metal_atten = 1.0 - 0.55 * mat.metallic.clamp(0.0, 1.0);
+    let spec_floor = 0.010 * (1.0 - 0.50 * mat.roughness.clamp(0.0, 1.0));
+    let lit_lum = base_lum * light_scale * metal_atten + spec_floor;
+    let fg_lum = ((lit_lum / (1.0 + 0.25 * lit_lum)) + emissive_lum).clamp(0.0, 1.0);
+    let bg_lum = 0.010f32;
+    let contrast_ratio = (fg_lum.max(bg_lum) + 0.05) / (fg_lum.min(bg_lum) + 0.05);
+    Some((fg_lum, contrast_ratio))
+}
+
 /// Pure function that selects the active 0-based LOD child index for a given distance,
 /// or `-1` when culled beyond `cull_distance`.
 ///
@@ -952,6 +1071,152 @@ pub fn build_validation_report(
                         )),
                     });
                 }
+
+                // 3D/XR Accessibility Checks (TL601–TL605)
+                let has_inter_obj =
+                    scene.nodes.get(i).and_then(|n| n.interactivity.as_ref()).is_some();
+                let is_interactive = is_interactive_node(&xr_keys, &inter_events, has_inter_obj);
+
+                if in_frustum {
+                    if let Some(m_idx) = mesh_idx {
+                        let is_text = is_3d_text_node(&node_name, xr_traits_val);
+                        if let Some((_fg_lum, contrast_ratio)) =
+                            compute_mesh_luminance_and_contrast(scene, m_idx)
+                        {
+                            if is_text && contrast_ratio < 4.5 {
+                                diagnostics.push(Diagnostic {
+                                    code: "TL602".to_string(),
+                                    severity: "warning".to_string(),
+                                    message: format!(
+                                        "3D text node '{}' has luminance contrast {:.2}:1 (< 4.5:1 WCAG AA text minimum) against the viewport background.",
+                                        node_name, contrast_ratio
+                                    ),
+                                    node: Some(node_name.clone()),
+                                    line: None,
+                                    column: None,
+                                    hint: Some(format!(
+                                        "Use a high-luminance text color (e.g. 0xe2e8f0 or 0xffffff) or add a contrasting backing plate behind '{}'.",
+                                        node_name
+                                    )),
+                                });
+                            } else if !is_text
+                                && is_opaque
+                                && !has_zone_trait
+                                && (scene.meshes.len() == 1
+                                    || !is_background_or_floor_name(&node_name))
+                                && contrast_ratio < 3.0
+                            {
+                                diagnostics.push(Diagnostic {
+                                    code: "TL601".to_string(),
+                                    severity: "warning".to_string(),
+                                    message: format!(
+                                        "Mesh '{}' has low luminance contrast ({:.2}:1 < 3.0:1 WCAG AA non-text minimum) against the dark viewport background.",
+                                        node_name, contrast_ratio
+                                    ),
+                                    node: Some(node_name.clone()),
+                                    line: None,
+                                    column: None,
+                                    hint: Some(
+                                        "Use a brighter material color (e.g. >= 0x94a3b8 or 0x38bdf8), reduce metalness (<= 0.55), or add emissive/rim lighting so the mesh is clearly distinguishable."
+                                            .to_string(),
+                                    ),
+                                });
+                            }
+                        }
+                    }
+
+                    // TL603: Interactive Target Size (< 0.4% viewport coverage / < 2.5 deg visual
+                    // angle)
+                    if is_interactive && coverage_pct < 0.4 {
+                        diagnostics.push(Diagnostic {
+                            code: "TL603".to_string(),
+                            severity: "warning".to_string(),
+                            message: format!(
+                                "Interactive node '{}' covers only {:.1}% of the viewport (< 0.4% minimum XR/pointer target size).",
+                                node_name, coverage_pct
+                            ),
+                            node: Some(node_name.clone()),
+                            line: None,
+                            column: None,
+                            hint: Some(format!(
+                                "Increase the scale of '{}', add a larger collider/hit proxy, or move it closer to the camera so users can reliably select or grab it.",
+                                node_name
+                            )),
+                        });
+                    }
+                }
+
+                // TL604: Missing Accessible Name / Semantic Label on Interactive Node
+                if is_interactive && !has_accessible_name(&node_name, xr_traits_val) {
+                    diagnostics.push(Diagnostic {
+                        code: "TL604".to_string(),
+                        severity: "info".to_string(),
+                        message: format!(
+                            "Interactive node '{}' has no descriptive accessible name or label for screen readers and voice selection.",
+                            node_name
+                        ),
+                        node: Some(node_name.clone()),
+                        line: None,
+                        column: None,
+                        hint: Some(
+                            "Assign a descriptive mesh.name (e.g. mesh.name = 'MainControlValve') or userData.xr.label so assistive technologies and Talk-to-Select can address it."
+                                .to_string(),
+                        ),
+                    });
+                }
+
+                // TL605: Vestibular & Motion Safety (WCAG 2.1 SC 2.3.3)
+                if let Some(xr_obj) = xr_traits_val.and_then(|v| v.as_object()) {
+                    if let Some(orbit_speed) = xr_obj
+                        .get("orbit")
+                        .and_then(|o| o.as_object())
+                        .and_then(|o| o.get("speed"))
+                        .and_then(|s| s.as_f64())
+                    {
+                        if orbit_speed.is_finite() && orbit_speed.abs() > 2.5 {
+                            diagnostics.push(Diagnostic {
+                                code: "TL605".to_string(),
+                                severity: "info".to_string(),
+                                message: format!(
+                                    "Node '{}' has high continuous orbit speed ({:.2} rad/s > 2.5 rad/s vestibular comfort threshold).",
+                                    node_name,
+                                    orbit_speed.abs()
+                                ),
+                                node: Some(node_name.clone()),
+                                line: None,
+                                column: None,
+                                hint: Some(
+                                    "Reduce userData.xr.orbit.speed to <= 1.5 rad/s to prevent vestibular discomfort in XR."
+                                        .to_string(),
+                                ),
+                            });
+                        }
+                    }
+                    if let Some(stiffness) = xr_obj
+                        .get("follow")
+                        .and_then(|f| f.as_object())
+                        .and_then(|f| f.get("stiffness"))
+                        .and_then(|s| s.as_f64())
+                    {
+                        if stiffness.is_finite() && stiffness > 25.0 {
+                            diagnostics.push(Diagnostic {
+                                code: "TL605".to_string(),
+                                severity: "info".to_string(),
+                                message: format!(
+                                    "Node '{}' has high head-follow stiffness ({:.1} > 25.0 vestibular comfort threshold).",
+                                    node_name, stiffness
+                                ),
+                                node: Some(node_name.clone()),
+                                line: None,
+                                column: None,
+                                hint: Some(
+                                    "Reduce userData.xr.follow.stiffness (e.g. 4..12) and enable lazy follow so head-locked UI moves smoothly."
+                                        .to_string(),
+                                ),
+                            });
+                        }
+                    }
+                }
             }
 
             node_reports.push(NodeSpatialReport {
@@ -1112,6 +1377,84 @@ pub fn build_validation_report(
             let ix = (aabb_a.max[0].min(aabb_b.max[0]) - aabb_a.min[0].max(aabb_b.min[0])).max(0.0);
             let iy = (aabb_a.max[1].min(aabb_b.max[1]) - aabb_a.min[1].max(aabb_b.min[1])).max(0.0);
             let iz = (aabb_a.max[2].min(aabb_b.max[2]) - aabb_a.min[2].max(aabb_b.min[2])).max(0.0);
+            let sb = aabb_b.size();
+
+            // TL606: Color-Vision Deficiency (Deuteranopia/Protanopia) Sibling Indistinguishability
+            let inter_a = is_interactive_node(
+                &node_reports[i].xr_traits,
+                &node_reports[i].interactivity_events,
+                scene.nodes.get(i).and_then(|n| n.interactivity.as_ref()).is_some(),
+            );
+            let inter_b = is_interactive_node(
+                &node_reports[j].xr_traits,
+                &node_reports[j].interactivity_events,
+                scene.nodes.get(j).and_then(|n| n.interactivity.as_ref()).is_some(),
+            );
+            if inter_a && inter_b && mat_a != mat_b {
+                let same_dims = (0..3).all(|k| {
+                    let mx = sa[k].max(sb[k]);
+                    mx > 1e-4 && (sa[k].min(sb[k]) / mx) >= 0.85
+                });
+                if same_dims {
+                    let ma =
+                        mat_a.and_then(|idx| scene.materials.get(idx)).cloned().unwrap_or_default();
+                    let mb =
+                        mat_b.and_then(|idx| scene.materials.get(idx)).cloned().unwrap_or_default();
+                    if ma.base_color_texture.is_none()
+                        && mb.base_color_texture.is_none()
+                        && ma.tsl.is_none()
+                        && mb.tsl.is_none()
+                    {
+                        let srgb_a = [
+                            linear_to_srgb_channel(ma.base_color[0]),
+                            linear_to_srgb_channel(ma.base_color[1]),
+                            linear_to_srgb_channel(ma.base_color[2]),
+                        ];
+                        let srgb_b = [
+                            linear_to_srgb_channel(mb.base_color[0]),
+                            linear_to_srgb_channel(mb.base_color[1]),
+                            linear_to_srgb_channel(mb.base_color[2]),
+                        ];
+                        let rgb_dist = ((srgb_a[0] - srgb_b[0]).powi(2)
+                            + (srgb_a[1] - srgb_b[1]).powi(2)
+                            + (srgb_a[2] - srgb_b[2]).powi(2))
+                        .sqrt();
+                        // Red-green opponent channel vs blue-yellow channel & WCAG 1.4.1 (< 3:1)
+                        // luminance check
+                        let rg_a = srgb_a[0] - srgb_a[1];
+                        let rg_b = srgb_b[0] - srgb_b[1];
+                        let opposite_rg = rg_a * rg_b < 0.0 && (rg_a - rg_b).abs() >= 0.45;
+                        let low_blue_diff = srgb_a[2] < 0.40
+                            && srgb_b[2] < 0.40
+                            && (srgb_a[2] - srgb_b[2]).abs() < 0.22;
+                        let lum_a = 0.2126 * ma.base_color[0]
+                            + 0.7152 * ma.base_color[1]
+                            + 0.0722 * ma.base_color[2];
+                        let lum_b = 0.2126 * mb.base_color[0]
+                            + 0.7152 * mb.base_color[1]
+                            + 0.0722 * mb.base_color[2];
+                        let lum_cr = (lum_a.max(lum_b) + 0.05) / (lum_a.min(lum_b) + 0.05);
+                        if rgb_dist >= 0.35 && opposite_rg && low_blue_diff && lum_cr < 2.0 {
+                            diagnostics.push(Diagnostic {
+                                code: "TL606".to_string(),
+                                severity: "info".to_string(),
+                                message: format!(
+                                    "Interactive sibling meshes '{}' and '{}' have identical dimensions and rely on red-green hue alone (indistinguishable under deuteranopia/protanopia).",
+                                    node_reports[i].name, node_reports[j].name
+                                ),
+                                node: Some(node_reports[i].name.clone()),
+                                line: None,
+                                column: None,
+                                hint: Some(
+                                    "Differentiate interactive controls by shape, scale, 3D text/icon label, or luminance contrast (>= 3:1) in addition to color."
+                                        .to_string(),
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+
             if ix <= 0.0 || iy <= 0.0 || iz <= 0.0 {
                 continue;
             }
@@ -1120,7 +1463,6 @@ pub fn build_validation_report(
             let vol_b = aabb_b.volume();
             let min_vol = vol_a.min(vol_b);
             let max_vol = vol_a.max(vol_b);
-            let sb = aabb_b.size();
             let cb = aabb_b.center();
             let same_proportion = (0..3).all(|k| {
                 let mx = sa[k].max(sb[k]);
