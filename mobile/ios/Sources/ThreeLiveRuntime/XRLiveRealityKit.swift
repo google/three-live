@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#if canImport(RealityKit) && !os(tvOS)
+#if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
   import Foundation
   import RealityKit
 
@@ -163,7 +163,7 @@
     }
   }
 
-  @available(iOS 15.0, macOS 12.0, visionOS 1.0, *)
+  @available(iOS 15.0, macOS 12.0, visionOS 1.0, tvOS 26.0, *)
   extension RealityKitHelper {
 
     /// Extracts a map of node/entity name to `XRLiveEntityTraits` from a compiled `.glb` buffer's
@@ -239,7 +239,7 @@
 
     /// Renders an `outline` trait as an inverted hull: an unlit, front-face-culled copy of each
     /// model under `entity`, pushed outward by the trait thickness (pixels, converted at a 1.5 m
-    /// viewing distance) so only its silhouette rim shows. Works on iOS and visionOS.
+    /// viewing distance) so only its silhouette rim shows. Works on iOS, macOS, tvOS, and visionOS.
     @MainActor
     public static func applyOutline(_ outline: XRLiveOutline, to entity: Entity) {
       removeOutline(from: entity)
@@ -247,16 +247,9 @@
       var material = UnlitMaterial(
         color: XRPlatformColor(
           red: CGFloat(rgb.x), green: CGFloat(rgb.y), blue: CGFloat(rgb.z), alpha: 1))
-      // Front-face culling (iOS 18 / visionOS 2 SDK) is what turns the shell into a rim; without
-      // it the shell would hide the model, so older systems fall back to a hover highlight.
-      var culled = false
-      #if compiler(>=6.0)
-        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
-          material.faceCulling = .front
-          culled = true
-        }
-      #endif
-      guard culled else {
+      // Front-face culling is what turns the shell into a rim; without it the shell would hide
+      // the model, so older systems fall back to a hover highlight.
+      guard cullFrontFaces(&material) else {
         #if os(visionOS)
           entity.components.set(HoverEffectComponent())
         #endif
@@ -281,6 +274,18 @@
         shell.position = bounds.center * (1 - s)
         owner.addChild(shell)
       }
+    }
+
+    /// Turns on front-face culling where RealityKit supports it (iOS 18, macOS 15, tvOS 26 and
+    /// visionOS 2 SDKs) and returns whether it did.
+    private static func cullFrontFaces(_ material: inout UnlitMaterial) -> Bool {
+      #if compiler(>=6.0)
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+          material.faceCulling = .front
+          return true
+        }
+      #endif
+      return false
     }
 
     /// Removes outline shells previously added by `applyOutline`.

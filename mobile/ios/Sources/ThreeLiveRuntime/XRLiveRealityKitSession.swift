@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-// RealityKit binding for `XRLiveRuntimeSession`. Excluded on tvOS for the same reason as
-// `RealityKitHelper` (Entity loading APIs are unavailable there).
-#if canImport(RealityKit) && !os(tvOS)
+// RealityKit binding for `XRLiveRuntimeSession`. Requires tvOS 26 on tvOS, like
+// `RealityKitHelper`.
+#if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
   import Combine
   import Foundation
   import RealityKit
@@ -81,10 +81,11 @@
   /// live.headPoseProvider = { XRPose(matrix: cameraTransform) }
   /// live.start()  // fires event/onStart and steps from SceneEvents.Update once in a scene
   /// // iOS:      live.handleTap(at: point, in: arView)
+  /// // tvOS:     live.handleTap(at: reticleCenter, in: arView)  // Siri Remote Select
   /// // visionOS: SpatialTapGesture().targetedToAnyEntity()
   /// //             .onEnded { live.handleTap(on: $0.entity) }
   /// ```
-  @available(iOS 15.0, macOS 12.0, visionOS 1.0, *)
+  @available(iOS 15.0, macOS 12.0, visionOS 1.0, tvOS 26.0, *)
   @MainActor
   public final class XRLiveRealityKitSession {
     /// The platform-neutral runtime.
@@ -438,7 +439,7 @@
       }
     #endif
 
-    #if os(iOS) || os(macOS)
+    #if os(iOS) || os(macOS) || os(tvOS)
       /// Configures `arView`'s studio environment IBL intensity so PBR materials match Web and
       /// Android without clipping top faces to white.
       public static func configureStudioEnvironment(of arView: ARView) {
@@ -512,7 +513,7 @@
       return true
     }
 
-    #if os(iOS) || os(macOS)
+    #if os(iOS) || os(macOS) || os(tvOS)
       /// Hit-tests `point` in `arView` and dispatches a select on the nearest hit entity.
       @discardableResult
       public func handleTap(at point: CGPoint, in arView: ARView) -> Bool {

@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-// RealityKit's Entity loading APIs are unavailable on tvOS below tvOS 26, and
-// `Entity.loadAsync(contentsOf:)` is marked explicitly unavailable there, so this helper is
-// not offered on tvOS. The compiler itself (`ThreeCompiler`) is fully supported on tvOS.
-#if canImport(RealityKit) && !os(tvOS)
+// RealityKit reached tvOS in tvOS 26 (Xcode 26, Swift 6.2), so on tvOS this helper requires
+// tvOS 26 while the compiler itself (`ThreeCompiler`) keeps the package's tvOS 15 floor.
+#if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
   import Combine
   import Dispatch
   import Foundation
@@ -37,7 +36,7 @@
   }
 
   /// Helper utilities for loading procedural Three.js models directly into Apple RealityKit.
-  @available(iOS 15.0, macOS 12.0, visionOS 1.0, *)
+  @available(iOS 15.0, macOS 12.0, visionOS 1.0, tvOS 26.0, *)
   public enum RealityKitHelper {
 
     /// Serial queue for temporary-file writes, kept off both the main actor and the
@@ -124,10 +123,16 @@
     /// floor, so there is never a reason to take the blocking path.
     @MainActor
     private static func loadEntityWithoutBlocking(contentsOf url: URL) async throws -> Entity {
-      for try await entity in Entity.loadAsync(contentsOf: url).values {
-        return entity
-      }
-      throw RealityKitHelperError.entityLoadProducedNoResult
+      #if !os(tvOS)
+        for try await entity in Entity.loadAsync(contentsOf: url).values {
+          return entity
+        }
+        throw RealityKitHelperError.entityLoadProducedNoResult
+      #else
+        // Not reached on tvOS: RealityKit there starts at tvOS 26, which always has the `async`
+        // initializer. tvOS has no `loadAsync`, so this branch only keeps the fallback compiling.
+        return try await Entity(contentsOf: url)
+      #endif
     }
 
     /// Removes USD-imported `AnchoringComponent` instances (`preliminary:anchoring:type` in `.usda`

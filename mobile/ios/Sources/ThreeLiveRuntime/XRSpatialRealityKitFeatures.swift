@@ -16,7 +16,7 @@
 // particles, driven by world-space pointer rays from the host (ARView touches on iOS,
 // DragGesture / spatial events on visionOS). Same math and event details as the web plugins.
 
-#if canImport(RealityKit) && !os(tvOS)
+#if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
   import Combine
   import CoreGraphics
   import Foundation
@@ -26,6 +26,7 @@
     import Metal
   #endif
 
+  @available(tvOS 26.0, *)
   @MainActor
   public final class XRSpatialRealityKitFeatures {
     /// `{mesh, scale, yawDeg}` when a handle drag ends (web `xr-handles-change`).
@@ -2502,19 +2503,26 @@
     }
 
     private static func makeGaussianTexture(size: Int = 64) -> TextureResource? {
-      let rgba = SplatParser.gaussianFalloffRGBA(size: size)
-      let colorSpace = CGColorSpaceCreateDeviceRGB()
-      let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+      makeTexture(rgba: SplatParser.gaussianFalloffRGBA(size: size), size: size, semantic: .color)
+    }
+
+    /// Creates a `size`×`size` texture from straight-alpha RGBA8 bytes, synchronously.
+    static func makeTexture(
+      rgba: [UInt8], size: Int, semantic: TextureResource.Semantic
+    ) -> TextureResource? {
       guard let provider = CGDataProvider(data: Data(rgba) as CFData),
         let cgImage = CGImage(
           width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
-          space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
-          shouldInterpolate: true, intent: .defaultIntent)
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue), provider: provider,
+          decode: nil, shouldInterpolate: true, intent: .defaultIntent)
       else { return nil }
-      if #available(iOS 15.0, macOS 12.0, visionOS 1.0, *) {
-        return try? TextureResource.generate(from: cgImage, options: .init(semantic: .color))
-      }
-      return nil
+      #if !os(tvOS)
+        return try? TextureResource.generate(from: cgImage, options: .init(semantic: semantic))
+      #else
+        // tvOS has no `generate(from:options:)`; `init(image:options:)` is its synchronous twin.
+        return try? TextureResource(image: cgImage, options: .init(semantic: semantic))
+      #endif
     }
 
     static func splatMesh(_ g: SplatParser.QuadGeometry) -> MeshResource? {
@@ -2572,17 +2580,7 @@
           rgba[idx + 3] = v
         }
       }
-      let colorSpace = CGColorSpaceCreateDeviceRGB()
-      let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
-      guard let provider = CGDataProvider(data: Data(rgba) as CFData),
-        let cgImage = CGImage(
-          width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4,
-          space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
-          shouldInterpolate: true, intent: .defaultIntent)
-      else { return nil }
-      guard #available(iOS 15.0, macOS 12.0, visionOS 1.0, *),
-        let tex = try? TextureResource.generate(from: cgImage, options: .init(semantic: .raw))
-      else { return nil }
+      guard let tex = makeTexture(rgba: rgba, size: n, semantic: .raw) else { return nil }
       var mat = UnlitMaterial(color: .black)
       mat.color = .init(tint: .black)
       mat.blending = .transparent(opacity: .init(scale: 0.68, texture: .init(tex)))

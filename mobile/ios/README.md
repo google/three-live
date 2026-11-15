@@ -27,11 +27,12 @@ Platform | Minimum | `ThreeCompiler` | `RealityKitHelper` | `QuickLookHelper`
 iOS      | 15.0    | ✅               | ✅                  | ✅
 visionOS | 1.0     | ✅               | ✅                  | ✅
 macOS    | 12.0    | ✅               | ✅                  | —
-tvOS     | 15.0    | ✅               | —                  | —
+tvOS     | 15.0    | ✅               | ✅ (tvOS 26+)       | —
 
-`RealityKitHelper` is excluded on tvOS because RealityKit's `Entity` loading
-APIs are not available there below tvOS 26, and `QuickLookHelper` requires UIKit
-and QuickLook.
+On tvOS, the RealityKit layer requires tvOS 26 (the first release with
+RealityKit) and Xcode 26; apps that only use `ThreeCompiler` keep the tvOS 15
+floor. Post-processing (`enablePostProcessing(on:)`) stays iOS-only.
+`QuickLookHelper` requires UIKit and QuickLook, which tvOS does not provide.
 
 ## Installation
 
@@ -157,6 +158,7 @@ func run(glb: Data) async throws -> XRLiveRealityKitSession? {
     return live
 }
 // iOS:      live.handleTap(at: point, in: arView)
+// tvOS:     live.handleTap(at: reticleCenter, in: arView)  // Siri Remote Select
 // visionOS: SpatialTapGesture().targetedToAnyEntity().onEnded { live.handleTap(on: $0.entity) }
 ```
 

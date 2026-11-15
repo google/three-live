@@ -232,7 +232,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(XRLiveGLB.usdPrimName(for: "2 lamp-a", fallback: "x"), "_2_lamp_a")
   }
 
-  #if canImport(RealityKit) && !os(tvOS)
+  #if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
     func testEntityTraitsReadLazyFollowObjects() throws {
       let xr = obj(
         #"{"grab": "1-hand", "follow": {"mode": "head", "lazy": true, "distance": 1.5}, "physics": "kinematic"}"#

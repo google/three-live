@@ -17,7 +17,7 @@
 // Draws an `XRSimWorld` with RealityKit the way the web `xr-live-sim` plugins do (port of
 // XRSimRenderBridge.kt).
 
-#if canImport(RealityKit) && !os(tvOS)
+#if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
   import Foundation
   import RealityKit
   import simd
@@ -27,6 +27,7 @@
   /// bars, projectiles, burst fragments, and colored zone outlines) under the session's scene
   /// space. Hosts forward `XRSimWorldDelegate` instance callbacks and call `sync()` after every
   /// `XRSimWorld.step`.
+  @available(tvOS 26.0, *)
   @MainActor
   public final class XRSimRealityKitBridge {
     /// Camera follow requests: world-space target (`nil` stops following), polar angle from

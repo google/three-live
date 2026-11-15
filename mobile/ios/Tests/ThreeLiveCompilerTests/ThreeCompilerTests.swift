@@ -15,7 +15,8 @@
  */
 
 import XCTest
-#if canImport(RealityKit) && !os(tvOS)
+#if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
+  import Metal
   import RealityKit
 #endif
 
@@ -291,7 +292,7 @@ final class ThreeCompilerTests: XCTestCase {
     }
   }
 
-  #if canImport(RealityKit) && !os(tvOS)
+  #if canImport(RealityKit) && (!os(tvOS) || compiler(>=6.2))
     func testXRLiveEntityTraitsCodableRoundTrip() throws {
       let json = """
         {
@@ -321,7 +322,92 @@ final class ThreeCompilerTests: XCTestCase {
     }
 
     @MainActor
+    func testOutlineAddsFrontFaceCulledShellAndRemovesIt() throws {
+      #if compiler(>=6.0)
+        guard #available(iOS 18.0, macOS 15.0, visionOS 2.0, tvOS 26.0, *) else {
+          throw XCTSkip(
+            "Outline shells need front-face culling (iOS 18, macOS 15, tvOS 26, visionOS 2)")
+        }
+        let model = ModelEntity(
+          mesh: .generateBox(size: 0.5), materials: [SimpleMaterial()])
+        RealityKitHelper.applyOutline(XRLiveOutline(color: "#ff0000"), to: model)
+
+        let shells = model.children.filter { RealityKitHelper.isOutlineShell($0) }
+        XCTAssertEqual(shells.count, 1)
+        let shell = try XCTUnwrap(shells.first as? ModelEntity)
+        XCTAssertGreaterThan(shell.scale.x, 1)
+        let material = try XCTUnwrap(shell.model?.materials.first as? UnlitMaterial)
+        XCTAssertEqual(material.faceCulling, .front)
+
+        RealityKitHelper.removeOutline(from: model)
+        XCTAssertFalse(model.children.contains { RealityKitHelper.isOutlineShell($0) })
+      #else
+        throw XCTSkip("Outline shells need the Swift 6 SDKs")
+      #endif
+    }
+
+    @MainActor
+    func testMakeTextureKeepsRawBytesAndColorAlpha() throws {
+      guard #available(tvOS 26.0, *) else {
+        throw XCTSkip("RealityKit requires tvOS 26")
+      }
+      guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue()
+      else {
+        throw XCTSkip("Reading textures back needs a Metal device")
+      }
+      // Straight-alpha RGBA with varied channels and alpha, so byte order, alpha handling and
+      // the semantic all show up in the read-back bytes.
+      let size = 8
+      var rgba = [UInt8](repeating: 0, count: size * size * 4)
+      for i in 0..<(size * size) {
+        rgba[i * 4] = UInt8(truncatingIfNeeded: i * 4)
+        rgba[i * 4 + 1] = UInt8(truncatingIfNeeded: 255 - i * 3)
+        rgba[i * 4 + 2] = UInt8(truncatingIfNeeded: i * 37)
+        rgba[i * 4 + 3] = i.isMultiple(of: 2) ? 255 : 128
+      }
+      func readBack(_ semantic: TextureResource.Semantic) throws -> [UInt8] {
+        let texture = try XCTUnwrap(
+          XRSpatialRealityKitFeatures.makeTexture(rgba: rgba, size: size, semantic: semantic))
+        XCTAssertEqual(texture.width, size)
+        XCTAssertEqual(texture.height, size)
+        // Private texture, then a blit into a shared buffer: every Metal GPU supports both
+        // (macOS on Intel and AMD has no shared-storage textures).
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+          pixelFormat: .rgba8Unorm, width: size, height: size, mipmapped: false)
+        descriptor.usage = [.shaderRead, .shaderWrite]
+        descriptor.storageMode = .private
+        let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+        try texture.copy(to: target)
+        let bytesPerRow = size * 4
+        let buffer = try XCTUnwrap(
+          device.makeBuffer(length: bytesPerRow * size, options: .storageModeShared))
+        let commands = try XCTUnwrap(queue.makeCommandBuffer())
+        let blit = try XCTUnwrap(commands.makeBlitCommandEncoder())
+        blit.copy(
+          from: target, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(),
+          sourceSize: MTLSize(width: size, height: size, depth: 1), to: buffer,
+          destinationOffset: 0, destinationBytesPerRow: bytesPerRow,
+          destinationBytesPerImage: bytesPerRow * size)
+        blit.endEncoding()
+        commands.commit()
+        commands.waitUntilCompleted()
+        return [UInt8](UnsafeRawBufferPointer(start: buffer.contents(), count: buffer.length))
+      }
+      // Raw data (the contact shadow's opacity mask) comes back byte for byte.
+      XCTAssertEqual(try readBack(.raw), rgba)
+      // Color data (the splat falloff) is color-managed: RGB changes, alpha does not.
+      let color = try readBack(.color)
+      XCTAssertNotEqual(color, rgba)
+      XCTAssertEqual(
+        stride(from: 3, to: color.count, by: 4).map { color[$0] },
+        stride(from: 3, to: rgba.count, by: 4).map { rgba[$0] })
+    }
+
+    @MainActor
     func testWorkbenchAndBallpitLoadInRealityKit() async throws {
+      guard #available(tvOS 26.0, *) else {
+        throw XCTSkip("RealityKit requires tvOS 26")
+      }
       let workbenchScript = """
         const base = new THREE.Mesh(
           new THREE.CylinderGeometry(0.9, 1.0, 0.08, 36),
@@ -431,9 +517,10 @@ final class ThreeCompilerTests: XCTestCase {
     /// `RealityKitHelper.applyXRTraits`), and session material changes never repaint the rim.
     @MainActor
     func testRealityKitSessionRendersOutlineTraits() async throws {
-      // Outline shells need front-face culling (iOS 18 / macOS 15 / visionOS 2 SDKs).
+      // Outline shells need front-face culling (iOS 18 / macOS 15 / visionOS 2 SDKs);
+      // RealityKit on tvOS starts at tvOS 26.
       #if compiler(>=6.0)
-        guard #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) else {
+        guard #available(iOS 18.0, macOS 15.0, visionOS 2.0, tvOS 26.0, *) else {
           throw XCTSkip("Outline shells need front-face culling")
         }
       #else
