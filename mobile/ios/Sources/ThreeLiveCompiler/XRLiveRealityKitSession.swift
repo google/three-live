@@ -147,7 +147,8 @@
       var byName: [String: [Entity]] = [:]
       var meshEntitiesInOrder: [Entity] = []
       func visit(_ entity: Entity, depth: Int) {
-        guard depth < 256 else { return }
+        // Outline shells from an earlier binding are decoration, never glTF nodes.
+        guard depth < 256, !RealityKitHelper.isOutlineShell(entity) else { return }
         // Strip USD-imported rigid-body and anchoring components (`PhysicsBodyAPI` and
         // `preliminary:anchoring:type` in `.usda` are emitted for standalone AR Quick Look;
         // in a live session `XRLiveRuntimeSession.stepPhysics` owns rigid-body motion and the
@@ -249,6 +250,15 @@
             entity, state: state, primitives: primitives, materialIndex: materialIndex, depth: 0)
         }
       }
+
+      // Draw `outline` traits, as web post-processing does. Compiled GLBs list parents before
+      // children and `applyOutline` resets its whole subtree, so a child's own outline wins.
+      for index in 0..<session.nodeCount {
+        guard let entity = entitiesByNode[index],
+          let outline = session.traits(at: index)?.outline, outline.enabled
+        else { continue }
+        RealityKitHelper.applyOutline(outline, to: entity)
+      }
     }
 
     private static func isInsideUsdMeshesScope(_ entity: Entity, stopAt root: Entity) -> Bool {
@@ -261,6 +271,16 @@
         depth += 1
       }
       return false
+    }
+
+    private static func removeOutlineShellCollision(under entity: Entity) {
+      for child in entity.children {
+        if RealityKitHelper.isOutlineShell(child) {
+          child.components.remove(CollisionComponent.self)
+        } else {
+          removeOutlineShellCollision(under: child)
+        }
+      }
     }
 
     private static func isApproximatelyIdentity(_ m: simd_float4x4) -> Bool {
@@ -296,6 +316,8 @@
       where session.isSelectable(index) || session.traits(at: index)?.physics == "dynamic" {
         if !entity.components.has(CollisionComponent.self) {
           entity.generateCollisionShapes(recursive: true)
+          // Taps should land on the model, not on its enlarged outline shell.
+          Self.removeOutlineShellCollision(under: entity)
         }
         #if os(visionOS)
           entity.components.set(InputTargetComponent(allowedInputTypes: .all))
@@ -666,6 +688,8 @@
     private func recolor(
       _ entity: Entity, state: XRMaterialState, primitives: [Int], materialIndex: Int, depth: Int
     ) {
+      // Outline shells keep their own unlit color through material changes.
+      guard !RealityKitHelper.isOutlineShell(entity) else { return }
       if var model = entity.components[ModelComponent.self] {
         let count = model.materials.count
         for k in 0..<count {

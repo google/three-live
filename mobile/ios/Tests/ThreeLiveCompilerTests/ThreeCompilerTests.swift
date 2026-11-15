@@ -425,5 +425,115 @@ final class ThreeCompilerTests: XCTestCase {
         )
       }
     }
+
+    /// `userData.xr.outline` renders through `XRLiveRealityKitSession` (not only through
+    /// `RealityKitHelper.applyXRTraits`), and session material changes never repaint the rim.
+    @MainActor
+    func testRealityKitSessionRendersOutlineTraits() async throws {
+      // Outline shells need front-face culling (iOS 18 / macOS 15 / visionOS 2 SDKs).
+      #if compiler(>=6.0)
+        guard #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) else {
+          throw XCTSkip("Outline shells need front-face culling")
+        }
+      #else
+        throw XCTSkip("Outline shells need front-face culling")
+      #endif
+      let script = """
+        const orb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.1, 16, 16),
+          new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        orb.name = 'Outlined_Orb';
+        orb.userData.xr = { outline: { color: '#22c55e', thickness: 0.025 } };
+        orb.userData.interactivity = {
+          onSelect: [
+            { action: 'cycleMaterialColor', colors: [[1, 0, 0, 1], [0.9, 0, 0, 1]], duration: 0.1 }
+          ]
+        };
+        scene.add(orb);
+
+        const box = new THREE.Mesh(
+          new THREE.BoxGeometry(0.2, 0.2, 0.2),
+          new THREE.MeshStandardMaterial({ color: 0xa855f7 })
+        );
+        box.name = 'Plain_Box';
+        box.position.set(0.5, 0, 0);
+        scene.add(box);
+        """
+      let usdz = try await ThreeCompiler.compileUSDZ(script)
+      let glb = try await ThreeCompiler.compileGLB(script)
+      let entity = try await RealityKitHelper.loadEntity(fromUSDZ: usdz)
+      let live = try XCTUnwrap(XRLiveRealityKitSession(glbData: glb, root: entity))
+
+      func shells(under e: Entity) -> [Entity] {
+        (RealityKitHelper.isOutlineShell(e) ? [e] : []) + e.children.flatMap { shells(under: $0) }
+      }
+      func srgb(_ material: Material?) -> SIMD3<Float>? {
+        let tint: XRPlatformColor
+        if let m = material as? UnlitMaterial {
+          tint = m.color.tint
+        } else if let m = material as? PhysicallyBasedMaterial {
+          tint = m.baseColor.tint
+        } else if let m = material as? SimpleMaterial {
+          tint = m.color.tint
+        } else {
+          return nil
+        }
+        guard
+          let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let c = tint.cgColor.converted(to: space, intent: .defaultIntent, options: nil)?
+            .components, c.count >= 3
+        else { return nil }
+        return SIMD3(Float(c[0]), Float(c[1]), Float(c[2]))
+      }
+      func assertRimColor(_ shell: Entity, _ message: String) throws {
+        let model = try XCTUnwrap(shell.components[ModelComponent.self])
+        XCTAssertTrue(model.materials.first is UnlitMaterial, message)
+        let rgb = try XCTUnwrap(srgb(model.materials.first), message)
+        let expected = SIMD3<Float>(0x22, 0xc5, 0x5e) / 255
+        XCTAssertLessThan(simd_length(rgb - expected), 0.02, "\(message): got \(rgb)")
+      }
+
+      let orb = try XCTUnwrap(live.entity(forNode: 0))
+      let box = try XCTUnwrap(live.entity(forNode: 1))
+      XCTAssertEqual(orb.name, "Outlined_Orb")
+      let orbShells = shells(under: orb)
+      XCTAssertFalse(orbShells.isEmpty, "Session must add an outline shell to the outlined node")
+      XCTAssertTrue(shells(under: box).isEmpty, "Nodes without an outline trait get no shell")
+      for shell in orbShells {
+        try assertRimColor(shell, "Rim uses the outline color")
+      }
+
+      // The selectable orb gets collision for taps, but its enlarged shell never takes the hit.
+      live.installInputTargets()
+      XCTAssertTrue(
+        ([orb] + orb.children).contains {
+          !RealityKitHelper.isOutlineShell($0) && $0.components.has(CollisionComponent.self)
+        })
+      for shell in orbShells {
+        XCTAssertFalse(shell.components.has(CollisionComponent.self), "Shells must not take hits")
+      }
+
+      // A select-driven material change recolors the orb but must leave the rim alone.
+      live.start()
+      XCTAssertTrue(live.handleTap(on: orb))
+      for _ in 0..<30 {
+        live.step(dt: 1.0 / 60.0)
+      }
+      let orbModel = try XCTUnwrap(
+        ([orb] + orb.children).lazy.compactMap { $0.components[ModelComponent.self] }.first)
+      let orbColor = try XCTUnwrap(srgb(orbModel.materials.first))
+      XCTAssertGreaterThan(orbColor.x, 0.8, "cycleMaterialColor must recolor the orb: \(orbColor)")
+      for shell in shells(under: orb) {
+        try assertRimColor(shell, "Material changes must not repaint the rim")
+      }
+
+      // Re-binding the same hierarchy neither duplicates shells nor binds a shell as a node.
+      live.stop()
+      let again = try XCTUnwrap(XRLiveRealityKitSession(glbData: glb, root: entity))
+      XCTAssertEqual(shells(under: orb).count, orbShells.count)
+      XCTAssertTrue(again.entity(forNode: 0) === orb)
+      XCTAssertTrue(again.entity(forNode: 1) === box)
+    }
   #endif
 }

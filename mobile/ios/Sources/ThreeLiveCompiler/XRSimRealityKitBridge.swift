@@ -175,6 +175,8 @@
       var visited = 0
       while let e = stack.popLast(), visited < 4096 {
         visited += 1
+        // Outline shells are front-face culled; a flash material would turn them into a solid hull.
+        if RealityKitHelper.isOutlineShell(e) { continue }
         stack.append(contentsOf: e.children)
         guard let model = e as? ModelEntity, let mc = model.model else { continue }
         let key = ObjectIdentifier(model)
@@ -316,6 +318,7 @@
       var visited = 0
       while let e = stack.popLast(), visited < 256 {
         visited += 1
+        if RealityKitHelper.isOutlineShell(e) { continue }
         stack.append(contentsOf: e.children)
         guard let m = (e as? ModelEntity)?.model?.materials.first else { continue }
         // Ignore an active flash: read the original material.

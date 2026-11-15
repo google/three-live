@@ -298,6 +298,11 @@
       visit(entity)
     }
 
+    /// Whether `entity` is an outline shell added by `applyOutline` rather than scene content.
+    static func isOutlineShell(_ entity: Entity) -> Bool {
+      entity.name == outlineShellName
+    }
+
     /// Configures an individual RealityKit `Entity` with native spatial components corresponding
     /// to its `userData.xr` traits.
     @MainActor
