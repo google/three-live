@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
   import Foundation
 
   public enum StudioMode: String, CaseIterable, Identifiable, Sendable {

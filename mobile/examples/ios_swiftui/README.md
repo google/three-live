@@ -19,8 +19,9 @@ limitations under the License.
 A complete native sample application demonstrating on-device compilation of
 Three.js JavaScript into Apple USDZ (and glTF 2.0 GLB) with zero memory copies,
 rendered interactively using Apple RealityKit in 3D and full-screen Apple AR
-Quick Look. The demo target builds for iOS and iPadOS; the underlying
-`ThreeLiveCompiler` package also supports visionOS, tvOS, and macOS.
+Quick Look. The demo builds for iOS and iPadOS, plus an [Apple TV](#apple-tv)
+target; the underlying `ThreeLiveCompiler` package also supports visionOS and
+macOS.
 
 ## What the Demo Does
 
@@ -85,7 +86,9 @@ xcodegen generate
 open ThreeLiveDemo.xcodeproj
 ```
 
-Select an iOS Simulator or a physical device and press **Run** (`Cmd+R`).
+Select an iOS Simulator or a physical device and press **Run** (`Cmd+R`). For
+Apple TV, choose the `ThreeLiveDemoTV` scheme and an Apple TV simulator or
+device instead.
 
 > **Note on AR mode.** "View in AR" uses Apple AR Quick Look, which needs the
 > device camera and therefore an `NSCameraUsageDescription` purpose string. That
@@ -93,8 +96,34 @@ Select an iOS Simulator or a physical device and press **Run** (`Cmd+R`).
 > placement requires a physical device; the simulator can display the model but
 > cannot place it in the world.
 
+## Apple TV
+
+The `ThreeLiveDemoTV` target ([`TVContentView.swift`](TVContentView.swift)) runs
+the same presets on tvOS 26+. It needs Xcode 26+ with the tvOS platform (and,
+for the simulator, its runtime; Xcode > Settings > Components). Without the
+tvOS SDK or `rustup`, step 1 prints `skipping tvOS slices`; add what's missing
+and rerun it.
+
+Pick a scene, then choose **Explore**:
+
+Siri Remote          | Action
+-------------------- | ---------------------------------------------------------
+Swipe, clickpad ring | Orbit the camera (each click steps 15°)
+Select               | `onSelect` under the reticle, via `handleTap(at:in:)`
+Play/Pause           | Reset the camera
+Menu                 | Back to the scene list
+
+In the simulator, the arrow keys, Return and Escape act as the clickpad, Select
+and Menu. `XCUIRemote` can't swipe, so the UI tests cover everything but
+swiping:
+
+```bash
+xcodebuild test -project ThreeLiveDemo.xcodeproj -scheme ThreeLiveDemoTV \
+  -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)'
+```
+
 ## Platform Support
 
-This demo targets iOS and iPadOS. The `ThreeLiveCompiler` package itself
-additionally supports visionOS, tvOS, and macOS — see
+This demo targets iOS, iPadOS, and tvOS. The `ThreeLiveCompiler` package itself
+additionally supports visionOS and macOS — see
 [`mobile/ios/README.md`](../../ios/README.md) for the full matrix.

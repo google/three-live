@@ -48,9 +48,11 @@ build/
 *.xcframework/
 *.xcframework.zip
 
-# Xcode project and Info.plist for the iOS example, generated from project.yml by XcodeGen.
+# Xcode project and Info.plists for the iOS and tvOS examples, generated from project.yml by
+# XcodeGen.
 mobile/examples/ios_swiftui/ThreeLiveDemo.xcodeproj/
 mobile/examples/ios_swiftui/Info.plist
+mobile/examples/ios_swiftui/InfoTV.plist
 *.xcworkspace/
 .swiftpm/
 .build/

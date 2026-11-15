@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
   import SwiftUI
 
   @available(iOS 15.0, *)
@@ -22,7 +22,11 @@
   struct ThreeLiveDemoApp: App {
     var body: some Scene {
       WindowGroup {
-        ContentView()
+        #if os(iOS)
+          ContentView()
+        #else
+          TVContentView()
+        #endif
       }
     }
   }
