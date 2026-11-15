@@ -15,7 +15,8 @@
 #
 # Verifies that a built ThreeLiveCompiler.xcframework is complete and usable:
 #   * every declared slice directory contains a static library,
-#   * every static library exports the full C ABI,
+#   * every static library exports the full C ABI and nothing else (no Rust standard library,
+#     compiler-rt or crate symbols, which would clash with another Rust library in the app),
 #   * no library is suspiciously small.
 #
 # Usage: verify_xcframework.sh <path-to-xcframework> [expected-slice-count]
@@ -83,8 +84,17 @@ while IFS= read -r lib; do
 
     architectures=$(lipo -archs "${lib}" 2>/dev/null || echo "unknown")
 
+    # Every other defined external symbol leaks the library's internals (member headers end in
+    # a colon).
+    leaked=$( { nm --no-llvm-bc -gUj "${lib}" 2>/dev/null || nm -gUj "${lib}" 2>/dev/null || true; } \
+        | grep -v -e '^_three_live_' -e ':$' -e '^$' | sort -u || true )
+
     if [[ -n "${missing}" ]]; then
         echo "  FAIL ${slice} [${architectures}]: missing symbols:${missing}" >&2
+        failures=$((failures + 1))
+    elif [[ -n "${leaked}" ]]; then
+        echo "  FAIL ${slice} [${architectures}]: exports $(wc -l <<< "${leaked}" | tr -d '[:space:]') internal symbols, e.g.:" >&2
+        head -n 5 <<< "${leaked}" | sed 's/^/         /' >&2
         failures=$((failures + 1))
     else
         echo "  ok   ${slice} [${architectures}] $((size / 1024)) KB"

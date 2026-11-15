@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [Unreleased]
+
+### Changed
+
+-   **Self-contained Apple framework:** `ThreeLiveCompiler.xcframework` exports
+    only the C ABI (`three_live_*`). Rust's standard library, compiler-rt and
+    the compiler's crates are hidden (`scripts/build_ios_xcframework.sh`
+    pre-links each slice with `mobile/ios/exported_symbols.txt`;
+    `scripts/verify_xcframework.sh` rejects any other exported symbol), so the
+    framework links into apps that already carry another Rust library without
+    duplicate symbols.
+
+--------------------------------------------------------------------------------
+
 ## [1.4.0] - 2026-11-09 (Beta)
 
 ### Added

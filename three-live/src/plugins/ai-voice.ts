@@ -1419,8 +1419,22 @@ export function setSelectOnTap(el: AIVoiceElement, enabled: boolean): void {
   el.addEventListener?.('meshclick', el.__tlTapHandler);
 }
 
-const MIC_SVG =
-  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const MIC_PATH_D =
+  'M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z';
+
+function createMicSvg(): Element {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '22');
+  svg.setAttribute('height', '22');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('fill', 'currentColor');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', MIC_PATH_D);
+  svg.appendChild(path);
+  return svg;
+}
 
 /**
  * Adds the built-in mic button (`ai-voice-button`), or wires a custom
@@ -1435,7 +1449,7 @@ export function installVoiceButton(el: AIVoiceElement): void {
   if (!custom) {
     btn.setAttribute('type', 'button');
     btn.setAttribute('aria-label', 'Edit the scene by voice');
-    btn.innerHTML = MIC_SVG;
+    btn.appendChild(createMicSvg());
     Object.assign(btn.style, {
       position: 'absolute',
       left: '12px',

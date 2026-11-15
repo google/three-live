@@ -2724,6 +2724,34 @@ function runCadRegressionTests(
       'InstancedMesh with per-vertex colors and instanceColor scales primvars:displayColor per instance in USDZ',
     );
   }
+
+  // Coverage: inlineEngineSource in buildSandboxWorkerSource boots sandbox worker without importScripts (opaque-origin support).
+  {
+    const prevSource = THREE.getSandboxEngineSource?.() ?? null;
+    try {
+      THREE.setSandboxEngineSource?.('self.__inlineEngineRan = true;');
+      assert(
+        THREE.getSandboxEngineSource?.() === 'self.__inlineEngineRan = true;',
+        'setSandboxEngineSource / getSandboxEngineSource round-trip on shared registry',
+      );
+      const src = THREE.buildSandboxWorkerSource(
+        'https://example.test/three-live-full.js',
+        'nonce-inline-1',
+        {
+          allowClientScripts: true,
+          allowedScriptUrl: null,
+          inlineEngineSource: 'self.__inlineEngineRan = true;',
+        },
+      );
+      assert(
+        src.startsWith("'use strict';self.__inlineEngineRan = true;\n") &&
+          src.includes('"inlineEngine":true'),
+        'buildSandboxWorkerSource prepends inlineEngineSource and sets inlineEngine:true',
+      );
+    } finally {
+      THREE.setSandboxEngineSource?.(prevSource);
+    }
+  }
 }
 
 runThreeAuthorTests();

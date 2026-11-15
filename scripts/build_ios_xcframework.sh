@@ -28,6 +28,8 @@ COMPILER_DIR="${ROOT_DIR}/compiler"
 IOS_DIR="${ROOT_DIR}/mobile/ios"
 OUTPUT_XCFRAMEWORK="${IOS_DIR}/ThreeLiveCompiler.xcframework"
 LIB_NAME="libthree_live_compiler.a"
+# The C ABI the framework exports (ThreeLiveCompilerC); everything else is hidden.
+EXPORTED_SYMBOLS="${IOS_DIR}/exported_symbols.txt"
 REQUIRE_ALL="${THREE_LIVE_REQUIRE_ALL_PLATFORMS:-0}"
 
 echo "=== Three-Live: Building Apple XCFramework ==="
@@ -70,6 +72,31 @@ has_sdk() {
     echo "${AVAILABLE_SDKS}" | grep -q -- "-sdk $1"
 }
 
+# hide_internal_symbols <static-lib> <rust-target>
+# Pre-links the library into one object that exports only the C ABI
+# (mobile/ios/exported_symbols.txt). Rust's standard library, compiler-rt and every crate
+# become private to it, so the framework links into an app that already carries another Rust
+# library (such as a host app's own Rust core) without duplicate symbols or a shared Rust runtime.
+hide_internal_symbols() {
+    local lib="$1"
+    local arch
+    case "$2" in
+        aarch64-*) arch="arm64" ;;
+        x86_64-*) arch="x86_64" ;;
+        *)
+            echo "Error: no architecture for Rust target $2." >&2
+            exit 1
+            ;;
+    esac
+    local work
+    work="$(mktemp -d)"
+    xcrun ld -r -arch "${arch}" -exported_symbols_list "${EXPORTED_SYMBOLS}" \
+        -force_load "${lib}" -o "${work}/three_live_compiler.o"
+    rm -f "${lib}"
+    xcrun libtool -static -o "${lib}" "${work}/three_live_compiler.o"
+    rm -rf "${work}"
+}
+
 # build_target <rust-target> <xcode-sdk>
 build_target() {
     local target="$1"
@@ -79,6 +106,7 @@ build_target() {
     echo "  - ${target} (SDK: ${sdk_path})"
     rustup target add "${target}"
     SDKROOT="${sdk_path}" cargo build --release --no-default-features --lib --target "${target}"
+    hide_internal_symbols "${ROOT_DIR}/target/${target}/release/${LIB_NAME}" "${target}"
 }
 
 cd "${COMPILER_DIR}"

@@ -575,7 +575,11 @@ export function textureRequests(model: unknown): TextureMiss[] {
 
 /** IndexedDB cache (`three-live-textures`), or null where IndexedDB is unavailable. */
 export function indexedDbTextureCache(maxBytes = MAX_CACHE_BYTES): TextureCache | null {
-  if (typeof indexedDB === 'undefined') return null;
+  try {
+    if (typeof indexedDB === 'undefined' || !indexedDB) return null;
+  } catch {
+    return null;
+  }
   let dbp: Promise<IDBDatabase> | null = null;
   const db = () =>
     (dbp ??= new Promise<IDBDatabase>((resolve, reject) => {

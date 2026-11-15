@@ -569,6 +569,7 @@ export async function renderComparisonSheetDataUrl(
     viewer.render?.();
 
     const sep = 2;
+    const stride = pw + sep;
     const sheet = document.createElement('canvas');
     sheet.width = pw * 3 + sep * 2;
     sheet.height = ph;
@@ -578,26 +579,22 @@ export async function renderComparisonSheetDataUrl(
     ctx.fillRect(0, 0, sheet.width, ph);
     for (let i = 0; i < 3; i++) {
       ctx.fillStyle = '#1e293b';
-      ctx.fillRect(i * (pw + sep), 0, pw, ph);
+      ctx.fillRect(i * stride, 0, pw, ph);
     }
     ctx.drawImage(refImg, 0, 0, pw, ph);
-    ctx.drawImage(glCanvas, pw + sep, 0, pw, ph);
-    ctx.drawImage(refImg, 2 * (pw + sep), 0, pw, ph);
+    ctx.drawImage(glCanvas, stride, 0, pw, ph);
+    ctx.drawImage(refImg, 2 * stride, 0, pw, ph);
     ctx.globalAlpha = 0.5;
-    ctx.drawImage(glCanvas, 2 * (pw + sep), 0, pw, ph);
+    ctx.drawImage(glCanvas, 2 * stride, 0, pw, ph);
     ctx.globalAlpha = 1;
     ctx.font = 'bold 11px monospace';
-    for (const [idx, lbl] of [
-      [0, 'REFERENCE'],
-      [1, 'RENDER (CAMERA)'],
-      [2, 'OVERLAY 50/50'],
-    ] as const) {
-      const ox = idx * (pw + sep) + 6;
+    ['REFERENCE', 'RENDER (CAMERA)', 'OVERLAY 50/50'].forEach((lbl, idx) => {
+      const ox = idx * stride + 6;
       ctx.fillStyle = 'rgba(15,23,42,0.75)';
       ctx.fillRect(ox, 6, lbl.length * 7 + 8, 16);
       ctx.fillStyle = '#f8fafc';
       ctx.fillText(lbl, ox + 4, 18);
-    }
+    });
     const url = sheet.toDataURL('image/jpeg', 0.86);
     return isAllowedImageUrl(url) ? url : null;
   } catch {
@@ -654,29 +651,11 @@ export function detectImageMime(
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
-  const g = globalThis as unknown as {
-    Buffer?: {
-      from(
-        buf: ArrayBufferLike,
-        offset: number,
-        length: number,
-      ): {toString(enc: string): string};
-    };
-  };
-  if (g.Buffer && typeof g.Buffer.from === 'function') {
-    return g.Buffer.from(
-      bytes.buffer,
-      bytes.byteOffset,
-      bytes.byteLength,
-    ).toString('base64');
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
-  let binary = '';
-  const chunk = 8192;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    const sub = bytes.subarray(i, Math.min(i + chunk, bytes.length));
-    binary += String.fromCharCode(...sub);
-  }
-  return btoa(binary);
+  return btoa(s);
 }
 
 function clampMaxEdge(raw: number | undefined): number {
@@ -714,42 +693,35 @@ function downscaleDrawableToDataUrl(
   const scale = longest > maxEdge ? maxEdge / longest : 1;
   const targetW = Math.max(1, Math.round(width * scale));
   const targetH = Math.max(1, Math.round(height * scale));
+  const tryUrl = (obj: {toDataURL?: (type?: string, quality?: number) => string} | null | undefined) => {
+    try {
+      const u = obj?.toDataURL?.('image/jpeg', 0.88);
+      return u && isAllowedImageUrl(u) ? u : null;
+    } catch {
+      return null;
+    }
+  };
   const srcWithDataUrl = source as {
     toDataURL?: (type?: string, quality?: number) => string;
   };
-  if (scale === 1 && typeof srcWithDataUrl.toDataURL === 'function') {
-    try {
-      const direct = srcWithDataUrl.toDataURL('image/jpeg', 0.88);
-      if (isAllowedImageUrl(direct)) return direct;
-    } catch {}
+  if (scale === 1) {
+    const direct = tryUrl(srcWithDataUrl);
+    if (direct) return direct;
   }
-  if (
-    typeof document !== 'undefined' &&
-    typeof document.createElement === 'function'
-  ) {
+  if (typeof document !== 'undefined') {
     try {
-      const canvas = document.createElement('canvas');
-      if (canvas && typeof canvas.getContext === 'function') {
+      const canvas = document.createElement?.('canvas');
+      const ctx = canvas?.getContext?.('2d');
+      if (canvas && ctx?.drawImage) {
         canvas.width = targetW;
         canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (ctx && typeof ctx.drawImage === 'function') {
-          ctx.drawImage(source as CanvasImageSource, 0, 0, targetW, targetH);
-          if (typeof canvas.toDataURL === 'function') {
-            const out = canvas.toDataURL('image/jpeg', 0.88);
-            if (isAllowedImageUrl(out)) return out;
-          }
-        }
+        ctx.drawImage(source as CanvasImageSource, 0, 0, targetW, targetH);
+        const out = tryUrl(canvas);
+        if (out) return out;
       }
     } catch {}
   }
-  if (typeof srcWithDataUrl.toDataURL === 'function') {
-    try {
-      const fallback = srcWithDataUrl.toDataURL('image/jpeg', 0.88);
-      if (isAllowedImageUrl(fallback)) return fallback;
-    } catch {}
-  }
-  return null;
+  return tryUrl(srcWithDataUrl);
 }
 
 /**
@@ -766,9 +738,12 @@ export async function normalizeImageInput(
     readonly fetch?: typeof fetch;
   } = {},
 ): Promise<string> {
-  if (options.signal?.aborted) {
-    throw options.signal.reason ?? new Error('compileFromImage aborted');
-  }
+  const checkAbort = () => {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new Error('compileFromImage aborted');
+    }
+  };
+  checkAbort();
   if (input == null) {
     throw new Error('compileFromImage: image input is required.');
   }
@@ -848,9 +823,7 @@ export async function normalizeImageInput(
       throw new Error('compileFromImage: image exceeds the 32 MB limit.');
     }
     const ab = await res.arrayBuffer();
-    if (options.signal?.aborted) {
-      throw options.signal.reason ?? new Error('compileFromImage aborted');
-    }
+    checkAbort();
     return encodeBytesToDataUrl(new Uint8Array(ab));
   }
 
@@ -876,9 +849,7 @@ export async function normalizeImageInput(
       throw new Error('compileFromImage: image exceeds the 32 MB limit.');
     }
     const ab = await blob.arrayBuffer();
-    if (options.signal?.aborted) {
-      throw options.signal.reason ?? new Error('compileFromImage aborted');
-    }
+    checkAbort();
     return encodeBytesToDataUrl(new Uint8Array(ab));
   }
 
@@ -942,6 +913,9 @@ export async function compileFromImage(
   if (options.signal?.aborted) onOuterAbort();
   options.signal?.addEventListener('abort', onOuterAbort, {once: true});
   const signal = ctrl.signal;
+  const checkSig = () => {
+    if (signal.aborted) throw signal.reason;
+  };
 
   const prompt = Array.from(String(options.prompt ?? '').trim())
     .slice(0, MAX_IMAGE_PROMPT_CHARS)
@@ -1000,7 +974,7 @@ export async function compileFromImage(
       }
       return {err: '', warn, model: res.model};
     } catch (caught: unknown) {
-      if (signal.aborted) throw signal.reason;
+      checkSig();
       const e = caught as {name?: string; message?: string} | null;
       const msg = String(e?.message || caught);
       return {
@@ -1029,7 +1003,7 @@ export async function compileFromImage(
     let activeModel: unknown = null;
     for (let turn = 0; turn <= maxRepairs; turn++) {
       const reply = await provider.complete({messages, signal});
-      if (signal.aborted) throw signal.reason;
+      checkSig();
       code = extractScript(reply);
       const ev = await evalCandidate(code);
       error = ev.err;
@@ -1068,7 +1042,7 @@ export async function compileFromImage(
         const cmpUrl = options.renderComparison
           ? await options.renderComparison(code, activeModel, imageUrl)
           : await renderComparisonSheetDataUrl(el, code, activeModel, imageUrl);
-        if (signal.aborted) throw signal.reason;
+        checkSig();
         if (!cmpUrl || !isAllowedImageUrl(cmpUrl)) break;
 
         const vMsgs = buildVisualTurnMessages(
@@ -1083,16 +1057,15 @@ export async function compileFromImage(
         try {
           reply = await provider.complete({messages: vMsgs, signal});
         } catch (e) {
-          if (signal.aborted) throw signal.reason;
+          checkSig();
           break;
         }
-        if (signal.aborted) throw signal.reason;
+        checkSig();
         let candCode = extractScript(reply);
         if (candCode.trim() === code.trim()) break;
 
         let ev = await evalCandidate(candCode);
         if (ev.err || ev.warn.length > 0) {
-          const preOk = !ev.err ? {code: candCode, ev} : null;
           repairs++;
           vMsgs.push(
             {role: 'assistant', content: reply},
@@ -1100,22 +1073,15 @@ export async function compileFromImage(
           );
           try {
             const repReply = await provider.complete({messages: vMsgs, signal});
-            if (signal.aborted) throw signal.reason;
+            checkSig();
             const repCode = extractScript(repReply);
             const repEv = await evalCandidate(repCode);
             if (!repEv.err) {
               candCode = repCode;
               ev = repEv;
-            } else if (preOk) {
-              candCode = preOk.code;
-              ev = preOk.ev;
             }
           } catch {
-            if (signal.aborted) throw signal.reason;
-            if (preOk) {
-              candCode = preOk.code;
-              ev = preOk.ev;
-            }
+            checkSig();
           }
         }
         if (ev.err || ev.warn.length > warnings.length) break;

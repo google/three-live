@@ -228,6 +228,19 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   /**
+   * Optional self-contained JavaScript source of the Three-Live IIFE bundle
+   * prepended directly into sandbox workers so they do not require network
+   * `importScripts` calls on opaque-origin hosts.
+   */
+  static get sandboxEngineSource(): string | null {
+    return getSharedRegistry().sandboxEngineSource ?? null;
+  }
+
+  static set sandboxEngineSource(value: string | null) {
+    getSharedRegistry().sandboxEngineSource = value;
+  }
+
+  /**
    * URL of `three-live-sandbox.html` used when executing procedural scripts in
    * `'iframe'` sandbox mode (`<iframe sandbox="allow-scripts">`).
    *

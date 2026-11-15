@@ -168,6 +168,14 @@ export interface SharedThreeLiveRegistry {
    */
   sandboxEngineSrc?: string | null;
   /**
+   * Optional self-contained JavaScript source of the Three-Live IIFE bundle.
+   * When set, `buildSandboxWorkerSource` prepends this source directly into the
+   * blob worker script so the worker does not need to call `importScripts` over
+   * the network (which is blocked by CORS when the host page runs in an opaque
+   * `null` origin).
+   */
+  sandboxEngineSource?: string | null;
+  /**
    * URL of `three-live-sandbox.html` used when executing procedural scripts in
    * `'iframe'` sandbox mode (`<iframe sandbox="allow-scripts">`).
    */

@@ -175,6 +175,9 @@ function buildTarget(options) {
     if (options.banner && options.banner.js) {
       args.push(`--banner:js=${options.banner.js}`);
     }
+    if (options.footer && options.footer.js) {
+      args.push(`--footer:js=${options.footer.js}`);
+    }
     if (options.define) {
       for (const [k, v] of Object.entries(options.define)) {
         args.push(`--define:${k}=${v}`);
@@ -417,6 +420,10 @@ function buildThreeLive() {
     globalName: 'ThreeLiveBundle',
     minify: true,
     target: 'es2020',
+    banner: {js: `${FULL_LICENSE_BANNER}\nfunction __tl_iife(){`},
+    footer: {
+      js: ';return ThreeLiveBundle;}var ThreeLiveBundle=__tl_iife();if(typeof globalThis!=="undefined")globalThis.ThreeLiveBundle=ThreeLiveBundle;ThreeLiveBundle&&ThreeLiveBundle.setSandboxEngineSource&&ThreeLiveBundle.setSandboxEngineSource("("+__tl_iife.toString()+")();");',
+    },
     define: {
       'IS_DEV': 'false',
       'ENABLE_NATIVE_HOOKS': 'false',
@@ -988,6 +995,10 @@ function buildXRLive() {
     globalName: 'XRLiveFull',
     minify: true,
     target: 'es2020',
+    banner: {js: `${FULL_LICENSE_BANNER}\nfunction __tl_iife(){`},
+    footer: {
+      js: ';return XRLiveFull;}var XRLiveFull=__tl_iife();if(typeof globalThis!=="undefined")globalThis.XRLiveFull=XRLiveFull;XRLiveFull&&XRLiveFull.setSandboxEngineSource&&XRLiveFull.setSandboxEngineSource("("+__tl_iife.toString()+")();");',
+    },
     define: {'IS_DEV': 'false'},
     outfile: path.join(xrDist, 'xr-live-full.min.js'),
   });

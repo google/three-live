@@ -3307,6 +3307,20 @@ export function setSandboxEngineSrc(src: string | null): void {
   getSharedRegistry().sandboxEngineSrc = src;
 }
 
+/**
+ * Sets or clears the self-contained JavaScript source of the Three-Live IIFE
+ * bundle prepended directly into sandbox workers so they do not require network
+ * `importScripts` calls on opaque-origin hosts.
+ */
+export function setSandboxEngineSource(source: string | null): void {
+  getSharedRegistry().sandboxEngineSource = source;
+}
+
+/** Returns the inline bundle source for the worker sandbox, or `null`. */
+export function getSandboxEngineSource(): string | null {
+  return getSharedRegistry().sandboxEngineSource ?? null;
+}
+
 /** Returns the bundle URL the worker sandbox would use, or `null`. */
 export function getSandboxEngineSrc(): string | null {
   const configured = getSharedRegistry().sandboxEngineSrc;
@@ -3347,6 +3361,9 @@ function resolveAllowedUrl(url: string, label: string): string {
 function resolveSandboxEngineSrc(): string {
   const src = getSandboxEngineSrc();
   if (!src) {
+    if (getSandboxEngineSource()) {
+      return 'inline:three-live-bundle';
+    }
     throw new Error(
       'SecurityError: Could not locate Three-Live bundle URL for worker sandbox; set ThreeLiveElement.sandboxEngineSrc explicitly.',
     );
@@ -3399,6 +3416,7 @@ const REVOKED_WORKER_GLOBALS: readonly string[] =
 export interface SandboxWorkerSourceOptions {
   readonly allowClientScripts?: boolean;
   readonly allowedScriptUrl?: string | null;
+  readonly inlineEngineSource?: string | null;
 }
 
 /** Values baked into a generated sandbox worker. */
@@ -3408,6 +3426,7 @@ interface SandboxWorkerConfig {
   readonly allowedScriptUrl: string | null;
   readonly allowClientScripts: boolean;
   readonly revoked: readonly string[];
+  readonly inlineEngine?: boolean;
 }
 
 /**
@@ -3498,7 +3517,9 @@ function sandboxWorkerMain(
           'three-live#worker-boot',
           policyRules,
         );
-        scriptUrlToLoad = bootPolicy.createScriptURL(ENGINE_SRC);
+        if (!cfg.inlineEngine) {
+          scriptUrlToLoad = bootPolicy.createScriptURL(ENGINE_SRC);
+        }
         if (ALLOWED_SCRIPT_URL) {
           sceneScriptUrlToLoad = bootPolicy.createScriptURL(ALLOWED_SCRIPT_URL);
         }
@@ -3512,7 +3533,9 @@ function sandboxWorkerMain(
         // Fall back to raw URLs if a restrictive policy list blocks creation.
       }
     }
-    nativeImportScripts(scriptUrlToLoad);
+    if (!cfg.inlineEngine) {
+      nativeImportScripts(scriptUrlToLoad);
+    }
   } catch (err) {
     fail(
       'Sandbox failed to load "' +
@@ -3802,19 +3825,24 @@ export function buildSandboxWorkerSource(
   const allowedScriptUrl = options?.allowedScriptUrl ?? null;
   const allowClientScripts =
     options?.allowClientScripts ?? allowedScriptUrl === null;
+  const inlineSource = options?.inlineEngineSource ?? null;
+  const hasInlineEngine =
+    typeof inlineSource === 'string' && inlineSource.length > 0;
   const cfg: SandboxWorkerConfig = {
     nonce,
     engineSrc,
     allowedScriptUrl,
     allowClientScripts,
     revoked: REVOKED_WORKER_GLOBALS,
+    ...(hasInlineEngine ? {inlineEngine: true} : {}),
   };
   const installerExprs = (getSharedRegistry().workerExtensionInstallers ?? [])
     .map((fn) => `(${fn.toString()})`)
     .join(',');
+  const prefix = hasInlineEngine ? `${inlineSource}\n` : '';
   // The 'use strict' prologue applies to the whole worker script; a directive
   // inside the function could be stripped when the bundle is itself strict.
-  return `'use strict';(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)},[${installerExprs}],(${makePngDeflater.toString()}));`;
+  return `'use strict';${prefix}(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)},[${installerExprs}],(${makePngDeflater.toString()}));`;
 }
 
 /** Reports a sandbox job that hit SECURITY_3D_SANDBOX_TIMEOUT_MS. */
@@ -4037,12 +4065,17 @@ function executeInSandboxIframe(
   callbacks: ScriptExecutionCallbacks,
 ): ScriptExecutionHandle {
   const nonce = newSandboxNonce();
+  const inlineEngineSource = getSandboxEngineSource();
   const workerSource = buildSandboxWorkerSource(
     engineSrc,
     nonce,
     job.kind === 'url'
-      ? {allowClientScripts: false, allowedScriptUrl: job.scriptUrl}
-      : {allowClientScripts: true, allowedScriptUrl: null},
+      ? {
+          allowClientScripts: false,
+          allowedScriptUrl: job.scriptUrl,
+          inlineEngineSource,
+        }
+      : {allowClientScripts: true, allowedScriptUrl: null, inlineEngineSource},
   );
   const iframe = document.createElement('iframe');
   // Omit `allow-same-origin` so the iframe and its Worker run in a unique
@@ -4229,12 +4262,17 @@ function runSandboxedJob(
   }
 
   const nonce = newSandboxNonce();
+  const inlineEngineSource = getSandboxEngineSource();
   const workerSource = buildSandboxWorkerSource(
     engineSrc,
     nonce,
     job.kind === 'url'
-      ? {allowClientScripts: false, allowedScriptUrl: job.scriptUrl}
-      : {allowClientScripts: true, allowedScriptUrl: null},
+      ? {
+          allowClientScripts: false,
+          allowedScriptUrl: job.scriptUrl,
+          inlineEngineSource,
+        }
+      : {allowClientScripts: true, allowedScriptUrl: null, inlineEngineSource},
   );
   let worker: Worker;
   try {
@@ -5155,6 +5193,11 @@ const threeExports: Record<string, any> = {
   sceneToGLB,
   sceneToUSDZ,
   authorScriptRunner,
+  buildSandboxWorkerSource,
+  setSandboxEngineSrc,
+  getSandboxEngineSrc,
+  setSandboxEngineSource,
+  getSandboxEngineSource,
   warnUnsupported,
   getAuthorWarnings,
   clearAuthorWarnings,
