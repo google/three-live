@@ -72,28 +72,48 @@ has_sdk() {
     echo "${AVAILABLE_SDKS}" | grep -q -- "-sdk $1"
 }
 
-# hide_internal_symbols <static-lib> <rust-target>
+# hide_internal_symbols <static-lib> <rust-target> <xcode-sdk>
 # Pre-links the library into one object that exports only the C ABI
 # (mobile/ios/exported_symbols.txt). Rust's standard library, compiler-rt and every crate
 # become private to it, so the framework links into an app that already carries another Rust
 # library (such as a host app's own Rust core) without duplicate symbols or a shared Rust runtime.
 hide_internal_symbols() {
     local lib="$1"
+    local target="$2"
+    local sdk="$3"
     local arch
-    case "$2" in
+    case "${target}" in
         aarch64-*) arch="arm64" ;;
         x86_64-*) arch="x86_64" ;;
         *)
-            echo "Error: no architecture for Rust target $2." >&2
+            echo "Error: no architecture for Rust target ${target}." >&2
             exit 1
             ;;
     esac
+    local platform min_version
+    case "${sdk}" in
+        iphoneos)         platform="ios";            min_version="15.0" ;;
+        iphonesimulator)  platform="ios-simulator";  min_version="15.0" ;;
+        macosx)           platform="macos";          min_version="12.0" ;;
+        xros)             platform="xros";           min_version="1.0" ;;
+        xrsimulator)      platform="xros-simulator"; min_version="1.0" ;;
+        appletvos)        platform="tvos";           min_version="15.0" ;;
+        appletvsimulator) platform="tvos-simulator"; min_version="15.0" ;;
+        *)
+            echo "Error: unknown Xcode SDK ${sdk}." >&2
+            exit 1
+            ;;
+    esac
+    local sdk_version
+    sdk_version="$(xcrun --sdk "${sdk}" --show-sdk-version)"
     local work
     work="$(mktemp -d)"
-    xcrun ld -r -arch "${arch}" -exported_symbols_list "${EXPORTED_SYMBOLS}" \
+    xcrun --sdk "${sdk}" ld -r -arch "${arch}" \
+        -platform_version "${platform}" "${min_version}" "${sdk_version}" \
+        -exported_symbols_list "${EXPORTED_SYMBOLS}" \
         -force_load "${lib}" -o "${work}/three_live_compiler.o"
     rm -f "${lib}"
-    xcrun libtool -static -o "${lib}" "${work}/three_live_compiler.o"
+    xcrun --sdk "${sdk}" libtool -static -o "${lib}" "${work}/three_live_compiler.o"
     rm -rf "${work}"
 }
 
@@ -105,8 +125,12 @@ build_target() {
     sdk_path="$(xcrun --sdk "${sdk}" --show-sdk-path)"
     echo "  - ${target} (SDK: ${sdk_path})"
     rustup target add "${target}"
+    IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+    MACOSX_DEPLOYMENT_TARGET=12.0 \
+    XROS_DEPLOYMENT_TARGET=1.0 \
+    TVOS_DEPLOYMENT_TARGET=15.0 \
     SDKROOT="${sdk_path}" cargo build --release --no-default-features --lib --target "${target}"
-    hide_internal_symbols "${ROOT_DIR}/target/${target}/release/${LIB_NAME}" "${target}"
+    hide_internal_symbols "${ROOT_DIR}/target/${target}/release/${LIB_NAME}" "${target}" "${sdk}"
 }
 
 cd "${COMPILER_DIR}"
