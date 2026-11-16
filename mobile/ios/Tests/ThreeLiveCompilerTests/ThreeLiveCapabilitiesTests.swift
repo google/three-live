@@ -234,11 +234,13 @@ final class ThreeLiveCapabilitiesTests: XCTestCase {
     let transport = FakeLiveTransport()
     let live = XRGeminiLiveController(frameProvider: { $0(Data([0xFF, 0xD8])) })
     live.capabilities = ThreeLiveCapabilities.default
-    live.connect(transport, streamFrames: false)
+    live.connect(transport, setup: ["model": "gemini-live"], streamFrames: false)
+    XCTAssertFalse(live.isConnected)
     XCTAssertTrue(transport.sent.isEmpty)
 
     live.capabilities = ThreeLiveCapabilities(network: true, ai: true)
-    live.connect(transport, streamFrames: false)
+    live.connect(transport, setup: ["model": "gemini-live"], streamFrames: false)
+    XCTAssertTrue(live.isConnected)
     XCTAssertEqual(transport.sent.count, 1)
     live.sendAudioChunk(Data([0, 0]), sampleRate: 16000)
     XCTAssertEqual(transport.sent.count, 1, "microphone still disabled")
