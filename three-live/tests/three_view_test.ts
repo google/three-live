@@ -2995,6 +2995,118 @@ async function runThreeViewTests() {
     );
   }
 
+  // <three-live section-plane> (no xr-live): ThreeView.render binds
+  // uSectionEnabled/uSectionPlane from the host attribute on every primitive.
+  {
+    const secAttrs = new Map<string, string>();
+    const draws: Array<{enabled: number; plane: number[] | null}> = [];
+    let curEnabled = 0;
+    let curPlane: number[] | null = null;
+    const secGl: any = new Proxy(
+      {
+        canvas: {width: 400, height: 400},
+        getShaderParameter: () => true,
+        getProgramParameter: () => true,
+        getUniformLocation: (_p: any, name: string) => ({name}),
+        uniform1i: (loc: any, v: number) => {
+          if (loc?.name === 'uSectionEnabled') curEnabled = v;
+        },
+        uniform4f: (loc: any, x: number, y: number, z: number, w: number) => {
+          if (loc?.name === 'uSectionPlane') curPlane = [x, y, z, w];
+        },
+        drawElements: () => {
+          draws.push({enabled: curEnabled, plane: curPlane});
+        },
+      },
+      {
+        get(t, p) {
+          return p in t ? (t as any)[p] : () => ({});
+        },
+      },
+    );
+    const secCanvas: any = {...mockCanvas, getContext: () => secGl};
+    const secContainer: any = {
+      ...secCanvas,
+      getAttribute: (n: string) => secAttrs.get(n) ?? null,
+      hasAttribute: (n: string) => secAttrs.has(n),
+    };
+    const secScene = new THREE.Scene();
+    const secBox = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 2, 2),
+      new THREE.MeshStandardMaterial({color: 0xcccccc}),
+    );
+    secBox.name = 'SectionBox';
+    secScene.add(secBox);
+    const secView = new ThreeView(secContainer, secCanvas, {autoStart: false});
+    secView.loadGLBData(parseGLB(secScene.toGLB()));
+    // Identity model root so the authored plane maps 1:1 to world space.
+    (secView as any).modelRootMatrix = mat4Create();
+
+    // CPU fragment survival mirroring FS_RENDER's discard on box surface samples.
+    const keptFraction = (d: {enabled: number; plane: number[] | null}) => {
+      const pos = secBox.geometry.attributes.position.array;
+      const idx = secBox.geometry.index!.array;
+      let kept = 0;
+      let total = 0;
+      let lowerClipped = false;
+      for (let t = 0; t < idx.length; t += 3) {
+        for (let a = 0.05; a < 1; a += 0.1) {
+          for (let b = 0.05; a + b < 1; b += 0.1) {
+            const c = 1 - a - b;
+            const p = [0, 1, 2].map(
+              (k) =>
+                pos[idx[t] * 3 + k] * a +
+                pos[idx[t + 1] * 3 + k] * b +
+                pos[idx[t + 2] * 3 + k] * c,
+            );
+            total++;
+            const pl = d.plane;
+            const discard =
+              d.enabled === 1 &&
+              pl !== null &&
+              p[0] * pl[0] + p[1] * pl[1] + p[2] * pl[2] > pl[3];
+            if (!discard) kept++;
+            else if (p[1] < -1e-6) lowerClipped = true;
+          }
+        }
+      }
+      return lowerClipped ? -1 : kept / total;
+    };
+
+    draws.length = 0;
+    secView.render();
+    const d0 = draws[draws.length - 1];
+    assert(
+      draws.length > 0 && d0.enabled === 0 && keptFraction(d0) === 1,
+      'ThreeView.render: no section-plane -> uSectionEnabled=0 (mesh fully drawn)',
+    );
+
+    secAttrs.set('section-plane', 'y:0.0');
+    draws.length = 0;
+    secView.render();
+    const d1 = draws[draws.length - 1];
+    const k1 = d1 ? keptFraction(d1) : -1;
+    assert(
+      d1 !== undefined &&
+        d1.enabled === 1 &&
+        d1.plane !== null &&
+        Math.abs(d1.plane[1] - 1) < 1e-6 &&
+        Math.abs(d1.plane[3]) < 1e-6 &&
+        k1 > 0.4 &&
+        k1 < 0.6,
+      `<three-live section-plane="y:0.0"> clips the upper half of the mesh in the WebGL2 color pass without xr-live (kept ${(k1 * 100).toFixed(1)}%)`,
+    );
+
+    secAttrs.set('section-plane', 'none');
+    draws.length = 0;
+    secView.render();
+    const d2 = draws[draws.length - 1];
+    assert(
+      d2 !== undefined && d2.enabled === 0 && keptFraction(d2) === 1,
+      'section-plane="none" restores the unclipped mesh (uSectionEnabled=0)',
+    );
+  }
+
   console.log(
     `\n🏆 three-view Test Results: ${passed} Passed, ${failed} Failed.`,
   );

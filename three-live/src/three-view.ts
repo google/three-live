@@ -228,6 +228,7 @@ import {
   type ShadowMapsMode,
   type ThreeLivePlugin,
 } from './plugin';
+import {resolveSectionPlane} from './section-plane';
 ensureCapabilityChecker();
 export {getRegisteredPlugins, registerPlugin, type ThreeLivePlugin};
 
@@ -3977,6 +3978,7 @@ export class ThreeView {
     }
     let hasTransmissive = false;
     let hasRefraction = false;
+    const sectionPlane = resolveSectionPlane(this);
     const renderList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
     const bindTex2D = (
@@ -4124,7 +4126,25 @@ export class ThreeView {
           );
 
           this.bindLights(u);
-          if (u.uSectionEnabled) gl.uniform1i(u.uSectionEnabled, 0);
+          if (u.uSectionEnabled) {
+            // Core `section-plane` clipping (`<three-live section-plane=...>`),
+            // matching the shadow pass. `<xr-live>`'s exploded-view plugin may
+            // still override these uniforms in `onBeforeDrawPrimitive` below.
+            const clip =
+              sectionPlane !== null &&
+              i >= numBackdrop &&
+              !(mesh as any).isPluginMesh;
+            gl.uniform1i(u.uSectionEnabled, clip ? 1 : 0);
+            if (clip && u.uSectionPlane) {
+              gl.uniform4f(
+                u.uSectionPlane,
+                sectionPlane.normal[0],
+                sectionPlane.normal[1],
+                sectionPlane.normal[2],
+                sectionPlane.constant,
+              );
+            }
+          }
 
           for (const plugin of registeredPlugins) {
             plugin.onBeforeDrawPrimitive?.(

@@ -423,7 +423,9 @@ On the web, `<three-live>` supports the core HTML attributes used by
 `rotation-per-second`, `ar`, `ar-modes`, `ar-scale`, `ar-placement`, `exposure`,
 `shadow-intensity`, `shadow-softness`, `shadow-maps`, `tone-mapping`,
 `environment-image`, `skybox-image`, `autoplay`, `animation-name`,
-`variant-name`, and `slot="hotspot-*"`).
+`variant-name`, and `slot="hotspot-*"`). It also accepts a CAD `section-plane`
+cut (`"y:2.8"`, `"-z:0.5"`, `"none"`) that clips the color and shadow passes on
+WebGL2 and WebGPU without requiring `<xr-live>`.
 
 If you have existing `<model-viewer>` HTML markup and want to add procedural
 Three.js scripts, native Android/iOS runtime targets, or CLI/MCP scene

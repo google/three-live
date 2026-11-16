@@ -18,6 +18,8 @@
 import * as assert from 'assert';
 import {mat4LookAt, mat4Multiply, mat4Perspective} from '../src/math';
 import {getSharedRegistry} from '../src/plugin';
+import {SHADOW_RECEIVER_NORMAL_BIAS_SCALE} from '../src/plugins/shadow-maps';
+import {resolveSectionPlane} from '../src/section-plane';
 import {ThreeLiveElement} from '../src/three-live-element';
 import {ThreeView} from '../src/three-view';
 import {
@@ -50,6 +52,7 @@ import {
   SCENE_FLAG_HAS_ENV_MAP,
   SCENE_FLAG_RIGHT_EYE,
   SCENE_FLAG_SECTION_ENABLED,
+  SCENE_SHADOW_DEPTH_WGSL,
 } from '../src/webgpu/shaders';
 
 interface RecordedWrite {
@@ -846,6 +849,92 @@ async function runTests(): Promise<void> {
     );
   });
 
+  await test('WebGPU shadow bias parity: inward caster shrink + full receiver normal bias', () => {
+    assert.ok(
+      /wp\.xyz - un \* \(shd\.biasRay\.w/.test(SCENE_SHADOW_DEPTH_WGSL) &&
+        !/wp\.xyz \+ un \*/.test(SCENE_SHADOW_DEPTH_WGSL),
+      'vsShadowDepth shrinks casters along -N (no +N inflation past flush receivers)',
+    );
+    const buf = new ArrayBuffer(SCENE_UNIFORM_BYTES);
+    const vp = new Float32Array([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ]);
+    writeSceneUniforms(buf, {
+      vp,
+      modelRoot: vp,
+      eyePos: [0, 0, 5],
+      exposure: 1,
+      envIntensity: 1,
+      toneMappingIndex: 0,
+      lights: [],
+      hasEnvMap: false,
+      shadowMap: {
+        slices: [
+          {
+            slot: 0,
+            viewProj: vp,
+            rayDir: [0, -1, 0],
+            depthBias: -0.0005,
+            normalBiasWorld: 0.055,
+            uvRadius: 0.002,
+          },
+        ],
+        dirSlots: [0, -1],
+        ptSlots: [-1, -1],
+      },
+    } as unknown as Parameters<typeof writeSceneUniforms>[1]);
+    const f = new Float32Array(buf);
+    assert.strictEqual(
+      f[181],
+      Math.fround(0.055 * SHADOW_RECEIVER_NORMAL_BIAS_SCALE),
+      'WebGPU receiver normal bias matches WebGL2 uShadowParams.y',
+    );
+  });
+
+  await test('<three-live section-plane> toggles WebGPU scene section uniforms without xr-live', () => {
+    const attrs = new Map<string, string>();
+    const viewerLike = {
+      container: {getAttribute: (n: string) => attrs.get(n) ?? null},
+      meshes: [],
+    };
+    const pack = () => {
+      const buf = new ArrayBuffer(SCENE_UNIFORM_BYTES);
+      const vp = new Float32Array([
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+      ]);
+      writeSceneUniforms(buf, {
+        vp,
+        modelRoot: vp,
+        eyePos: [0, 0, 5],
+        exposure: 1,
+        envIntensity: 1,
+        toneMappingIndex: 0,
+        lights: [],
+        hasEnvMap: false,
+        sectionPlane: resolveSectionPlane(viewerLike),
+      });
+      return {f: new Float32Array(buf), u: new Uint32Array(buf)};
+    };
+    attrs.set('section-plane', 'y:0.0');
+    const on = pack();
+    assert.ok(
+      (on.u[115] & SCENE_FLAG_SECTION_ENABLED) !== 0,
+      'section enabled',
+    );
+    assert.deepStrictEqual(
+      [on.f[100], on.f[101], on.f[102], on.f[103]],
+      [0, 1, 0, 0],
+      'y:0.0 -> plane (0,1,0,0) clips the upper half',
+    );
+    attrs.set('section-plane', 'none');
+    const off = pack();
+    assert.strictEqual(
+      off.u[115] & SCENE_FLAG_SECTION_ENABLED,
+      0,
+      'none -> disabled',
+    );
+  });
+
   await test('5,000-part CAD assembly compiles into 1 GPURenderBundle with 0 part uploads during orbit & turntable', () => {
     const harness = createMockHarness(800, 600);
     const gpu = createMockGPUDevice();
@@ -1430,7 +1519,9 @@ async function runTests(): Promise<void> {
       const glbData = buildMultiPartCadGLBData(1);
       // Add COLOR_0 accessor to the primitive
       const binOld = new Uint8Array(glbData.bin);
-      const colFloats = new Float32Array([0.9, 0.1, 0.2, 0.2, 0.9, 0.1, 0.1, 0.2, 0.9]);
+      const colFloats = new Float32Array([
+        0.9, 0.1, 0.2, 0.2, 0.9, 0.1, 0.1, 0.2, 0.9,
+      ]);
       const colBytes = new Uint8Array(
         colFloats.buffer,
         colFloats.byteOffset,

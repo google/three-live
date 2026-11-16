@@ -127,7 +127,6 @@ export class XRLiveElement extends ThreeLiveElement {
       'explode',
       'explode-mode',
       'explode-scale',
-      'section-plane',
       'persistent-anchors',
       'persist-url-hash',
       'locomotion',

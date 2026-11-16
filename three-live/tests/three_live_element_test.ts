@@ -354,6 +354,43 @@ async function runElementTests() {
   );
 
   {
+    // section-plane is observed on <three-live> (not only <xr-live>) and
+    // toggling it schedules a redraw of the color + shadow passes.
+    assert(
+      ThreeLiveElement.observedAttributes.includes('section-plane'),
+      'observedAttributes contains section-plane',
+    );
+    let renders = 0;
+    const withViewer = instance as unknown as {viewer: unknown};
+    const prevViewer = withViewer.viewer;
+    withViewer.viewer = {
+      render: () => {
+        renders++;
+      },
+    };
+    assert(
+      instance.sectionPlane === 'none',
+      'sectionPlane getter defaults to "none"',
+    );
+    instance.setAttribute('section-plane', 'y:0.0');
+    assert(
+      renders === 1 && instance.sectionPlane === 'y:0.0',
+      'setAttribute("section-plane", "y:0.0") re-renders the viewer',
+    );
+    instance.sectionPlane = 'none';
+    assert(
+      renders === 2 && attributes.get('section-plane') === 'none',
+      'sectionPlane setter updates attribute and re-renders',
+    );
+    instance.sectionPlane = null;
+    assert(
+      renders === 3 && !attributes.has('section-plane'),
+      'sectionPlane = null removes the attribute and re-renders',
+    );
+    withViewer.viewer = prevViewer;
+  }
+
+  {
     // tone-mapping is normalized, and removing it restores neutral.
     let viewerMode = 'unset';
     const withViewer = instance as unknown as {viewer: unknown};

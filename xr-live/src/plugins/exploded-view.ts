@@ -1057,11 +1057,9 @@ export const explodedViewPlugin: ThreeLivePlugin = {
     meshGpu: any,
   ): void {
     const section = activeSectionByGl.get(gl);
-    if (!section || !section.enabled) {
-      const cached = sectionUniformCache.get(program);
-      if (cached?.enabled) gl.uniform1i(cached.enabled, 0);
-      return;
-    }
+    // Inactive: leave the core `ThreeView` section-plane binding untouched
+    // (it already resets `uSectionEnabled` for every primitive).
+    if (!section || !section.enabled) return;
     let locs = sectionUniformCache.get(program);
     if (!locs) {
       locs = {

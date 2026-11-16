@@ -317,7 +317,8 @@ export function writeSceneUniforms(
       );
       const pb = 180 + s.slot * 4;
       f32[pb] = s.depthBias;
-      f32[pb + 1] = s.normalBiasWorld * 0.5;
+      // Full receiver normal bias (SHADOW_RECEIVER_NORMAL_BIAS_SCALE).
+      f32[pb + 1] = s.normalBiasWorld;
       f32[pb + 2] = s.uvRadius;
     }
     i32[196] = input.shadowMap.dirSlots[0] | 0;
@@ -954,10 +955,12 @@ fn vsShadowDepth(
   var wp = m * vec4<f32>(aPos, 1.0);
   let wn = m[0].xyz * aNormal.x + m[1].xyz * aNormal.y + m[2].xyz * aNormal.z;
   let nl = length(wn);
+  // Shrink casters inward along -N (see applyShadowCasterNormalBias in
+  // plugins/shadow-maps.ts); receivers already offset outward along +N.
   if (nl > 1e-5 && shd.biasRay.w > 0.0) {
     let un = wn / nl;
     wp = vec4<f32>(
-      wp.xyz + un * (shd.biasRay.w * max(1.0 - abs(dot(un, shd.biasRay.xyz)), 0.15)),
+      wp.xyz - un * (shd.biasRay.w * max(1.0 - abs(dot(un, shd.biasRay.xyz)), 0.15)),
       1.0,
     );
   }

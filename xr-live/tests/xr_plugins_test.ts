@@ -2462,6 +2462,21 @@ function testGoldenParity(): void {
     path.resolve(__dirname, '../../testdata/golden'),
     path.resolve(__dirname, '../testdata/golden'),
     path.resolve(process.cwd(), 'testdata/golden'),
+    // Blaze/Forge: the bundled test may be a symlink into a content store, so
+    // `__dirname` (realpath) can land outside the runfiles tree. The entry
+    // path passed to node (`process.argv[1]`) keeps the symlinked location.
+    ...(process.argv[1]
+      ? [
+          path.resolve(
+            path.dirname(path.resolve(process.argv[1])),
+            '../testdata/golden',
+          ),
+          path.resolve(
+            path.dirname(path.resolve(process.argv[1])),
+            '../../testdata/golden',
+          ),
+        ]
+      : []),
   ];
   const goldenDir =
     goldenCandidates.find((d: string) =>

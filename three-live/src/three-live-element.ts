@@ -243,7 +243,7 @@ export interface ThreeLiveElement {
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
   static readonly observedAttributes =
-    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps'.split(
+    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane'.split(
       ' ',
     );
 
@@ -679,6 +679,12 @@ export class ThreeLiveElement extends BaseElement {
         v?.render();
         break;
 
+      case 'section-plane':
+        // Color, WebGPU, and shadow passes all read `section-plane` from the
+        // host element each frame; just schedule a redraw.
+        v?.render();
+        break;
+
       case 'capabilities':
         if (!this._syncingCapsAttr) {
           this.__tlCapsOverride = null;
@@ -897,6 +903,18 @@ export class ThreeLiveElement extends BaseElement {
   }
   set shadowMaps(val: ShadowMapsMode | null) {
     this.setAttr('shadow-maps', val);
+  }
+
+  /**
+   * CAD cross-section clipping plane, e.g. `"y:2.8"`, `"-z:0.5"`, `"x:0"`, or
+   * `"none"`. Geometry on the positive side of the plane is discarded in the
+   * color pass (WebGL2 + WebGPU) and the shadow-map depth pass.
+   */
+  get sectionPlane(): string {
+    return this.getAttr('section-plane')?.trim() || 'none';
+  }
+  set sectionPlane(val: string | null) {
+    this.setAttr('section-plane', val);
   }
 
   protected fireEvent(type: string, detail?: unknown): void {
