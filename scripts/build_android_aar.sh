@@ -109,7 +109,7 @@ if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
-PREBUILT_JNI_VERSION="v1.3.2"
+PREBUILT_JNI_VERSION="v1.4.0"
 
 download_prebuilt_jnilibs() {
     if [ -f "${JNILIBS_DIR}/.prebuilt-version" ] && \

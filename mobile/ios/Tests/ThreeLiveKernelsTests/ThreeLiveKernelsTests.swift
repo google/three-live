@@ -16,7 +16,7 @@
 
 import Foundation
 import ThreeLiveKernels
-import ThreeLiveRuntime
+@_spi(Testing) import ThreeLiveRuntime
 import XCTest
 
 /// Verifies `ThreeLiveRuntime` + `ThreeLiveKernels` linked *without* `ThreeLiveCompiler` (zero Boa
@@ -43,6 +43,23 @@ final class ThreeLiveKernelsTests: XCTestCase {
 
   func testRuntimeWithoutNativeCompilerFailsCleanlyUntilBackendRegistered() async throws {
     ThreeCompiler.setBackend(nil)
+    defer {
+      ThreeCompiler.setDefaultBackendDiscoveryEnabled(true)
+      ThreeCompiler.setBackend(nil)
+    }
+
+    // In isolated binaries where `ThreeLiveCompilerNative` is not linked, auto-discovery must
+    // resolve to `nil` out of the box. Under `swift test` on macOS, SwiftPM links all package
+    // `.testTarget`s into a single `.xctest` bundle (loading `ThreeLiveCompilerNative` into the
+    // ObjC runtime), so also disable default discovery to deterministically exercise the unlinked
+    // `ThreeLiveRuntime` behavior in both test runners.
+    if NSClassFromString("ThreeLiveNativeCompilerBackendRegistrar") == nil {
+      XCTAssertNil(
+        ThreeCompiler.backend,
+        "When ThreeLiveCompilerNative is not linked, ThreeCompiler.backend must be nil"
+      )
+    }
+    ThreeCompiler.setDefaultBackendDiscoveryEnabled(false)
     XCTAssertNil(
       ThreeCompiler.backend,
       "When ThreeLiveCompiler is not linked, ThreeCompiler.backend must be nil until setBackend"
@@ -59,7 +76,6 @@ final class ThreeLiveKernelsTests: XCTestCase {
     }
 
     ThreeCompiler.setBackend(HostStubBackend())
-    defer { ThreeCompiler.setBackend(nil) }
 
     let glb = try await ThreeCompiler.compile("const x = 1;")
     XCTAssertEqual(Array(glb.prefix(4)), [0x67, 0x6C, 0x54, 0x46])

@@ -195,6 +195,7 @@ public enum ThreeCompiler {
 
     private let lock = NSLock()
     private var customBackend: (any ThreeCompilerBackend)?
+    private var defaultDiscoveryEnabled = true
     private var defaultResolved = false
     private var discoveredDefaultBackend: (any ThreeCompilerBackend)?
 
@@ -204,11 +205,20 @@ public enum ThreeCompiler {
       lock.unlock()
     }
 
+    func setDefaultDiscoveryEnabled(_ enabled: Bool) {
+      lock.lock()
+      defaultDiscoveryEnabled = enabled
+      lock.unlock()
+    }
+
     func current() -> (any ThreeCompilerBackend)? {
       lock.lock()
       defer { lock.unlock() }
       if let customBackend {
         return customBackend
+      }
+      guard defaultDiscoveryEnabled else {
+        return nil
       }
       if !defaultResolved {
         discoveredDefaultBackend = Self.discoverDefaultBackend()
@@ -234,6 +244,14 @@ public enum ThreeCompiler {
   /// `NativeThreeCompilerBackend` when `ThreeLiveCompiler` is linked).
   public static func setBackend(_ backend: (any ThreeCompilerBackend)?) {
     BackendRegistry.shared.setCustom(backend)
+  }
+
+  /// Enables or disables Objective-C auto-discovery of `NativeThreeCompilerBackend` in tests
+  /// (for example under `swift test`, which links all package `.testTarget`s into a single
+  /// `.xctest` bundle even when an individual test target only depends on `ThreeLiveRuntime`).
+  @_spi(Testing)
+  public static func setDefaultBackendDiscoveryEnabled(_ enabled: Bool) {
+    BackendRegistry.shared.setDefaultDiscoveryEnabled(enabled)
   }
 
   /// The currently active `ThreeCompilerBackend`, or `nil` when `ThreeLiveRuntime` is linked

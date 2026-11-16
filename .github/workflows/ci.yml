@@ -230,6 +230,55 @@ jobs:
       - name: Run Swift package tests
         run: swift test
 
+      - name: Verify standalone ThreeLiveRuntime + ThreeLiveKernels consumer (zero Boa linked)
+        run: |
+          set -euo pipefail
+          REPO_ROOT="$PWD"
+          PKG_ID="$(basename "${REPO_ROOT}" | tr '[:upper:]' '[:lower:]')"
+          WORKDIR="$(mktemp -d)"
+          mkdir -p "${WORKDIR}/Sources/KernelsSmoke"
+          cat > "${WORKDIR}/Package.swift" <<MANIFEST
+          // swift-tools-version: 5.9
+          import PackageDescription
+          let package = Package(
+            name: "KernelsSmoke",
+            platforms: [.macOS(.v12)],
+            dependencies: [.package(path: "${REPO_ROOT}")],
+            targets: [
+              .executableTarget(
+                name: "KernelsSmoke",
+                dependencies: [
+                  .product(name: "ThreeLiveRuntime", package: "${PKG_ID}"),
+                  .product(name: "ThreeLiveKernels", package: "${PKG_ID}"),
+                ]
+              )
+            ]
+          )
+          MANIFEST
+          cat > "${WORKDIR}/Sources/KernelsSmoke/main.swift" <<'SWIFT'
+          import Foundation
+          import ThreeLiveKernels
+          import ThreeLiveRuntime
+
+          guard NSClassFromString("ThreeLiveNativeCompilerBackendRegistrar") == nil else {
+            fatalError("ThreeLiveCompilerNative unexpectedly linked into standalone consumer")
+          }
+          guard ThreeCompiler.backend == nil else {
+            fatalError("Expected ThreeCompiler.backend == nil without ThreeLiveCompiler")
+          }
+          guard ThreeLiveKernels.abiVersion == 1, ThreeLiveKernels.kernelCount == 24 else {
+            fatalError("Expected ThreeLiveKernels ABI v1 with 24 kernels")
+          }
+          print("Standalone ThreeLiveRuntime + ThreeLiveKernels consumer verified")
+          SWIFT
+          swift run --package-path "${WORKDIR}"
+          SMOKE_BIN="$(swift build --package-path "${WORKDIR}" --show-bin-path)/KernelsSmoke"
+          if nm "${SMOKE_BIN}" | grep -E '(_?three_compile_to_glb|boa_engine)'; then
+            echo "::error::Standalone ThreeLiveRuntime + ThreeLiveKernels binary leaked compiler/Boa symbols!"
+            exit 1
+          fi
+          rm -rf "${WORKDIR}"
+
       # `swift build` only covers the macOS host, where `canImport(UIKit)` is false and the
       # whole of QuickLookHelper.swift is preprocessed away. These steps are what actually
       # type-check the iOS-only and visionOS-only code paths.
