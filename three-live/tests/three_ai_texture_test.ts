@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {ensureCapabilityChecker} from '../src/capabilities';
 import {getSharedRegistry, registerPlugin} from '../src/plugin';
 import {aiPlugin} from '../src/plugins/ai';
 import {
@@ -33,6 +34,7 @@ import {proceduralPlugin} from '../src/plugins/procedural';
 import {makePngDeflater} from '../src/png-deflate';
 import {buildSandboxWorkerSource, Scene, THREE} from '../src/three-author';
 import {sceneToGLB} from '../src/three-convert';
+ensureCapabilityChecker();
 
 registerPlugin(proceduralPlugin);
 
@@ -137,21 +139,24 @@ getSharedRegistry().scriptRunner = {
 } as any;
 
 const WALL_SCRIPT = [
-  "const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.2), new THREE.MeshStandardMaterial({ color: 0x777777 }));",
+  'const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.2), new THREE.MeshStandardMaterial({ color: 0x777777 }));',
   "wall.name = 'Wall';",
   "wall.userData.xr = { material: { preset: 'brick', prompt: 'mossy temple stone', size: 256, seed: 3 } };",
   'scene.add(wall);',
-  "const floor = new THREE.Mesh(new THREE.BoxGeometry(2, 0.1, 2), new THREE.MeshStandardMaterial());",
+  'const floor = new THREE.Mesh(new THREE.BoxGeometry(2, 0.1, 2), new THREE.MeshStandardMaterial());',
   "floor.name = 'Floor';",
   "floor.userData.xr = { material: { preset: 'concrete', prompt: 'polished terrazzo', size: 256 } };",
   'scene.add(floor);',
-  "const plain = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());",
+  'const plain = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());',
   "plain.name = 'Plain';",
   "plain.userData.xr = { material: 'wood' };",
   'scene.add(plain);',
 ].join('\n');
 
-function fakeProvider(calls: string[], fail = new Set<string>()): ThreeLiveImageProvider {
+function fakeProvider(
+  calls: string[],
+  fail = new Set<string>(),
+): ThreeLiveImageProvider {
   return {
     name: 'fake-images',
     model: 'fake-1',
@@ -168,6 +173,7 @@ function fakeElement(attrs: Record<string, string> = {}, cache = memCache()) {
   const events: Array<{type: string; detail: any}> = [];
   const el: any = {
     allowClientScripts: true,
+    capabilities: 'scripts ai network remote_content storage',
     sandbox: 'worker',
     getAttribute: (n: string) => attrs[n] ?? null,
     hasAttribute: (n: string) => n in attrs,
@@ -194,11 +200,16 @@ async function run(): Promise<void> {
   // 1. Image provider: request shape, responses, and endpoint rules.
   let threw = '';
   try {
-    createAIImageProvider({endpoint: 'http://example.com/v1/images/generations'});
+    createAIImageProvider({
+      endpoint: 'http://example.com/v1/images/generations',
+    });
   } catch (e) {
     threw = String(e);
   }
-  assert(threw.includes('https://'), 'createAIImageProvider rejects non-https non-loopback endpoints');
+  assert(
+    threw.includes('https://'),
+    'createAIImageProvider rejects non-https non-loopback endpoints',
+  );
   const seen: any[] = [];
   const png = fakePng(2, 2, new Uint8Array(16));
   const b64 = btoa(String.fromCharCode(...png));
@@ -208,10 +219,16 @@ async function run(): Promise<void> {
     headers: {Authorization: 'Bearer t'},
     fetch: (async (url: string, init: any) => {
       seen.push({url, init, body: JSON.parse(init.body)});
-      return new Response(JSON.stringify({data: [{b64_json: b64}]}), {status: 200});
+      return new Response(JSON.stringify({data: [{b64_json: b64}]}), {
+        status: 200,
+      });
     }) as any,
   });
-  const got = await provider.generateImage({prompt: 'rusty steel', size: 512, seed: 1});
+  const got = await provider.generateImage({
+    prompt: 'rusty steel',
+    size: 512,
+    seed: 1,
+  });
   const body = seen[0]?.body;
   assert(
     body?.prompt === 'rusty steel' + TEXTURE_PROMPT_SUFFIX &&
@@ -231,7 +248,8 @@ async function run(): Promise<void> {
       allowResponseUrls: allow,
       fetch: (async (u: string, init: any) => {
         if (init?.method === 'POST') {
-          if ('response_format' in JSON.parse(init.body)) throw new Error('unexpected response_format');
+          if ('response_format' in JSON.parse(init.body))
+            throw new Error('unexpected response_format');
           return new Response(JSON.stringify({data: [{url}]}), {status: 200});
         }
         return new Response(png, {status: 200});
@@ -239,19 +257,31 @@ async function run(): Promise<void> {
     });
   let urlErr = '';
   try {
-    await urlProvider(false, 'https://proxy.example.com/img.png').generateImage({prompt: 'a', size: 256, seed: 1});
+    await urlProvider(false, 'https://proxy.example.com/img.png').generateImage(
+      {prompt: 'a', size: 256, seed: 1},
+    );
   } catch (e) {
     urlErr = String(e);
   }
   let crossErr = '';
   try {
-    await urlProvider(true, 'https://evil.example.net/img.png').generateImage({prompt: 'a', size: 256, seed: 1});
+    await urlProvider(true, 'https://evil.example.net/img.png').generateImage({
+      prompt: 'a',
+      size: 256,
+      seed: 1,
+    });
   } catch (e) {
     crossErr = String(e);
   }
-  const sameOrigin = await urlProvider(true, '/img.png').generateImage({prompt: 'a', size: 256, seed: 1});
+  const sameOrigin = await urlProvider(true, '/img.png').generateImage({
+    prompt: 'a',
+    size: 256,
+    seed: 1,
+  });
   assert(
-    urlErr.includes('b64_json') && crossErr.includes('b64_json') && (sameOrigin as Uint8Array).length === png.length,
+    urlErr.includes('b64_json') &&
+      crossErr.includes('b64_json') &&
+      (sameOrigin as Uint8Array).length === png.length,
     'Image URLs are refused unless allowResponseUrls is set and the URL is same-origin',
   );
   let httpErr = '';
@@ -263,31 +293,51 @@ async function run(): Promise<void> {
   } catch (e) {
     httpErr = String(e);
   }
-  assert(httpErr.includes('HTTP 429'), 'Provider HTTP errors surface with their status (loopback http allowed)');
+  assert(
+    httpErr.includes('HTTP 429'),
+    'Provider HTTP errors surface with their status (loopback http allowed)',
+  );
 
   // 2. Albedo preparation: center crop, resample, opaque, seamless.
-  const prepared = prepareAlbedo({width: 600, height: 400, rgba: gradient(600, 400)}, 256);
+  const prepared = prepareAlbedo(
+    {width: 600, height: 400, rgba: gradient(600, 400)},
+    256,
+  );
   let opaque = true;
   for (let i = 3; i < prepared.length; i += 4) opaque &&= prepared[i] === 255;
   const px = (x: number, y: number) => prepared[(y * 256 + x) * 4];
   let seamOk = true;
-  for (let y = 0; y < 256; y++) seamOk &&= Math.abs(px(0, y) - px(255, y)) <= 16;
+  for (let y = 0; y < 256; y++)
+    seamOk &&= Math.abs(px(0, y) - px(255, y)) <= 16;
   const flat = seamBlend(new Uint8Array(16 * 16 * 4).fill(77), 16);
   assert(
-    prepared.length === 256 * 256 * 4 && opaque && seamOk && flat.every((v, i) => (i % 4 === 3 ? v === 255 : v === 77)),
+    prepared.length === 256 * 256 * 4 &&
+      opaque &&
+      seamOk &&
+      flat.every((v, i) => (i % 4 === 3 ? v === 255 : v === 77)),
     'prepareAlbedo crops, resamples, forces opaque, and blends seams (a flat image stays flat)',
   );
 
   // 3. Pack round trip and validation.
-  const spec = reg.canonicalTextureSpec({prompt: ' mossy  temple stone', size: 256, seed: 3});
+  const spec = reg.canonicalTextureSpec({
+    prompt: ' mossy  temple stone',
+    size: 256,
+    seed: 3,
+  });
   const entry: TexturePackEntry = {
     key: spec.key,
     spec: {prompt: spec.prompt, size: 256, seed: 3},
     rgba: prepared,
     provenance: {provider: 'fake-images'},
   };
-  const json = await serializeTexturePack(new Map([[spec.key, entry]]), fakeCodec);
-  const back = await parseTexturePack(JSON.parse(JSON.stringify(json)), fakeCodec);
+  const json = await serializeTexturePack(
+    new Map([[spec.key, entry]]),
+    fakeCodec,
+  );
+  const back = await parseTexturePack(
+    JSON.parse(JSON.stringify(json)),
+    fakeCodec,
+  );
   assert(
     back.get(spec.key)?.rgba.every((v, i) => v === prepared[i]) === true &&
       (back.get(spec.key)?.provenance as any)?.provider === 'fake-images',
@@ -304,12 +354,24 @@ async function run(): Promise<void> {
     }
   };
   assert(
-    (await rejects((j) => (j.entries[spec.key].spec.seed = 4), 'does not match')) &&
+    (await rejects(
+      (j) => (j.entries[spec.key].spec.seed = 4),
+      'does not match',
+    )) &&
       (await rejects((j) => (j.version = 2), 'version')) &&
       (await rejects((j) => (j.format = 'x'), 'format')) &&
-      (await rejects((j) => (j.entries[spec.key].spec.size = 512), 'does not match')) &&
-      (await rejects((j) => (j.entries[spec.key].albedo = 'data:image/jpeg;base64,AAAA'), 'data:image/png')) &&
-      (await rejects((j) => (j.entries['zz'] = j.entries[spec.key]), 'invalid key')),
+      (await rejects(
+        (j) => (j.entries[spec.key].spec.size = 512),
+        'does not match',
+      )) &&
+      (await rejects(
+        (j) => (j.entries[spec.key].albedo = 'data:image/jpeg;base64,AAAA'),
+        'data:image/png',
+      )) &&
+      (await rejects(
+        (j) => (j.entries['zz'] = j.entries[spec.key]),
+        'invalid key',
+      )),
     'Texture pack validation rejects key/spec mismatches, wrong versions/formats, sizes, MIME types, and keys',
   );
 
@@ -329,13 +391,18 @@ async function run(): Promise<void> {
       requests.every((r) => r.spec.size === 256),
     'textureRequests lists each prompt (canonical spec + meshes) from the compiled GLB',
   );
-  const swapped = await until(() => runs.length >= 2 && runs[runs.length - 1].packKeys.length === 2);
+  const swapped = await until(
+    () => runs.length >= 2 && runs[runs.length - 1].packKeys.length === 2,
+  );
   assert(
     swapped &&
       runs[0].packKeys.length === 0 &&
       calls.length === 2 &&
       auto.events.some((e) => e.type === 'three-live-texture-start') &&
-      auto.events.filter((e) => e.type === 'three-live-texture' && e.detail.source === 'provider').length === 2 &&
+      auto.events.filter(
+        (e) =>
+          e.type === 'three-live-texture' && e.detail.source === 'provider',
+      ).length === 2 &&
       auto.cache.store.size === 2,
     'Missing textures are generated once, cached, and hot-swapped by recompiling with the pack',
   );
@@ -356,11 +423,15 @@ async function run(): Promise<void> {
   cached.el.aiImageProvider = fakeProvider(calls2);
   runs.length = 0;
   await cached.el.executeScript(WALL_SCRIPT);
-  const cacheSwap = await until(() => runs.length >= 2 && runs[runs.length - 1].packKeys.length === 2);
+  const cacheSwap = await until(
+    () => runs.length >= 2 && runs[runs.length - 1].packKeys.length === 2,
+  );
   assert(
     cacheSwap &&
       calls2.length === 0 &&
-      cached.events.filter((e) => e.type === 'three-live-texture' && e.detail.source === 'cache').length === 2,
+      cached.events.filter(
+        (e) => e.type === 'three-live-texture' && e.detail.source === 'cache',
+      ).length === 2,
     'Cached textures resolve without provider calls',
   );
 
@@ -374,7 +445,10 @@ async function run(): Promise<void> {
   const none = fakeElement();
   await none.el.executeScript(WALL_SCRIPT);
   await sleep(30);
-  assert(calls3.length === 0 && runs.length === 2, 'ai-textures="manual" and pages without a provider only use packs and presets');
+  assert(
+    calls3.length === 0 && runs.length === 2,
+    'ai-textures="manual" and pages without a provider only use packs and presets',
+  );
   const res = await manual.el.generateTextures({meshes: ['Wall']});
   assert(
     res.generated.length === 1 &&
@@ -390,17 +464,25 @@ async function run(): Promise<void> {
   } catch (e) {
     noProvider = String(e);
   }
-  assert(noProvider.includes('no image provider'), 'generateTextures explains how to configure a provider');
+  assert(
+    noProvider.includes('no image provider'),
+    'generateTextures explains how to configure a provider',
+  );
 
   // 7. Failures are reported once and not retried automatically.
   const calls4: string[] = [];
   const failing = fakeElement();
-  failing.el.aiImageProvider = fakeProvider(calls4, new Set(['polished terrazzo']));
+  failing.el.aiImageProvider = fakeProvider(
+    calls4,
+    new Set(['polished terrazzo']),
+  );
   runs.length = 0;
   await failing.el.executeScript(WALL_SCRIPT);
   await until(() => runs.length >= 2);
   await sleep(30);
-  const errs = failing.events.filter((e) => e.type === 'three-live-texture-error');
+  const errs = failing.events.filter(
+    (e) => e.type === 'three-live-texture-error',
+  );
   assert(
     errs.length === 1 &&
       errs[0].detail.error.includes('provider refused') &&
@@ -426,7 +508,9 @@ async function run(): Promise<void> {
   await fresh.el.executeScript(WALL_SCRIPT);
   await sleep(30);
   assert(
-    runs[0].packKeys.length === 2 && calls5.length === before && fresh.el.texturePack?.format === 'three-live-texture-pack',
+    runs[0].packKeys.length === 2 &&
+      calls5.length === before &&
+      fresh.el.texturePack?.format === 'three-live-texture-pack',
     'el.texturePack supplies the pack to every compile, so nothing is generated',
   );
   console.info = origInfo;
@@ -449,7 +533,11 @@ async function run(): Promise<void> {
 }
 
 /** Decodes an 8-bit RGBA PNG (any filters) with node:zlib, for assertions. */
-function decodeRgbaPng(png: Uint8Array): {w: number; h: number; rgba: Uint8Array} {
+function decodeRgbaPng(png: Uint8Array): {
+  w: number;
+  h: number;
+  rgba: Uint8Array;
+} {
   const zlib = require('zlib') as typeof import('zlib');
   const b = Buffer.from(png);
   const w = b.readUInt32BE(16);
@@ -545,13 +633,18 @@ async function deflaterTests(workerSrc: string): Promise<void> {
     const bin = g.subarray(28 + jl, 28 + jl + dv.getUint32(20 + jl, true));
     const view = (i: number) => {
       const v = json.bufferViews[i];
-      return bin.subarray(v.byteOffset || 0, (v.byteOffset || 0) + v.byteLength);
+      return bin.subarray(
+        v.byteOffset || 0,
+        (v.byteOffset || 0) + v.byteLength,
+      );
     };
     return {json, view, total: dv.getUint32(8, true)};
   };
   const a = parse(glb);
   const b = parse(out);
-  const posView = a.json.accessors[a.json.meshes[0].primitives[0].attributes.POSITION].bufferView;
+  const posView =
+    a.json.accessors[a.json.meshes[0].primitives[0].attributes.POSITION]
+      .bufferView;
   const srcUri: string = a.json.images[0].uri;
   const imgA = decodeRgbaPng(
     new Uint8Array(Buffer.from(srcUri.split(',')[1], 'base64')),
@@ -563,7 +656,10 @@ async function deflaterTests(workerSrc: string): Promise<void> {
       b.json.images[0].mimeType === 'image/png' &&
       b.total === out.length &&
       Buffer.compare(Buffer.from(imgA.rgba), Buffer.from(imgB.rgba)) === 0 &&
-      Buffer.compare(Buffer.from(a.view(posView)), Buffer.from(b.view(posView))) === 0 &&
+      Buffer.compare(
+        Buffer.from(a.view(posView)),
+        Buffer.from(b.view(posView)),
+      ) === 0 &&
       b.json.buffers[0].byteLength % 4 === 0,
     'GLB pass DEFLATEs PNG images into the BIN chunk losslessly',
   );

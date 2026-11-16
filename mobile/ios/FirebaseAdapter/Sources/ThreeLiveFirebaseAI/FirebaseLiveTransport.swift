@@ -69,8 +69,16 @@ public final class FirebaseLiveTransport: GeminiLiveTransport, @unchecked Sendab
   }
 
   /// Connects `model` and wraps the session.
-  public static func connect(_ model: LiveGenerativeModel) async throws -> FirebaseLiveTransport {
-    FirebaseLiveTransport(session: try await model.connect())
+  public static func connect(
+    _ model: LiveGenerativeModel,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
+  ) async throws -> FirebaseLiveTransport {
+    let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    guard policy.check(.ai, feature: "firebaseLive", onDenied: onCapabilityDenied) else {
+      throw AIEditError("Capability 'ai' or 'network' denied for Firebase Live session.")
+    }
+    return FirebaseLiveTransport(session: try await model.connect())
   }
 
   public func send(_ message: [String: Any]) {

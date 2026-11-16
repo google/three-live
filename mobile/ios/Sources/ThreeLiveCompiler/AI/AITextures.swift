@@ -37,11 +37,46 @@ public final class AIImagesProvider: AIImageProvider, @unchecked Sendable {
   private let headers: [String: String]
   private let timeout: TimeInterval
   private let session: URLSession
+  private let capLock = NSLock()
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  var fallbackCapabilities: (() -> ThreeLiveCapabilities?)?
+  var fallbackOnDenied: (() -> ((CapabilityDeniedEvent) -> Void)?)?
+
+  public var capabilities: ThreeLiveCapabilities? {
+    get {
+      capLock.lock()
+      defer { capLock.unlock() }
+      return _capabilities
+    }
+    set {
+      capLock.lock()
+      _capabilities = newValue
+      capLock.unlock()
+    }
+  }
+
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get {
+      capLock.lock()
+      defer { capLock.unlock() }
+      return _onCapabilityDenied
+    }
+    set {
+      capLock.lock()
+      _onCapabilityDenied = newValue
+      capLock.unlock()
+    }
+  }
+
+  var endpointURLString: String { endpoint.absoluteString }
 
   /// Returns `nil` unless `endpoint` is `https://` (or `http://` to a loopback host).
   public init?(
     endpoint: String, model: String? = nil, headers: [String: String] = [:],
-    timeout: TimeInterval = 180, session: URLSession = .shared
+    timeout: TimeInterval = 180, session: URLSession = .shared,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
   ) {
     guard AIChatProvider.isAllowedEndpoint(endpoint), let url = URL(string: endpoint) else {
       return nil
@@ -51,9 +86,32 @@ public final class AIImagesProvider: AIImageProvider, @unchecked Sendable {
     self.headers = headers
     self.timeout = timeout
     self.session = session
+    self._capabilities = capabilities
+    self._onCapabilityDenied = onCapabilityDenied
   }
 
   public func generateImage(_ requestBody: [String: Any]) async throws -> Data {
+    let (customCaps, customDenied, fbCaps, fbDenied) = {
+      () -> (
+        ThreeLiveCapabilities?, ((CapabilityDeniedEvent) -> Void)?,
+        (() -> ThreeLiveCapabilities?)?, (() -> ((CapabilityDeniedEvent) -> Void)?)?
+      ) in
+      capLock.lock()
+      defer { capLock.unlock() }
+      return (_capabilities, _onCapabilityDenied, fallbackCapabilities, fallbackOnDenied)
+    }()
+    let policy = customCaps ?? fbCaps?() ?? ThreeLiveCapabilities.defaultPolicy
+    let deniedListener = customDenied ?? fbDenied?()
+    guard
+      policy.check(
+        .ai,
+        feature: "aiTextures",
+        url: endpoint.absoluteString,
+        onDenied: deniedListener
+      )
+    else {
+      throw AIEditError("ai-image: capability 'ai' or 'network' denied.")
+    }
     var request = URLRequest(url: endpoint, timeoutInterval: timeout)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -125,6 +183,67 @@ public final class AITextures: @unchecked Sendable {
   public var onTexturesStart: ((String, [AITextureRequest]) -> Void)?
   /// Background generation finished; recompile the script if anything was added.
   public var onTexturesUpdated: ((String, AITextureResult) -> Void)?
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  private var fallbackCapabilities: (() -> ThreeLiveCapabilities?)?
+  private var fallbackOnDenied: (() -> ((CapabilityDeniedEvent) -> Void)?)?
+
+  /// Optional capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+  public var capabilities: ThreeLiveCapabilities? {
+    get { locked { _capabilities } }
+    set {
+      locked { _capabilities = newValue }
+      capabilityGuard.reset()
+    }
+  }
+  /// Optional callback notified whenever texture caching or AI generation is refused.
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get { locked { _onCapabilityDenied } }
+    set { locked { _onCapabilityDenied = newValue } }
+  }
+
+  private let capabilityGuard = CapabilityGuard()
+
+  func bindEditorFallback(
+    capabilities: @escaping () -> ThreeLiveCapabilities?,
+    onDenied: @escaping () -> ((CapabilityDeniedEvent) -> Void)?
+  ) {
+    locked {
+      if fallbackCapabilities == nil { fallbackCapabilities = capabilities }
+      if fallbackOnDenied == nil { fallbackOnDenied = onDenied }
+    }
+  }
+
+  private func effectiveCapabilities() -> ThreeLiveCapabilities? {
+    let (custom, fb) = locked { (_capabilities, fallbackCapabilities) }
+    return custom ?? fb?()
+  }
+
+  private func effectiveOnDenied() -> ((CapabilityDeniedEvent) -> Void)? {
+    let (custom, fb) = locked { (_onCapabilityDenied, fallbackOnDenied) }
+    return custom ?? fb?()
+  }
+
+  private var providerEndpointURL: String? {
+    (provider as? AIImagesProvider)?.endpointURLString
+  }
+
+  private func checkTextureCapability(
+    _ capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = nil,
+    dedup: Bool = false
+  ) -> Bool {
+    let policy = effectiveCapabilities() ?? ThreeLiveCapabilities.defaultPolicy
+    return capabilityGuard.check(
+      policy: policy,
+      capability: capability,
+      feature: feature,
+      url: url,
+      dedup: dedup,
+      onDenied: effectiveOnDenied()
+    )
+  }
 
   /// - Parameters:
   ///   - cacheDirectory: raw provider images are cached here (`<key>.img`), e.g. a folder in
@@ -137,6 +256,14 @@ public final class AITextures: @unchecked Sendable {
     self.cacheDirectory = cacheDirectory
     self.core = core
     self.modeValue = provider == nil ? .manual : .auto
+    if let img = provider as? AIImagesProvider {
+      if img.fallbackCapabilities == nil {
+        img.fallbackCapabilities = { [weak self] in self?.effectiveCapabilities() }
+      }
+      if img.fallbackOnDenied == nil {
+        img.fallbackOnDenied = { [weak self] in self?.effectiveOnDenied() }
+      }
+    }
   }
 
   /// Defaults to `.auto` with a provider, `.manual` without.
@@ -166,6 +293,14 @@ public final class AITextures: @unchecked Sendable {
         let skip = self.locked { self.failedKeys }
         let missing = try await self.requests(script).filter { !$0.hit && !skip.contains($0.key) }
         if missing.isEmpty || Task.isCancelled { return }
+        guard
+          self.checkTextureCapability(
+            .ai,
+            feature: "aiTextures",
+            url: self.providerEndpointURL,
+            dedup: true
+          )
+        else { return }
         self.onTexturesStart?(script, missing)
         let keys = Set(missing.map(\.key))
         let result = try await self.serialized {
@@ -281,7 +416,11 @@ public final class AITextures: @unchecked Sendable {
     for r in wanted {
       do {
         let spec: [String: Any] = ["prompt": r.prompt, "size": r.size, "seed": r.seed]
-        let cacheFile = cacheDirectory?.appendingPathComponent("\(r.key).img")
+        let rawCacheFile = cacheDirectory?.appendingPathComponent("\(r.key).img")
+        let cacheFile =
+          (rawCacheFile != nil
+            && checkTextureCapability(.storage, feature: "aiTextureCache", dedup: true))
+          ? rawCacheFile : nil
         var fromCache = false
         let image: String
         if !force, let file = cacheFile, let bytes = try? Data(contentsOf: file) {
@@ -290,6 +429,16 @@ public final class AITextures: @unchecked Sendable {
         } else {
           guard let p = provider else {
             throw AIEditError("generateTextures: no image provider configured.")
+          }
+          guard
+            checkTextureCapability(
+              .ai,
+              feature: "aiTextures",
+              url: providerEndpointURL,
+              dedup: true
+            )
+          else {
+            throw AIEditError("generateTextures: capability 'ai' or 'network' denied.")
           }
           var reqOp: [String: Any] = ["op": "texture_image_request", "spec": spec]
           if let m = p.model { reqOp["model"] = m }

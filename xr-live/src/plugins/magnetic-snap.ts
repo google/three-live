@@ -27,6 +27,7 @@ import {
   mat4Multiply,
 } from '../../../three-live/src/math';
 import {
+  checkPluginCapability,
   type ThreeLivePlugin,
   XR_LIVE_AR_SURFACE_Y,
 } from '../../../three-live/src/plugin';
@@ -868,7 +869,13 @@ export const magneticSnapPlugin: ThreeLivePlugin = {
   // tslint:disable-next-line:no-any WebXR session init dictionary.
   onConfigureXRSessionInit(element: any, sessionInit: any): void {
     const def = resolveMagneticSnapDefaults(element);
-    if (def.surface === 'none' || !sessionInit) return;
+    if (
+      def.surface === 'none' ||
+      !sessionInit ||
+      !checkPluginCapability(element, 'sensors', 'magneticSnap', {dedup: true})
+    ) {
+      return;
+    }
     const optional = new Set<string>(sessionInit.optionalFeatures ?? []);
     optional.add('plane-detection');
     sessionInit.optionalFeatures = [...optional];

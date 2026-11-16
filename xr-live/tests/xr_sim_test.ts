@@ -1338,12 +1338,13 @@ function testMechanicalJoints() {
     `slider motor translates along +X and clamps at +0.35m (x=${slider.pos[0].toFixed(3)})`,
   );
   assert(
-    springW.pos[1] < 2.0 && springW.pos[1] > 1.5 && Number.isFinite(springW.pos[1]),
+    springW.pos[1] < 2.0 &&
+      springW.pos[1] > 1.5 &&
+      Number.isFinite(springW.pos[1]),
     `spring weight sags under gravity and settles (y=${springW.pos[1].toFixed(3)})`,
   );
   assert(
-    stiff.pos.every(Number.isFinite) &&
-      Math.abs(stiff.pos[1] - 2.2) < 0.1,
+    stiff.pos.every(Number.isFinite) && Math.abs(stiff.pos[1] - 2.2) < 0.1,
     `L-stable stiff spring (k=10000) stays finite without blowup (y=${stiff.pos[1].toFixed(3)})`,
   );
   assert(
@@ -1613,14 +1614,13 @@ function testGoldenParity() {
   // tslint:disable-next-line:no-require-imports
   const path = require('path');
   const dirs = [
+    ...(process.env['THREE_LIVE_GOLDEN_DIR']
+      ? [process.env['THREE_LIVE_GOLDEN_DIR']]
+      : []),
     path.resolve(__dirname, '../../../testdata/golden'),
     path.resolve(__dirname, '../../testdata/golden'),
     path.resolve(__dirname, '../testdata/golden'),
     path.resolve(process.cwd(), 'testdata/golden'),
-    path.resolve(
-      process.cwd(),
-      'experimental/users/binghamj/three_live/testdata/golden',
-    ),
   ];
   const dir = dirs.find((d: string) =>
     fs.existsSync(path.join(d, 'sim_scene.json')),

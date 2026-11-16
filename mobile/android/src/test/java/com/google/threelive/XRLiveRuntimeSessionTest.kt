@@ -1644,10 +1644,10 @@ class XRLiveRuntimeSessionTest {
   @Test
   fun matchesCrossPlatformGoldenSuite() {
     val dir =
-      listOf(
+      listOfNotNull(
+          System.getenv("THREE_LIVE_GOLDEN_DIR")?.let { java.io.File(it) },
           java.io.File("testdata/golden"),
           java.io.File("../../testdata/golden"),
-          java.io.File("experimental/users/binghamj/three_live/testdata/golden"),
         )
         .firstOrNull { java.io.File(it, "scene.glb.json").isFile }
         ?: error("testdata/golden not found from ${java.io.File(".").absolutePath}")

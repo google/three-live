@@ -20,7 +20,7 @@
  * hot-swapping (by recompiling the current scene with the updated pack).
  */
 
-import {getSharedRegistry} from '../plugin';
+import {checkPluginCapability, getSharedRegistry} from '../plugin';
 
 /** `format` field of a serialized texture pack. */
 export const TEXTURE_PACK_FORMAT = 'three-live-texture-pack';
@@ -153,7 +153,10 @@ export interface GenerateTexturesOptions {
 export interface GenerateTexturesResult {
   readonly generated: readonly string[];
   readonly cached: readonly string[];
-  readonly failed: ReadonlyArray<{readonly key: string; readonly error: string}>;
+  readonly failed: ReadonlyArray<{
+    readonly key: string;
+    readonly error: string;
+  }>;
   readonly pack: TexturePackJSON;
 }
 
@@ -211,7 +214,9 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-async function toBytes(data: Blob | ArrayBuffer | Uint8Array): Promise<Uint8Array> {
+async function toBytes(
+  data: Blob | ArrayBuffer | Uint8Array,
+): Promise<Uint8Array> {
   if (data instanceof Uint8Array) return data;
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (data && typeof (data as Blob).arrayBuffer === 'function') {
@@ -250,7 +255,8 @@ export function createAIImageProvider(
       if (signal?.aborted) onAbort();
       signal?.addEventListener('abort', onAbort, {once: true});
       const timer = setTimeout(
-        () => ctrl.abort(new Error(`ai-image: timed out after ${timeoutMs} ms`)),
+        () =>
+          ctrl.abort(new Error(`ai-image: timed out after ${timeoutMs} ms`)),
         timeoutMs,
       );
       try {
@@ -288,7 +294,10 @@ export function createAIImageProvider(
         }
         const url = typeof item?.url === 'string' ? item.url : '';
         if (url.startsWith('data:image/')) {
-          return base64ToBytes(url.slice(url.indexOf(',') + 1), MAX_SOURCE_IMAGE_BYTES);
+          return base64ToBytes(
+            url.slice(url.indexOf(',') + 1),
+            MAX_SOURCE_IMAGE_BYTES,
+          );
         }
         if (url) {
           let sameOrigin = false;
@@ -300,8 +309,11 @@ export function createAIImageProvider(
               'ai-image: the endpoint returned an image URL; use response_format "b64_json" (or allowResponseUrls for same-origin URLs).',
             );
           }
-          const img = await doFetch(new URL(url, endpoint).href, {signal: ctrl.signal});
-          if (!img.ok) throw new Error(`ai-image: HTTP ${img.status} fetching the image.`);
+          const img = await doFetch(new URL(url, endpoint).href, {
+            signal: ctrl.signal,
+          });
+          if (!img.ok)
+            throw new Error(`ai-image: HTTP ${img.status} fetching the image.`);
           const bytes = new Uint8Array(await img.arrayBuffer());
           if (bytes.length > MAX_SOURCE_IMAGE_BYTES) {
             throw new Error('ai-image: image exceeds 16 MB.');
@@ -318,10 +330,17 @@ export function createAIImageProvider(
 }
 
 function imageKind(b: Uint8Array): 'png' | 'jpeg' | 'webp' | null {
-  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+  if (
+    b.length >= 8 &&
+    b[0] === 0x89 &&
+    b[1] === 0x50 &&
+    b[2] === 0x4e &&
+    b[3] === 0x47
+  ) {
     return 'png';
   }
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpeg';
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff)
+    return 'jpeg';
   if (
     b.length >= 12 &&
     b[0] === 0x52 &&
@@ -361,7 +380,11 @@ export const browserImageCodec: TextureImageCodec = {
     ctx.drawImage(bmp, 0, 0);
     bmp.close?.();
     const data = ctx.getImageData(0, 0, width, height).data;
-    return {width, height, rgba: new Uint8Array(data.buffer, data.byteOffset, data.byteLength)};
+    return {
+      width,
+      height,
+      rgba: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+    };
   },
   async encodePng(rgba, size) {
     const enc = registry().encodeRgbaPngDataUri;
@@ -389,10 +412,16 @@ export function resampleArea(
   const out = new Uint8Array(ow * oh * 4);
   for (let y = 0; y < oh; y++) {
     const sy0 = Math.floor((y * sh) / oh);
-    const sy1 = Math.min(sh, Math.max(sy0 + 1, Math.floor(((y + 1) * sh) / oh)));
+    const sy1 = Math.min(
+      sh,
+      Math.max(sy0 + 1, Math.floor(((y + 1) * sh) / oh)),
+    );
     for (let x = 0; x < ow; x++) {
       const sx0 = Math.floor((x * sw) / ow);
-      const sx1 = Math.min(sw, Math.max(sx0 + 1, Math.floor(((x + 1) * sw) / ow)));
+      const sx1 = Math.min(
+        sw,
+        Math.max(sx0 + 1, Math.floor(((x + 1) * sw) / ow)),
+      );
       let r = 0;
       let g = 0;
       let b = 0;
@@ -436,7 +465,10 @@ export function seamBlend(rgba: Uint8Array, n: number): Uint8Array {
       const s = (((y + half) % n) * n + ((x + half) % n)) * 4;
       for (let c = 0; c < 3; c++) {
         const a = rgba[o + c];
-        out[o + c] = Math.max(0, Math.min(255, Math.floor(a + (rgba[s + c] - a) * w + 0.5)));
+        out[o + c] = Math.max(
+          0,
+          Math.min(255, Math.floor(a + (rgba[s + c] - a) * w + 0.5)),
+        );
       }
       out[o + 3] = 255;
     }
@@ -484,20 +516,27 @@ export async function parseTexturePack(
   const out = new Map<string, TexturePackEntry>();
   for (const key of keys) {
     const e = p.entries[key];
-    if (!/^[0-9a-f]{16}$/.test(key)) throw new Error(`texture pack: invalid key '${key}'`);
+    if (!/^[0-9a-f]{16}$/.test(key))
+      throw new Error(`texture pack: invalid key '${key}'`);
     const spec = textureSpec(e?.spec);
     if (!spec) throw new Error(`texture pack: entry ${key}: invalid spec`);
     if (spec.key !== key) {
-      throw new Error(`texture pack: entry ${key}: key does not match its spec (${spec.key})`);
+      throw new Error(
+        `texture pack: entry ${key}: key does not match its spec (${spec.key})`,
+      );
     }
     const url = typeof e?.albedo === 'string' ? e.albedo : '';
     const prefix = 'data:image/png;base64,';
     if (!url.startsWith(prefix)) {
-      throw new Error(`texture pack: entry ${key}: albedo must be a data:image/png;base64 URL`);
+      throw new Error(
+        `texture pack: entry ${key}: albedo must be a data:image/png;base64 URL`,
+      );
     }
     const png = base64ToBytes(url.slice(prefix.length), MAX_ALBEDO_PNG_BYTES);
     if (png.length > MAX_ALBEDO_PNG_BYTES || imageKind(png) !== 'png') {
-      throw new Error(`texture pack: entry ${key}: albedo is not a PNG within 6 MB`);
+      throw new Error(
+        `texture pack: entry ${key}: albedo is not a PNG within 6 MB`,
+      );
     }
     const img = await codec.decode(png);
     if (img.width !== spec.size || img.height !== spec.size) {
@@ -508,7 +547,9 @@ export async function parseTexturePack(
     const rgba = new Uint8Array(img.rgba);
     for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
     const provenance =
-      e.provenance && typeof e.provenance === 'object' ? e.provenance : undefined;
+      e.provenance && typeof e.provenance === 'object'
+        ? e.provenance
+        : undefined;
     out.set(key, {
       key,
       spec: {prompt: spec.prompt, size: spec.size, seed: spec.seed},
@@ -547,7 +588,9 @@ function gltfJson(model: unknown): any {
     if (dv.getUint32(0, true) === 0x46546c67) {
       try {
         return JSON.parse(
-          new TextDecoder().decode(new Uint8Array(model, 20, dv.getUint32(12, true))),
+          new TextDecoder().decode(
+            new Uint8Array(model, 20, dv.getUint32(12, true)),
+          ),
         );
       } catch {}
     }
@@ -574,7 +617,9 @@ export function textureRequests(model: unknown): TextureMiss[] {
 }
 
 /** IndexedDB cache (`three-live-textures`), or null where IndexedDB is unavailable. */
-export function indexedDbTextureCache(maxBytes = MAX_CACHE_BYTES): TextureCache | null {
+export function indexedDbTextureCache(
+  maxBytes = MAX_CACHE_BYTES,
+): TextureCache | null {
   try {
     if (typeof indexedDB === 'undefined' || !indexedDB) return null;
   } catch {
@@ -590,7 +635,10 @@ export function indexedDbTextureCache(maxBytes = MAX_CACHE_BYTES): TextureCache 
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     }));
-  const run = <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T> | void) =>
+  const run = <T>(
+    mode: IDBTransactionMode,
+    fn: (s: IDBObjectStore) => IDBRequest<T> | void,
+  ) =>
     db().then(
       (d) =>
         new Promise<T | undefined>((resolve, reject) => {
@@ -606,7 +654,9 @@ export function indexedDbTextureCache(maxBytes = MAX_CACHE_BYTES): TextureCache 
         // tslint:disable-next-line:no-any Stored record.
         const rec: any = await run('readonly', (s) => s.get(key));
         if (!rec || !(rec.rgba instanceof Uint8Array)) return null;
-        void run('readwrite', (s) => s.put({...rec, t: Date.now()})).catch(() => {});
+        void run('readwrite', (s) => s.put({...rec, t: Date.now()})).catch(
+          () => {},
+        );
         return rec as TextureCacheRecord;
       } catch {
         return null;
@@ -652,7 +702,9 @@ export interface AITextureElement {
   texturePack?: TexturePackJSON | null;
   textureCache?: TextureCache | null;
   textureCodec?: TextureImageCodec;
-  generateTextures?: (o?: GenerateTexturesOptions) => Promise<GenerateTexturesResult>;
+  generateTextures?: (
+    o?: GenerateTexturesOptions,
+  ) => Promise<GenerateTexturesResult>;
   exportTexturePack?: () => Promise<TexturePackJSON>;
   __tlTex?: TextureState;
 }
@@ -663,7 +715,10 @@ interface TextureState {
   failed: Set<string>;
   inflight: Map<string, Promise<boolean>>;
   lastModel: unknown;
-  lastRun: {kind: 'script'; value: string} | {kind: 'url'; value: string} | null;
+  lastRun:
+    | {kind: 'script'; value: string}
+    | {kind: 'url'; value: string}
+    | null;
   cache: TextureCache | null | undefined;
   loadSeq: number;
 }
@@ -684,7 +739,9 @@ function state(el: AITextureElement): TextureState {
   });
 }
 
-function compileMap(el: AITextureElement): Record<string, {size: number; rgba: Uint8Array}> | null {
+function compileMap(
+  el: AITextureElement,
+): Record<string, {size: number; rgba: Uint8Array}> | null {
   const st = el.__tlTex;
   if (!st || st.pack.size === 0) return null;
   const out: Record<string, {size: number; rgba: Uint8Array}> = {};
@@ -710,7 +767,8 @@ function ensureRunnerWrapped(): void {
   reg.scriptRunner = {
     __tlTexWrapped: true,
     // tslint:disable-next-line:no-any Pass-through runner arguments.
-    execute: (s: string, sb: string, cb: any, o?: unknown) => r.execute(s, sb, cb, withPack(o)),
+    execute: (s: string, sb: string, cb: any, o?: unknown) =>
+      r.execute(s, sb, cb, withPack(o)),
     ...(typeof r.executeUrl === 'function'
       ? {
           // tslint:disable-next-line:no-any Pass-through runner arguments.
@@ -722,7 +780,10 @@ function ensureRunnerWrapped(): void {
 }
 
 /** Runs `fn` (which must call the script runner synchronously) with the element's pack. */
-export function withElementTexturePack<T>(el: AITextureElement, fn: () => T): T {
+export function withElementTexturePack<T>(
+  el: AITextureElement,
+  fn: () => T,
+): T {
   ensureRunnerWrapped();
   const prev = pendingPack;
   pendingPack = compileMap(el);
@@ -749,6 +810,9 @@ function resolveImageProvider(
 
 function cacheFor(el: AITextureElement): TextureCache | null {
   if (el.textureCache !== undefined) return el.textureCache;
+  if (!checkPluginCapability(el, 'storage', 'aiTextureCache', {dedup: true})) {
+    return null;
+  }
   const st = state(el);
   if (st.cache === undefined) st.cache = indexedDbTextureCache();
   return st.cache;
@@ -764,7 +828,8 @@ function recompile(el: AITextureElement): Promise<unknown> {
     'script[type="text/three"], script[type="text/three-live"]',
   )?.textContent;
   const run =
-    state(el).lastRun ?? (inline ? ({kind: 'script', value: inline} as const) : null);
+    state(el).lastRun ??
+    (inline ? ({kind: 'script', value: inline} as const) : null);
   if (!run) return Promise.resolve();
   return run.kind === 'url' && typeof el.loadScriptFromSrc === 'function'
     ? el.loadScriptFromSrc(run.value)
@@ -778,7 +843,10 @@ function addEntry(el: AITextureElement, entry: TexturePackEntry): void {
   st.failed.delete(entry.key);
 }
 
-async function fromCache(el: AITextureElement, misses: readonly TextureMiss[]): Promise<string[]> {
+async function fromCache(
+  el: AITextureElement,
+  misses: readonly TextureMiss[],
+): Promise<string[]> {
   const cache = cacheFor(el);
   if (!cache) return [];
   const hits: string[] = [];
@@ -789,8 +857,17 @@ async function fromCache(el: AITextureElement, misses: readonly TextureMiss[]): 
       rec.spec?.size === m.spec.size &&
       rec.rgba?.length === m.spec.size * m.spec.size * 4
     ) {
-      addEntry(el, {key: m.key, spec: m.spec, rgba: rec.rgba, provenance: rec.provenance});
-      el.fireEvent?.('three-live-texture', {key: m.key, meshes: m.meshes, source: 'cache'});
+      addEntry(el, {
+        key: m.key,
+        spec: m.spec,
+        rgba: rec.rgba,
+        provenance: rec.provenance,
+      });
+      el.fireEvent?.('three-live-texture', {
+        key: m.key,
+        meshes: m.meshes,
+        source: 'cache',
+      });
       hits.push(m.key);
     }
   }
@@ -811,7 +888,8 @@ async function generateOne(
       const raw = await toBytes(
         await provider.generateImage({...m.spec, signal}),
       );
-      if (raw.length > MAX_SOURCE_IMAGE_BYTES) throw new Error('generated image exceeds 16 MB');
+      if (raw.length > MAX_SOURCE_IMAGE_BYTES)
+        throw new Error('generated image exceeds 16 MB');
       const rgba = prepareAlbedo(await codecFor(el).decode(raw), m.spec.size);
       const provenance = {
         provider: provider.name ?? 'custom',
@@ -820,7 +898,11 @@ async function generateOne(
       };
       addEntry(el, {key: m.key, spec: m.spec, rgba, provenance});
       void cacheFor(el)?.put({key: m.key, spec: m.spec, rgba, provenance});
-      el.fireEvent?.('three-live-texture', {key: m.key, meshes: m.meshes, source: 'provider'});
+      el.fireEvent?.('three-live-texture', {
+        key: m.key,
+        meshes: m.meshes,
+        source: 'provider',
+      });
       return true;
     } catch (e: unknown) {
       st.failed.add(m.key);
@@ -838,7 +920,11 @@ async function generateOne(
   return job;
 }
 
-async function runPool<T>(items: readonly T[], n: number, fn: (t: T) => Promise<unknown>) {
+async function runPool<T>(
+  items: readonly T[],
+  n: number,
+  fn: (t: T) => Promise<unknown>,
+) {
   let i = 0;
   const workers = Array.from({length: Math.min(n, items.length)}, async () => {
     while (i < items.length) await fn(items[i++]);
@@ -856,7 +942,9 @@ export function onElementCompiled(el: AITextureElement, model: unknown): void {
   } catch {
     return;
   }
-  const pending = misses.filter((m) => !st.failed.has(m.key) && !st.inflight.has(m.key));
+  const pending = misses.filter(
+    (m) => !st.failed.has(m.key) && !st.inflight.has(m.key),
+  );
   if (!pending.length) return;
   void (async () => {
     const hits = await fromCache(el, pending);
@@ -865,11 +953,25 @@ export function onElementCompiled(el: AITextureElement, model: unknown): void {
       await recompile(el).catch(() => {});
       return;
     }
-    if ((el.getAttribute?.('ai-textures') || 'auto').toLowerCase() === 'manual') return;
+    if ((el.getAttribute?.('ai-textures') || 'auto').toLowerCase() === 'manual')
+      return;
     const provider = resolveImageProvider(el);
     if (!provider) return;
-    el.fireEvent?.('three-live-texture-start', {keys: pending.map((m) => m.key)});
-    const results = await Promise.all(pending.map((m) => generateOne(el, provider, m)));
+    const ep = el.getAttribute?.('ai-image-endpoint') || undefined;
+    if (
+      !checkPluginCapability(el, 'ai', 'aiTextures', {
+        url: el.aiImageProvider ? undefined : ep,
+        dedup: true,
+      })
+    ) {
+      return;
+    }
+    el.fireEvent?.('three-live-texture-start', {
+      keys: pending.map((m) => m.key),
+    });
+    const results = await Promise.all(
+      pending.map((m) => generateOne(el, provider, m)),
+    );
     const made = results.filter(Boolean).length;
     if (made) {
       if (!hinted) {
@@ -904,7 +1006,9 @@ async function setPack(el: AITextureElement, json: unknown): Promise<void> {
     const parsed = await parseTexturePack(json, codecFor(el));
     if (seq !== st.loadSeq) return;
     st.pack = parsed;
-    st.packJson = (typeof json === 'string' ? JSON.parse(json) : json) as TexturePackJSON;
+    st.packJson = (
+      typeof json === 'string' ? JSON.parse(json) : json
+    ) as TexturePackJSON;
     st.failed.clear();
     await recompile(el).catch(() => {});
   } catch (e: unknown) {
@@ -918,9 +1022,15 @@ async function setPack(el: AITextureElement, json: unknown): Promise<void> {
 
 async function loadPackUrl(el: AITextureElement, url: string): Promise<void> {
   try {
+    if (!checkPluginCapability(el, 'remote_content', 'texture-pack', {url})) {
+      throw new Error("texture-pack: capability 'remote_content' denied.");
+    }
     const base = typeof document !== 'undefined' ? document.baseURI : undefined;
-    const res = await fetch(new URL(url, base).href, {credentials: 'same-origin'});
-    if (!res.ok) throw new Error(`HTTP ${res.status} loading texture-pack "${url}"`);
+    const res = await fetch(new URL(url, base).href, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok)
+      throw new Error(`HTTP ${res.status} loading texture-pack "${url}"`);
     await setPack(el, await res.json());
   } catch (e: unknown) {
     el.fireEvent?.('three-live-texture-error', {
@@ -959,15 +1069,36 @@ export async function generateTextures(
         'generateTextures: no image provider. Set el.aiImageProvider, or the ai-image-endpoint (and ai-image-model) attributes.',
       );
     }
+    const ep =
+      options.provider || el.aiImageProvider
+        ? undefined
+        : el.getAttribute?.('ai-image-endpoint') || undefined;
+    if (
+      !checkPluginCapability(
+        el,
+        'ai',
+        'generateTextures',
+        ep ? {url: ep} : undefined,
+      )
+    ) {
+      throw new Error("generateTextures: capability 'ai' denied.");
+    }
     el.fireEvent?.('three-live-texture-start', {keys: todo.map((m) => m.key)});
-    const n = Math.max(1, Math.min(4, Math.floor(Number(options.concurrency ?? 2)) || 2));
+    const n = Math.max(
+      1,
+      Math.min(4, Math.floor(Number(options.concurrency ?? 2)) || 2),
+    );
     const onError = (ev: {key: string; error: string}) => failed.push(ev);
     await runPool(todo, n, async (m) => {
       st.failed.delete(m.key);
       if (options.force) st.pack.delete(m.key);
       const ok = await generateOne(el, provider, m, options.signal);
       if (ok) generated.push(m.key);
-      else onError({key: m.key, error: 'generation failed (see three-live-texture-error)'});
+      else
+        onError({
+          key: m.key,
+          error: 'generation failed (see three-live-texture-error)',
+        });
     });
   }
   if (cached.length || generated.length) await recompile(el).catch(() => {});
@@ -975,7 +1106,9 @@ export async function generateTextures(
 }
 
 /** Serializes the element's current texture pack. */
-export async function exportTexturePack(el: AITextureElement): Promise<TexturePackJSON> {
+export async function exportTexturePack(
+  el: AITextureElement,
+): Promise<TexturePackJSON> {
   const st = state(el);
   return (st.packJson ??= await serializeTexturePack(st.pack, codecFor(el)));
 }
@@ -990,16 +1123,23 @@ export function installTextureSupport(el: AITextureElement): void {
     set: (v: unknown) => void setPack(el, v),
     configurable: true,
   });
-  el.generateTextures = (o?: GenerateTexturesOptions) => generateTextures(el, o);
+  el.generateTextures = (o?: GenerateTexturesOptions) =>
+    generateTextures(el, o);
   el.exportTexturePack = () => exportTexturePack(el);
-  const inline = el.querySelector?.('script[type="application/three-live-texture-pack"]');
+  const inline = el.querySelector?.(
+    'script[type="application/three-live-texture-pack"]',
+  );
   if (inline?.textContent?.trim()) {
     void setPack(el, inline.textContent);
   }
   const url = el.getAttribute?.('texture-pack');
   if (url) void loadPackUrl(el, url);
   const node = el as unknown as Node;
-  if (typeof MutationObserver !== 'undefined' && node && typeof node.nodeType === 'number') {
+  if (
+    typeof MutationObserver !== 'undefined' &&
+    node &&
+    typeof node.nodeType === 'number'
+  ) {
     new MutationObserver(() => {
       const next = el.getAttribute?.('texture-pack');
       if (next) void loadPackUrl(el, next);

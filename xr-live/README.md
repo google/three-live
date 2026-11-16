@@ -22,14 +22,14 @@ Or load it from a CDN with a classic script tag:
 ## Usage
 
 ```html
-<xr-live allow-client-scripts xr-mode="inline-ar" camera-controls>
+<xr-live capabilities="scripts camera sensors" xr-mode="ar" camera-controls>
   <script type="text/three">
     const orb = new THREE.Mesh(
       new THREE.SphereGeometry(0.15, 32, 32),
       new THREE.MeshStandardMaterial({color: 0x38bdf8, metalness: 0.4, roughness: 0.2})
     );
     orb.position.set(0, 1.2, -0.8);
-    orb.userData.xrTraits = ['grab', 'scale', 'billboard'];
+    orb.userData.xr = {grab: '1-hand', scale: true, billboard: 'capsule'};
     scene.add(orb);
   </script>
 </xr-live>

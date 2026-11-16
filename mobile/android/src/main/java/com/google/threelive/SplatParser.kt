@@ -684,7 +684,7 @@ object SplatParser {
       val resolved = baseUri.resolve(trimmed)
       val scheme = resolved.scheme?.lowercase() ?: return null
       val host = resolved.host?.lowercase() ?: return null
-      val loopback = host == "localhost" || host == "127.0.0.1"
+      val loopback = host == "localhost" || host == "127.0.0.1" || host == "[::1]"
       val schemeOk = scheme == "https" || (scheme == "http" && loopback)
       if (!schemeOk) return null
       if (!allowCrossOrigin && originOf(resolved) != originOf(baseUri)) return null
@@ -1138,10 +1138,26 @@ object SplatParser {
     allowCrossOrigin: Boolean = true,
     maxBytes: Int = MAX_SPLAT_FILE_BYTES,
     decodeSh: Boolean = true,
+    capabilities: ThreeLiveCapabilities? = null,
+    onCapabilityDenied: CapabilityDeniedListener? = null,
   ): SplatData {
     val resolved =
       resolveSplatUrl(url, baseUrl, allowCrossOrigin)
         ?: throw IllegalArgumentException("splat-loader: URL rejected")
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    if (
+      !policy.check(
+        ThreeLiveCapability.REMOTE_CONTENT,
+        "splatUrl",
+        url = resolved,
+        baseUrl = baseUrl,
+        listener = onCapabilityDenied,
+      )
+    ) {
+      throw IllegalArgumentException(
+        "splat-loader: capability 'remote_content' or 'network' denied"
+      )
+    }
     val conn = URL(resolved).openConnection() as HttpURLConnection
     conn.connectTimeout = NETWORK_TIMEOUT_MS
     conn.readTimeout = NETWORK_TIMEOUT_MS

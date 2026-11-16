@@ -21,7 +21,7 @@
  */
 
 import {mat4Invert} from '../math';
-import type {ThreeLivePlugin} from '../plugin';
+import {checkPluginCapability, type ThreeLivePlugin} from '../plugin';
 
 const viewSHMap = new WeakMap<object, Float32Array>();
 
@@ -109,6 +109,21 @@ async function setTex(
   prop: 'environmentTexture' | 'skyboxTexture',
   imageOrUrl: string | HTMLImageElement | ImageBitmap | null,
 ): Promise<void> {
+  if (typeof imageOrUrl === 'string') {
+    const trimmed = imageOrUrl.trim();
+    if (!trimmed || /^(?:neutral|legacy)$/i.test(trimmed)) {
+      if (viewer[prop]) viewer.gl.deleteTexture(viewer[prop]);
+      viewer[prop] = null;
+      return;
+    }
+    if (
+      !checkPluginCapability(viewer?.container, 'remote_content', prop, {
+        url: trimmed,
+      })
+    ) {
+      return;
+    }
+  }
   const tex = imageOrUrl
     ? await loadEnvironmentTexture(viewer.gl, imageOrUrl)
     : null;

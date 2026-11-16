@@ -23,19 +23,22 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import com.google.threelive.CapabilityDeniedListener
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
  * Push-to-talk voice editing for Android (B2b-2), like `el.startVoiceEdit()` on the web: the
  * platform [SpeechRecognizer] turns one utterance into an instruction for
- * [ThreeLiveAIEditor.editScene] (applied to the current selection), and the result is spoken
- * with [TextToSpeech]. Needs the `RECORD_AUDIO` permission. Main thread only.
+ * [ThreeLiveAIEditor.editScene] (applied to the current selection), and the result is spoken with
+ * [TextToSpeech]. Needs the `RECORD_AUDIO` permission. Main thread only.
  *
- * Talk-to-Select (B2b-4): "select the red chairs", "also select the lamp", "deselect the left
- * one", and "clear the selection" change the selection instead of editing; "select the lamp and
- * make it blue" selects, then edits right away when the reference was unambiguous. Otherwise it
- * asks which one was meant and changes nothing.
+ * Talk-to-Select (B2b-4): "select the red chairs", "also select the lamp", "deselect the left one",
+ * and "clear the selection" change the selection instead of editing; "select the lamp and make it
+ * blue" selects, then edits right away when the reference was unambiguous. Otherwise it asks which
+ * one was meant and changes nothing.
  */
 class VoiceEditController(
   private val context: Context,
@@ -43,7 +46,9 @@ class VoiceEditController(
   private val scope: CoroutineScope,
   /** Speak the result (default true). */
   private val speakResults: Boolean = true,
-  /** Treat "select …" / "deselect …" / "clear the selection" as selection commands (default true). */
+  /**
+   * Treat "select …" / "deselect …" / "clear the selection" as selection commands (default true).
+   */
   private val talkToSelect: Boolean = true,
 ) {
   /** Progress callbacks (main thread). */
@@ -62,6 +67,12 @@ class VoiceEditController(
 
   var listener: Listener? = null
 
+  /** Optional capability policy override (`null` falls back to [editor.capabilities]). */
+  @Volatile var capabilities: ThreeLiveCapabilities? = null
+
+  /** Optional listener notified when a voice capability check is denied. */
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null
+
   private var recognizer: SpeechRecognizer? = null
   private var tts: TextToSpeech? = null
   private var ttsReady = false
@@ -73,6 +84,23 @@ class VoiceEditController(
   /** Starts listening for one utterance. Returns false when speech recognition is unavailable. */
   fun start(languageTag: String? = null): Boolean {
     if (recognizer != null) return true
+    val policy = capabilities ?: editor.capabilities ?: ThreeLiveCapabilities.default
+    val deniedListener = onCapabilityDenied ?: editor.onCapabilityDenied
+    if (!policy.check(ThreeLiveCapability.MICROPHONE, "voiceEdit", listener = deniedListener)) {
+      listener?.onError("Capability 'microphone' is disabled.")
+      return false
+    }
+    if (
+      !policy.check(
+        ThreeLiveCapability.AI,
+        "voiceEdit",
+        url = editor.providerEndpointUrl(),
+        listener = deniedListener,
+      )
+    ) {
+      listener?.onError("Capability 'ai' or 'network' is disabled.")
+      return false
+    }
     if (!SpeechRecognizer.isRecognitionAvailable(context)) {
       listener?.onError("Speech recognition is not available; use AIVoiceSession instead.")
       return false
@@ -90,9 +118,12 @@ class VoiceEditController(
         }
 
         override fun onError(error: Int) {
-          val noSpeech = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+          val noSpeech =
+            error == SpeechRecognizer.ERROR_NO_MATCH ||
+              error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
           release()
-          if (noSpeech) speakAndReport("I didn't catch that.") else listener?.onError("Speech recognition failed ($error).")
+          if (noSpeech) speakAndReport("I didn't catch that.")
+          else listener?.onError("Speech recognition failed ($error).")
         }
 
         override fun onReadyForSpeech(params: Bundle?) {}
@@ -151,12 +182,16 @@ class VoiceEditController(
       val kind = command["kind"] as? String ?: "edit"
       if (kind != "edit") {
         val selection =
-          editor.selectByVoice(if (kind == "clear") "" else (command["query"] as? String).orEmpty(), command["mode"] as? String ?: "replace")
+          editor.selectByVoice(
+            if (kind == "clear") "" else (command["query"] as? String).orEmpty(),
+            command["mode"] as? String ?: "replace",
+          )
         listener?.onSelection(text, selection)
         val pending = if (kind == "mixed") command["instruction"] as? String else null
         // Edit right away only when the reference was resolved locally (tier 1) and confidently.
         if (pending == null || !selection.applied || selection.tier != 1) {
-          val hint = if (pending != null && selection.applied) " Say the change again to apply it." else ""
+          val hint =
+            if (pending != null && selection.applied) " Say the change again to apply it." else ""
           if (speakResults) speak(selection.say + hint)
           return@launch
         }
@@ -196,5 +231,7 @@ class VoiceEditController(
   }
 
   private fun best(b: Bundle?): String? =
-    b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }
+    b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf {
+      it.isNotBlank()
+    }
 }

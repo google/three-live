@@ -23,12 +23,12 @@
 //   outline pass around `selected-mesh` (when `outline-selected` is set) or
 //   any node declaring `userData.xr.outline`.
 
-import {createProgram} from '../gl-program';
 import {
   HOST_BLOOM_DEFAULT_RADIUS,
   HOST_BLOOM_DEFAULT_THRESHOLD,
   parseNumericAttr,
 } from '../constants';
+import {createProgram} from '../gl-program';
 import {mat3NormalFromMat4, mat4Create, mat4Multiply} from '../math';
 import type {ThreeLivePlugin} from '../plugin';
 import type {ThreeView} from '../three-view';
@@ -110,7 +110,7 @@ fragColor=vec4(c,1.0);
 // the page backdrop (premultiplied `rgb > alpha`): using `max(r, g, b)` would
 // make the browser scale the CSS backdrop by `1 - max` wherever the wide
 // low-level halo lands, visibly darkening/tinting the background when bloom is
-// toggled (the regression fixed in cl/1013876464). White glow still gains
+// toggled. White glow still gains
 // coverage alpha.
 const FS_KAWASE_UP = `#version 300 es
 precision highp float;

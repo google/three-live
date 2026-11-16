@@ -16,7 +16,10 @@
 
 package com.google.threelive.gemini
 
+import com.google.threelive.CapabilityDeniedListener
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -53,12 +56,17 @@ constructor(
   private val maxMessageBytes: Int = DEFAULT_MAX_MESSAGE_BYTES,
   private val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
   private val socketFactory: (URI) -> Socket = ::openSocket,
+  capabilities: ThreeLiveCapabilities? = null,
+  onCapabilityDenied: CapabilityDeniedListener? = null,
 ) : GeminiLiveTransport {
 
   override var listener: GeminiLiveTransport.Listener? = null
 
+  /** Validated WebSocket endpoint URL. */
+  val endpointUrl: String = url
+
   private val uri: URI
-  private val writer: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-ws-writer").apply { isDaemon = true } }
+  private val writer: ExecutorService
   private val closed = AtomicBoolean(false)
   private val closeNotified = AtomicBoolean(false)
   private val random = SecureRandom()
@@ -67,9 +75,25 @@ constructor(
   @Volatile private var output: OutputStream? = null
 
   init {
-    require(GeminiLiveEndpoints.isAllowedLiveUrl(url)) { "Gemini Live URL must be wss:// (or ws:// to loopback)" }
+    require(GeminiLiveEndpoints.isAllowedLiveUrl(url)) {
+      "Gemini Live URL must be wss:// (or ws:// to loopback)"
+    }
     for ((name, value) in headers) WebSocketCodec.validateHeader(name, value)
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    if (
+      !policy.check(
+        ThreeLiveCapability.NETWORK,
+        "webSocketTransport",
+        url = url,
+        listener = onCapabilityDenied,
+      )
+    ) {
+      throw SecurityException("Capability 'network' denied for WebSocket endpoint.")
+    }
     uri = URI(url)
+    writer = Executors.newSingleThreadExecutor { r ->
+      Thread(r, "three-live-ws-writer").apply { isDaemon = true }
+    }
     submit { connect() }
   }
 
@@ -87,7 +111,11 @@ constructor(
     submit {
       output?.let {
         try {
-          writeFrame(it, WebSocketCodec.OP_CLOSE, WebSocketCodec.closePayload(WebSocketCodec.CLOSE_NORMAL))
+          writeFrame(
+            it,
+            WebSocketCodec.OP_CLOSE,
+            WebSocketCodec.closePayload(WebSocketCodec.CLOSE_NORMAL),
+          )
         } catch (e: IOException) {
           // Already broken; closing anyway.
         }
@@ -109,7 +137,9 @@ constructor(
       val input = BufferedInputStream(s.getInputStream())
       val out = s.getOutputStream()
       val key = WebSocketCodec.newKey(random)
-      out.write(WebSocketCodec.buildHandshakeRequest(uri, key, headers).toByteArray(Charsets.ISO_8859_1))
+      out.write(
+        WebSocketCodec.buildHandshakeRequest(uri, key, headers).toByteArray(Charsets.ISO_8859_1)
+      )
       out.flush()
       WebSocketCodec.validateHandshakeResponse(WebSocketCodec.readHttpHead(input), key)
       s.soTimeout = 0
@@ -233,7 +263,9 @@ constructor(
       val plain = Socket()
       plain.connect(InetSocketAddress(host, port), DEFAULT_CONNECT_TIMEOUT_MS)
       if (!secure) return plain
-      val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, host, port, true) as SSLSocket
+      val tls =
+        (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, host, port, true)
+          as SSLSocket
       tls.soTimeout = DEFAULT_CONNECT_TIMEOUT_MS
       tls.startHandshake()
       if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(host, tls.session)) {

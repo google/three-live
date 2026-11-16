@@ -26,6 +26,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+-   **Secure-by-default capability-based security (`capabilities` /
+    `ThreeLiveCapabilities` / `TL403`):** Sensitive runtime capabilities
+    (`network`, `remote_content`, `camera`, `microphone`, `sensors`, `storage`,
+    `ai`, and `external_handoff`) now default to **disabled** across Web
+    (`<three-live>` and `<xr-live>`), Android
+    (`com.google.threelive.ThreeLiveCapabilities`), and iOS/visionOS
+    (`ThreeLiveCapabilities`).
+
+    -   **Web (`CAPABILITIES_NONE` default):** Declare
+        `capabilities="scripts ..."` (or presets `capabilities="viewer"` for
+        remote `.glb`/`.usdz` + AR handoff, `capabilities="all"` for trusted
+        playgrounds, `-<cap>` negation, and scheme/origin allowlists such as
+        `network:https,wss@https://cdn.example.com`). Legacy
+        `allow-client-scripts` remains supported as an alias for
+        `capabilities="scripts"`.
+    -   **Native Android & iOS (`DEFAULT` / `.default`):** Pure in-memory script
+        compilation (`scripts = true`) remains enabled by default while all
+        network, remote media, camera/frame capture, microphone, spatial sensor,
+        persistent storage, AI, and external AR handoff operations require
+        explicit opt-in (`ThreeLiveCapabilities(...)` per instance or
+        `ThreeLiveCapabilities.default` / `.defaultPolicy`).
+    -   **Fail-closed & non-escalating:** Author-controlled `userData.xr.*`
+        traits (`splatUrl`, `audioEmitter.src`, `anchor.persist`, `sync`,
+        `worldUnderstanding`, `particles`, `holdToAsk`) cannot self-grant
+        capabilities; procedural geometry continues to render while denied side
+        effects emit a sanitized `three-capability-denied` `CustomEvent` /
+        `CapabilityDeniedEvent` (deduplicated in 60 Hz frame loops).
+    -   **CLI & MCP static linting (`TL403`):** `three-live-cli validate` on
+        `.html` inputs recognizes `capabilities="..."` for `TL401` and emits
+        `TL403` warnings whenever HTML attributes or inline `userData.xr.*`
+        traits use capabilities omitted from the host element.
+
 -   **Self-contained Apple framework:** `ThreeLiveCompiler.xcframework` exports
     only the C ABI (`three_live_*`). Rust's standard library, compiler-rt and
     the compiler's crates are hidden (`scripts/build_ios_xcframework.sh`
@@ -33,10 +65,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `scripts/verify_xcframework.sh` rejects any other exported symbol), so the
     framework links into apps that already carry another Rust library without
     duplicate symbols.
-
---------------------------------------------------------------------------------
-
-## [1.4.0] - 2026-11-09 (Beta)
 
 ### Added
 
@@ -64,29 +92,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (`XRLiveRuntimeSession` / `ThreeLiveFilamentRenderer`), and iOS
     (`XRLiveRuntimeSession` / `XRLiveRealityKitSession`).
 
--   **Multi-Light Depth Shadow Maps (`shadowMapsPlugin`, folded into
-    `three-live-studio.min.js`):** Real-time directional, spot, and point light
-    depth shadow mapping (`light.castShadow`,
-    `light.shadow.{mapSize, bias, normalBias, radius}`, `mesh.castShadow`,
-    `mesh.receiveShadow`, and `<three-live shadow-maps="auto | pcf | off">`)
-    across WebGL2, WebGPU, Android Filament, iOS/visionOS RealityKit, and
-    `.usdz`. Allocates a single `DEPTH_COMPONENT24` `gl.TEXTURE_2D_ARRAY` (up to
-    `MAX_SHADOW_LIGHTS = 4` slices, capped at 32 MB VRAM) with hardware
-    `COMPARE_REF_TO_TEXTURE` (`LEQUAL`), rotated 8-tap Vogel-disk PCF in WebGL2
-    and 8-tap Vogel-disk PCF with `depth24plus` array depth passes in WebGPU
-    (`three-live-webgpu`), tight dynamic world-space orthographic/perspective
-    frustum fitting, scale-invariant normal-offset bias, CAD `section-plane`
-    clipping, and an FNV-1a dirty digest that executes zero shadow depth passes
-    during static camera orbits. Exports `KHR_lights_punctual` `extras.shadow`,
-    `node.extras.shadow`, and USDZ `UsdLuxShadowAPI`
-    (`inputs:shadow:enable = 1`, `primvars:doNotCastShadows = 1`).
-
--   **Room-scan priors on Android:** `AISpatialPriors.fromRoomScan(surfaces,
-    objects, camera, cameraFovDeg)` with `AIRoomSurface` / `AIRoomObject`
-    (column-major 4×4 transforms) brings the iOS room-scan mapping to Kotlin,
-    so Android XR labeled planes, Meta MRUK rooms, or custom scanners can feed
-    `compileFromImage` the same planes, objects, and floor height as RoomPlan
-    on iOS.
+-   **Room-scan priors on Android:**
+    `AISpatialPriors.fromRoomScan(surfaces, objects, camera, cameraFovDeg)` with
+    `AIRoomSurface` / `AIRoomObject` (column-major 4×4 transforms) brings the
+    iOS room-scan mapping to Kotlin, so Android XR labeled planes, Meta MRUK
+    rooms, or custom scanners can feed `compileFromImage` the same planes,
+    objects, and floor height as RoomPlan on iOS.
 
 -   **RoomPlan priors for image-to-scene (iOS):**
     `AISpatialPriors.fromCapturedRoom(room, camera:)` (iOS 16+) turns a RoomPlan
@@ -98,46 +109,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `AISpatialPriors.fromRoomScan(surfaces:objects:)` (`AIRoomSurface`,
     `AIRoomObject`), with at most 32 planes (floors first) and 32 objects.
 
--   **1024 px AI textures, compressed texture PNGs, and native auto
-    generation (B5e):** `userData.xr.material.size` accepts `1024` (snapping:
-    ≤ 384 → 256, ≤ 768 → 512, else 1024); the derived normal and ORM maps stay
-    at 512, computed from an exact 2×2 box downsample shared by JS and Rust.
-    Texture PNGs are now DEFLATE-compressed with adaptive filtering: the Rust
-    GLB writer recompresses the in-engine (stored) PNGs, and the Web sandbox
-    worker does the same with `CompressionStream` before posting the GLB,
-    moving texture images into the BIN chunk. Canvas and preset textures
-    export at their 512 px canvas size instead of 256. On Android and iOS,
-    `ThreeLiveAITextures` / `AITextures` gain `mode` (auto when a provider is
-    set, like `ai-textures` on the Web), `sceneLoaded(script)` background
-    generation with update callbacks, and `ThreeLiveAIEditor.textures` /
-    `AIEditor.textures`, which re-apply the scene when textures arrive. GLB
-    exports mark nodes whose material shows an AI texture with
-    `extras.xr.material.textureKey` (the pack key), so tools can tell it from
-    a preset fallback.
-    Budgets: `three-live.min.js` `< 77 KB gz`, `three-live-full.min.js`
-    `< 198 KB gz`, `xr-live.min.js` `< 89 KB gz`, `xr-live-full.min.js`
-    `< 307 KB gz`.
+-   **Multi-Light Depth Shadow Maps (`shadowMapsPlugin`, folded into
+    `three-live-studio.min.js`):** Real-time directional, spot, and point light
+    depth shadow mapping (`light.castShadow`,
+    `light.shadow.{mapSize, bias, normalBias, radius}`, `mesh.castShadow`,
+    `mesh.receiveShadow`, and `<three-live shadow-maps="auto | pcf | off">`)
+    across WebGL2, WebGPU, Android Filament, iOS/visionOS RealityKit, and
+    `.usdz`. Allocates a single `DEPTH_COMPONENT24` `gl.TEXTURE_2D_ARRAY` (up to
+    `MAX_SHADOW_LIGHTS = 4` slices, capped at 32 MB VRAM) with hardware
+    `COMPARE_REF_TO_TEXTURE` (`LEQUAL`), rotated 8-tap Vogel-disk PCF in WebGL2
+    and 16-tap Vogel-disk PCF with `depth24plus` array depth passes in WebGPU
+    (`three-live-webgpu`), tight dynamic world-space orthographic/perspective
+    frustum fitting, scale-invariant normal-offset bias, CAD `section-plane`
+    clipping, and an FNV-1a dirty digest that executes zero shadow depth passes
+    during static camera orbits. Exports `KHR_lights_punctual` `extras.shadow`,
+    `node.extras.shadow`, and USDZ `UsdLuxShadowAPI`
+    (`inputs:shadow:enable = 1`, `primvars:doNotCastShadows = 1`).
+
+-   **1024 px AI textures, compressed texture PNGs, and native auto generation
+    (B5e):** `userData.xr.material.size` accepts `1024` (snapping: ≤ 384 → 256,
+    ≤ 768 → 512, else 1024); the derived normal and ORM maps stay at 512,
+    computed from an exact 2×2 box downsample shared by JS and Rust. Texture
+    PNGs are now DEFLATE-compressed with adaptive filtering: the Rust GLB writer
+    recompresses the in-engine (stored) PNGs, and the Web sandbox worker does
+    the same with `CompressionStream` before posting the GLB, moving texture
+    images into the BIN chunk. Canvas and preset textures export at their 512 px
+    canvas size instead of 256. On Android and iOS, `ThreeLiveAITextures` /
+    `AITextures` gain `mode` (auto when a provider is set, like `ai-textures` on
+    the Web), `sceneLoaded(script)` background generation with update callbacks,
+    and `ThreeLiveAIEditor.textures` / `AIEditor.textures`, which re-apply the
+    scene when textures arrive. GLB exports mark nodes whose material shows an
+    AI texture with `extras.xr.material.textureKey` (the pack key), so tools can
+    tell it from a preset fallback. Budgets: `three-live.min.js` `< 77 KB gz`,
+    `three-live-full.min.js` `< 198 KB gz`, `xr-live.min.js` `< 89 KB gz`,
+    `xr-live-full.min.js` `< 307 KB gz`.
 
 -   **AI textures on Android and iOS (B5d):** `ThreeLiveAITextures` (Android)
-    and `AITextures` (iOS) install a texture pack for every compile
-    (`setPack`), list a scene's texture requests, and generate missing textures
-    through `AIImagesProvider` (OpenAI-compatible Images endpoint) with an
-    on-disk cache of provider images. Requests, responses, image preparation,
-    and pack updates go through the shared Rust core (new `ai_call` ops
-    `texture_pack_set` and `texture_requests`; a process-wide default pack
-    applies to every compile outside an explicit scope).
+    and `AITextures` (iOS) install a texture pack for every compile (`setPack`),
+    list a scene's texture requests, and generate missing textures through
+    `AIImagesProvider` (OpenAI-compatible Images endpoint) with an on-disk cache
+    of provider images. Requests, responses, image preparation, and pack updates
+    go through the shared Rust core (new `ai_call` ops `texture_pack_set` and
+    `texture_requests`; a process-wide default pack applies to every compile
+    outside an explicit scope).
 
 -   **AI texture baking in the CLI and MCP (B5c):** `three-live-cli textures
     bake scene.js [-o scene.textures.json] [--only A,B] [--force] [--glb]
-    [--usdz] [--render]` generates missing textures through an
-    OpenAI-compatible Images endpoint (`--ai-image-endpoint` /
-    `THREE_LIVE_AI_IMAGE_ENDPOINT`, `--ai-image-model`, `THREE_LIVE_AI_KEY`)
-    and extends the pack. A global `--texture-pack` flag makes `validate`,
-    `render`, `convert`, `sim`, and `gym` match the Web viewer. New MCP tool
-    `three_live_bake_textures` (preset-vs-AI comparison image + report), and
-    `texturePack` / `texturePackPath` arguments on `three_live_validate`,
-    `three_live_render`, `three_live_convert`, and `three_live_sim`. New
-    `ai_call` ops `texture_image_request` and `texture_image_parse`.
+    [--usdz] [--render]` generates missing textures through an OpenAI-compatible
+    Images endpoint (`--ai-image-endpoint` / `THREE_LIVE_AI_IMAGE_ENDPOINT`,
+    `--ai-image-model`, `THREE_LIVE_AI_KEY`) and extends the pack. A global
+    `--texture-pack` flag makes `validate`, `render`, `convert`, `sim`, and
+    `gym` match the Web viewer. New MCP tool `three_live_bake_textures`
+    (preset-vs-AI comparison image + report), and `texturePack` /
+    `texturePackPath` arguments on `three_live_validate`, `three_live_render`,
+    `three_live_convert`, and `three_live_sim`. New `ai_call` ops
+    `texture_image_request` and `texture_image_parse`.
 
 -   **AI PBR textures on the Web (B5b, `three-live-ai`):** texture packs load
     from `texture-pack="scene.textures.json"`, `el.texturePack`, or an inline
@@ -150,17 +176,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `el.exportTexturePack()` saves the pack for reproducible results. Events:
     `three-live-texture-start`, `three-live-texture`, and
     `three-live-texture-error`. Budgets: `three-live-ai.min.js` `< 29 KB gz`,
-    `three-live-full.min.js` `< 198 KB gz`, `xr-live-full.min.js` `< 306 KB gz`.
+    `three-live-full.min.js` `< 186 KB gz`, `xr-live-full.min.js` `< 295 KB gz`.
 
 -   **AI PBR textures, core (B5a):** `userData.xr.material` accepts an optional
-    `prompt` (plus `size: 256 | 512` and `seed`; 1024 since B5e) next to its A8 `preset`.
-    Compiling stays a pure function of `(script, texture pack)`: a texture pack
-    maps an FNV-1a 64 content key of the canonical `{prompt, size, seed}` to a
-    seamless albedo PNG, and the normal and occlusion-roughness-metalness maps
-    are re-derived on-device with byte-identical JS and Rust kernels
-    (`compiler/src/ai_texture.rs`, shared fixture
-    `three-live/tests/fixtures/texture_cases.json`). Pack misses render the
-    preset (or the plain material color). New `ai_call` ops `texture_key`,
+    `prompt` (plus `size: 256 | 512` and `seed`; 1024 since B5e) next to its A8
+    `preset`. Compiling stays a pure function of `(script, texture pack)`: a
+    texture pack maps an FNV-1a 64 content key of the canonical
+    `{prompt, size, seed}` to a seamless albedo PNG, and the normal and
+    occlusion-roughness-metalness maps are re-derived on-device with
+    byte-identical JS and Rust kernels (`compiler/src/ai_texture.rs`, shared
+    fixture `three-live/tests/fixtures/texture_cases.json`). Pack misses render
+    the preset (or the plain material color). New `ai_call` ops `texture_key`,
     `texture_derive`, `texture_pack_validate`, and `texture_pack_add`, and new
     diagnostic `TL206` (prompt without a preset, empty, or longer than 500
     characters). The compiler never calls an image provider; generation arrives
@@ -197,10 +223,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     equirectangular IBL, all 5 tone-mapping curves (`neutral`, `reinhard`,
     `none`, `aces`, `agx`), clearcoat, normal/MR/AO/emissive maps, planar
     contact shadows, CAD section-plane clipping, `stereoSBS`, 1×1-scissor
-    `pickMeshGPU`, shared `GPUDevice` coordination, and automatic WebGL2
-    fallback for WebXR, `bloom`/`outline`, transmission, skinning/morphs, and
-    custom shaders. Included in `three-live-full` (`< 180 KB gz`) and
-    `xr-live-full` (`< 288 KB gz`).
+    `pickMeshGPU`, shared `GPUDevice` coordination with `xr-live-webgpu`, and
+    automatic WebGL2 fallback for WebXR, `bloom`/`outline`, transmission,
+    skinning/morphs, and custom shaders. Included in `three-live-full`
+    (`< 180 KB gz`) and `xr-live-full` (`< 288 KB gz`).
 
 -   **Opt-in WebGPU Gaussian Splatting accelerator (`xr-live-webgpu.min.js`,
     `< 12 KB gz`):** Offloads `.splat` and `.spz` depth sorting (deterministic

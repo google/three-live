@@ -94,7 +94,9 @@
       )
     }
 
-    public init() {}
+    public init() {
+      ThreeLiveCapabilities.defaultPolicy = .all
+    }
 
     public var body: some View {
       NavigationView {

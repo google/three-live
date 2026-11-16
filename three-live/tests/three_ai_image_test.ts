@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {ensureCapabilityChecker} from '../src/capabilities';
 import {getSharedRegistry} from '../src/plugin';
 import {
   aiPlugin,
@@ -43,6 +44,7 @@ import {
 } from '../src/plugins/ai-image';
 import {Scene, THREE} from '../src/three-author';
 import fixture from './fixtures/image_cases.json';
+ensureCapabilityChecker();
 
 let passed = 0;
 let failed = 0;
@@ -119,10 +121,14 @@ function fakeElement(initialScript = '') {
     name: string;
     transform: number[];
     visible: boolean;
-    primitives: Array<{positions: Float32Array; baseColor: [number, number, number]}>;
+    primitives: Array<{
+      positions: Float32Array;
+      baseColor: [number, number, number];
+    }>;
   }> = [];
   const el: any = {
     allowClientScripts: true,
+    capabilities: 'scripts ai network remote_content',
     sandbox: 'worker',
     selectedMesh: null,
     viewer: {
@@ -430,7 +436,9 @@ async function runTests(): Promise<void> {
     'detectImageMime rejects non-PNG/JPEG/WebP magic bytes',
   );
 
-  const normDataJpg = await normalizeImageInput('data:image/jpg;base64,/9j/4AAQ');
+  const normDataJpg = await normalizeImageInput(
+    'data:image/jpg;base64,/9j/4AAQ',
+  );
   assert(
     normDataJpg === 'data:image/jpeg;base64,/9j/4AAQ',
     'normalizeImageInput normalizes image/jpg data URI to image/jpeg',
@@ -485,7 +493,13 @@ async function runTests(): Promise<void> {
         height: 0,
         getContext() {
           return {
-            drawImage(_src: unknown, _x: number, _y: number, w: number, h: number) {
+            drawImage(
+              _src: unknown,
+              _x: number,
+              _y: number,
+              w: number,
+              h: number,
+            ) {
               drawnW = w;
               drawnH = h;
             },
@@ -539,6 +553,7 @@ async function runTests(): Promise<void> {
   {
     const {el} = fakeElement();
     el.allowClientScripts = false;
+    el.capabilities = 'ai network remote_content';
     let rejectedNoScripts = false;
     try {
       await el.compileFromImage(VALID_PNG);
@@ -564,7 +579,9 @@ async function runTests(): Promise<void> {
       prompt: 'oak desk with lamp',
       priors: {
         floorY: 0,
-        objects: [{label: 'desk', center: [0, 0.38, 0], size: [1.4, 0.75, 0.7]}],
+        objects: [
+          {label: 'desk', center: [0, 0.38, 0], size: [1.4, 0.75, 0.7]},
+        ],
       },
     });
     assert(
@@ -697,7 +714,9 @@ async function runTests(): Promise<void> {
     assert(
       editRes.applied &&
         el.sceneSource === editedDesk &&
-        String(editReqs[0][1].content).includes('selected the mesh named "Lamp"'),
+        String(editReqs[0][1].content).includes(
+          'selected the mesh named "Lamp"',
+        ),
       'chaining step 3: editScene edits selected Lamp on image-compiled scene',
     );
 

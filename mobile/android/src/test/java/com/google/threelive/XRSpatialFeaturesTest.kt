@@ -206,6 +206,7 @@ class XRSpatialFeaturesTest {
           "scenes":[{"nodes":[0]}]}"""
       )
     val b = ThreeLiveRuntimeBinding(r, glb)
+    b.capabilities = ThreeLiveCapabilities(network = true, remoteContent = true)
     // Cross-origin URL rejected when allowRemoteSplats = false against a different baseUrl.
     val blocked =
       XRSpatialFeatures(
@@ -495,6 +496,7 @@ class XRSpatialFeaturesTest {
     val store = HashMap<String, String>()
     val r1 = FakeRenderer()
     val b1 = ThreeLiveRuntimeBinding(r1, glbOf(sceneJson))
+    b1.capabilities = ThreeLiveCapabilities(storage = true)
     val f1 = XRSpatialFeatures(b1, r1)
     f1.persistentAnchorsNamespace = "studio-a"
     f1.anchorStoreGet = { store[it] }
@@ -530,6 +532,7 @@ class XRSpatialFeaturesTest {
     // Fresh session restores from storage and from #xr-state= URL hash.
     val r2 = FakeRenderer()
     val b2 = ThreeLiveRuntimeBinding(r2, glbOf(sceneJson))
+    b2.capabilities = ThreeLiveCapabilities(storage = true)
     val f2 = XRSpatialFeatures(b2, r2)
     val events = ArrayList<String>()
     f2.listener =
@@ -607,6 +610,7 @@ class XRSpatialFeaturesTest {
 
     val rA = FakeRenderer()
     val bA = ThreeLiveRuntimeBinding(rA, glbOf(sceneJson))
+    bA.capabilities = ThreeLiveCapabilities(network = true)
     val fA =
       XRSpatialFeatures(bA, rA).apply {
         localPeerId = "peer-alice"
@@ -616,6 +620,7 @@ class XRSpatialFeaturesTest {
 
     val rB = FakeRenderer()
     val bB = ThreeLiveRuntimeBinding(rB, glbOf(sceneJson))
+    bB.capabilities = ThreeLiveCapabilities(network = true)
     val eventsB = ArrayList<String>()
     val fB =
       XRSpatialFeatures(bB, rB).apply {

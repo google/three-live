@@ -27,15 +27,22 @@
  * WebXR depth buffer; collided particles respawn at the top of the volume.
  */
 
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  mat4Create,
+  mat4Invert,
+  mat4Multiply,
+} from '../../../three-live/src/math';
+import {
+  checkPluginCapability,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {
   MAX_PARTICLES_PER_EMITTER,
+  parseParticles,
   type ParticleOptions,
   type ParticlePreset,
-  parseParticles,
 } from '../../../three-live/src/xr-trait-schema';
 import {extractPosition, getMeshXRTraits} from '../xr-traits';
-import {mat4Create, mat4Invert, mat4Multiply} from '../../../three-live/src/math';
 import {
   cacheXRFrame,
   clampNum,
@@ -60,7 +67,10 @@ export const MAX_EMITTERS = 8;
 
 const VERTS_PER_PARTICLE = 8;
 
-const PRESETS: Record<ParticlePreset, {color: [number, number, number, number]; size: Vec3}> = {
+const PRESETS: Record<
+  ParticlePreset,
+  {color: [number, number, number, number]; size: Vec3}
+> = {
   rain: {color: [0.7, 0.8, 1.0, 0.6], size: [0.002, 0.04, 0.002]},
   snow: {color: [1, 1, 1, 0.9], size: [0.01, 0.01, 0.01]},
   sparks: {color: [1.0, 0.7, 0.2, 1], size: [0.004, 0.004, 0.004]},
@@ -93,7 +103,10 @@ export interface DepthCamera {
  * Returns true when world point `p` lies at or behind the real-world surface
  * seen at its projected pixel (with a 2 cm tolerance).
  */
-export function isOccludedByDepth(p: readonly number[], cam: DepthCamera): boolean {
+export function isOccludedByDepth(
+  p: readonly number[],
+  cam: DepthCamera,
+): boolean {
   const m = cam.view;
   const vx = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
   const vy = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
@@ -105,7 +118,12 @@ export function isOccludedByDepth(p: readonly number[], cam: DepthCamera): boole
   const ndcY = (P[5] * vy + P[9] * vz) / viewDepth;
   if (Math.abs(ndcX) > 1 || Math.abs(ndcY) > 1) return false;
   const real = cam.sample((ndcX + 1) * 0.5, (1 - ndcY) * 0.5);
-  return typeof real === 'number' && Number.isFinite(real) && real > 0.05 && viewDepth >= real - 0.02;
+  return (
+    typeof real === 'number' &&
+    Number.isFinite(real) &&
+    real > 0.05 &&
+    viewDepth >= real - 0.02
+  );
 }
 
 /** CPU particle state for one emitter volume. */
@@ -139,14 +157,21 @@ export class ParticleEmitter {
     const sp = this.options.speed;
     const burst = this.options.preset === 'sparks';
     this.positions[o] = burst ? cx : cx + (r() - 0.5) * w;
-    this.positions[o + 1] = burst ? cy : anywhere ? cy + (r() - 0.5) * h : cy + h * 0.5;
+    this.positions[o + 1] = burst
+      ? cy
+      : anywhere
+        ? cy + (r() - 0.5) * h
+        : cy + h * 0.5;
     this.positions[o + 2] = burst ? cz : cz + (r() - 0.5) * d;
     switch (this.options.preset) {
       case 'rain':
         this.velocities.set([0, -4 * sp, 0], o);
         break;
       case 'snow':
-        this.velocities.set([(r() - 0.5) * 0.2, -0.5 * sp, (r() - 0.5) * 0.2], o);
+        this.velocities.set(
+          [(r() - 0.5) * 0.2, -0.5 * sp, (r() - 0.5) * 0.2],
+          o,
+        );
         break;
       case 'sparks': {
         const a = r() * Math.PI * 2;
@@ -155,7 +180,10 @@ export class ParticleEmitter {
         break;
       }
       case 'confetti':
-        this.velocities.set([(r() - 0.5) * sp, (0.5 + r()) * sp, (r() - 0.5) * sp], o);
+        this.velocities.set(
+          [(r() - 0.5) * sp, (0.5 + r()) * sp, (r() - 0.5) * sp],
+          o,
+        );
         break;
       default: {
         const unreachable: never = this.options.preset;
@@ -168,11 +196,17 @@ export class ParticleEmitter {
    * Advances the simulation. `center` moves the volume with its mesh; when
    * provided, `floorY` and `depth` collide particles with real geometry.
    */
-  step(dt: number, center: readonly number[], floorY?: number, depth?: DepthCamera): void {
+  step(
+    dt: number,
+    center: readonly number[],
+    floorY?: number,
+    depth?: DepthCamera,
+  ): void {
     const step = clampNum(dt, 0, 0.1, 1 / 60);
     this.center = [center[0], center[1], center[2]];
     const preset = this.options.preset;
-    const gravity = preset === 'sparks' || preset === 'confetti' ? -9.8 * 0.4 : 0;
+    const gravity =
+      preset === 'sparks' || preset === 'confetti' ? -9.8 * 0.4 : 0;
     // Every particle uses the same frame-scaled drag coefficient.
     const drag = preset === 'confetti' ? Math.pow(0.9, step * 60) : 1;
     const [w, h, d] = this.options.area;
@@ -212,35 +246,64 @@ export class ParticleEmitter {
 
   /** Writes particle cross-quads (8 verts each) into `out` (model space). */
   writeVertices(out: Float32Array): void {
-    writeParticleVertices(out, this.positions, this.options.count, PRESETS[this.options.preset].size);
+    writeParticleVertices(
+      out,
+      this.positions,
+      this.options.count,
+      PRESETS[this.options.preset].size,
+    );
   }
 }
 
 /** Shared cross-quad writer for simulated centers and the static origin template. */
-function writeParticleVertices(out: Float32Array, p: ArrayLike<number>, count: number, size: Vec3): void {
-    const [sx, sy, sz] = size;
-    const dz = sz + sx;
+function writeParticleVertices(
+  out: Float32Array,
+  p: ArrayLike<number>,
+  count: number,
+  size: Vec3,
+): void {
+  const [sx, sy, sz] = size;
+  const dz = sz + sx;
 
-    for (let i = 0; i < count; i++) {
-      const o = i * 3;
-      let b = i * VERTS_PER_PARTICLE * 3;
-      const x = p[o];
-      const y = p[o + 1];
-      const z = p[o + 2];
-      // Quad in the XY plane, then quad in the ZY plane (no allocation).
-      out[b++] = x - sx; out[b++] = y - sy; out[b++] = z;
-      out[b++] = x + sx; out[b++] = y - sy; out[b++] = z;
-      out[b++] = x + sx; out[b++] = y + sy; out[b++] = z;
-      out[b++] = x - sx; out[b++] = y + sy; out[b++] = z;
-      out[b++] = x; out[b++] = y - sy; out[b++] = z - dz;
-      out[b++] = x; out[b++] = y - sy; out[b++] = z + dz;
-      out[b++] = x; out[b++] = y + sy; out[b++] = z + dz;
-      out[b++] = x; out[b++] = y + sy; out[b++] = z - dz;
-    }
+  for (let i = 0; i < count; i++) {
+    const o = i * 3;
+    let b = i * VERTS_PER_PARTICLE * 3;
+    const x = p[o];
+    const y = p[o + 1];
+    const z = p[o + 2];
+    // Quad in the XY plane, then quad in the ZY plane (no allocation).
+    out[b++] = x - sx;
+    out[b++] = y - sy;
+    out[b++] = z;
+    out[b++] = x + sx;
+    out[b++] = y - sy;
+    out[b++] = z;
+    out[b++] = x + sx;
+    out[b++] = y + sy;
+    out[b++] = z;
+    out[b++] = x - sx;
+    out[b++] = y + sy;
+    out[b++] = z;
+    out[b++] = x;
+    out[b++] = y - sy;
+    out[b++] = z - dz;
+    out[b++] = x;
+    out[b++] = y - sy;
+    out[b++] = z + dz;
+    out[b++] = x;
+    out[b++] = y + sy;
+    out[b++] = z + dz;
+    out[b++] = x;
+    out[b++] = y + sy;
+    out[b++] = z - dz;
+  }
 }
 
 /** Builds the static index/normal buffers for `count` particle cross-quads. */
-export function buildParticleTopology(count: number): {normals: Float32Array; indices: Uint16Array} {
+export function buildParticleTopology(count: number): {
+  normals: Float32Array;
+  indices: Uint16Array;
+} {
   const normals = new Float32Array(count * VERTS_PER_PARTICLE * 3);
   const indices = new Uint16Array(count * 12);
   for (let i = 0; i < count; i++) {
@@ -250,7 +313,23 @@ export function buildParticleTopology(count: number): {normals: Float32Array; in
       normals[(v + k) * 3 + 2] = 1;
       normals[(v + k + 4) * 3] = 1;
     }
-    indices.set([v, v + 1, v + 2, v, v + 2, v + 3, v + 4, v + 5, v + 6, v + 4, v + 6, v + 7], i * 12);
+    indices.set(
+      [
+        v,
+        v + 1,
+        v + 2,
+        v,
+        v + 2,
+        v + 3,
+        v + 4,
+        v + 5,
+        v + 6,
+        v + 4,
+        v + 6,
+        v + 7,
+      ],
+      i * 12,
+    );
   }
   return {normals, indices};
 }
@@ -277,7 +356,12 @@ export class XRDepthParticlesController {
   }
 
   /** Steps all emitters and syncs their GPU geometry. */
-  update(viewer: PluginViewer, dt: number, floorY?: number, depth?: DepthCamera): void {
+  update(
+    viewer: PluginViewer,
+    dt: number,
+    floorY?: number,
+    depth?: DepthCamera,
+  ): void {
     const meshes = viewer.meshes ?? [];
     const live = new Set<object>();
     for (const mesh of [...meshes]) {
@@ -297,22 +381,34 @@ export class XRDepthParticlesController {
         const emitter = new ParticleEmitter(options, this.entries.size + 1);
         emitter.reset(center);
         const gl = viewer.gl;
-        const instanced = viewer.supportsInstanceOffsets === true &&
+        const instanced =
+          viewer.supportsInstanceOffsets === true &&
           typeof gl?.drawElementsInstanced === 'function' &&
           typeof gl?.vertexAttribDivisor === 'function';
         const count = instanced ? 1 : options.count;
         const positions = new Float32Array(count * VERTS_PER_PARTICLE * 3);
         // A zero-centered emitter writes the same cross-quads as the fallback,
         // including the asymmetric Z extent. Simulation remains on the CPU.
-        writeParticleVertices(positions, instanced ? [0, 0, 0] : emitter.positions, count, PRESETS[options.preset].size);
+        writeParticleVertices(
+          positions,
+          instanced ? [0, 0, 0] : emitter.positions,
+          count,
+          PRESETS[options.preset].size,
+        );
         const topo = buildParticleTopology(count);
         const pm = createDynamicMesh(
           viewer,
           {
-            positions, normals: topo.normals, indices: topo.indices,
+            positions,
+            normals: topo.normals,
+            indices: topo.indices,
             translations: instanced ? emitter.positions : undefined,
           },
-          {name: `__xr_particles_${mesh.name ?? 'emitter'}`, color: PRESETS[options.preset].color, pickable: false},
+          {
+            name: `__xr_particles_${mesh.name ?? 'emitter'}`,
+            color: PRESETS[options.preset].color,
+            pickable: false,
+          },
         );
         entry = {emitter, mesh: pm, key};
         this.entries.set(mesh, entry);
@@ -332,7 +428,8 @@ export class XRDepthParticlesController {
 
   /** Removes every emitter mesh. */
   dispose(viewer: PluginViewer | undefined): void {
-    for (const entry of this.entries.values()) removeDynamicMesh(viewer, entry.mesh);
+    for (const entry of this.entries.values())
+      removeDynamicMesh(viewer, entry.mesh);
     this.entries.clear();
   }
 }
@@ -340,7 +437,9 @@ export class XRDepthParticlesController {
 const controllers = new WeakMap<object, XRDepthParticlesController>();
 
 /** Returns (creating on first use) the particle controller for `viewer`. */
-export function getDepthParticlesController(viewer: object): XRDepthParticlesController {
+export function getDepthParticlesController(
+  viewer: object,
+): XRDepthParticlesController {
   let c = controllers.get(viewer);
   if (!c) {
     c = new XRDepthParticlesController();
@@ -352,7 +451,14 @@ export function getDepthParticlesController(viewer: object): XRDepthParticlesCon
 function depthCameraFor(viewer: PluginViewer): DepthCamera | undefined {
   const host = viewer.container;
   const dm = host?.depthManager;
-  if (!dm || host?.xrDepth === 'none' || typeof dm.sampleDepthAndNormal !== 'function') return undefined;
+  if (
+    !dm ||
+    host?.xrDepth === 'none' ||
+    typeof dm.sampleDepthAndNormal !== 'function' ||
+    !checkPluginCapability(host, 'sensors', 'depthParticles', {dedup: true})
+  ) {
+    return undefined;
+  }
   // Real-world depth only exists while presenting; use the headset camera.
   const proj = resolveProjection(viewer);
   if (!isXRFrameFresh(viewer) || !proj) return undefined;
@@ -392,7 +498,12 @@ export const depthParticlesPlugin: ThreeLivePlugin = {
   onUpdate(viewer: PluginViewer, dt: number): void {
     if (!isXRFrameFresh(viewer)) stepViewer(viewer, dt);
   },
-  onXRFrame(viewer: unknown, _session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    _session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     cacheXRFrame(viewer as PluginViewer, frame, refSpace);
     stepViewer(viewer as PluginViewer, 1 / 72);
   },

@@ -24,7 +24,13 @@
  * proxy (or a local model), or pass short-lived credentials via `headers`.
  */
 
-import {getSharedRegistry, type ThreeLivePlugin} from '../plugin';
+import type {ThreeLiveCapabilityName} from '../capabilities';
+import {
+  checkPluginCapability,
+  getSharedRegistry,
+  hasPluginCapability,
+  type ThreeLivePlugin,
+} from '../plugin';
 import {
   type AIImageInput,
   compileFromImage,
@@ -309,10 +315,7 @@ export function createAIChatProvider(
   const baseModel = options.model?.trim() || undefined;
   const candidateModels: Array<string | undefined> = options.fallbackModels
     ?.length
-    ? [
-        baseModel,
-        ...options.fallbackModels.filter((m) => m && m !== baseModel),
-      ]
+    ? [baseModel, ...options.fallbackModels.filter((m) => m && m !== baseModel)]
     : [baseModel];
   const explicitFirstByteTimeout =
     Number(options.firstByteTimeoutMs) > 0
@@ -799,19 +802,35 @@ export function selectionSentence(selected: readonly string[]): string {
   return `The user selected the meshes named ${selected.map((m) => `"${m}"`).join(', ')}; the instruction refers to them.\n`;
 }
 
+/** Throws when `cap` is not granted on `el`. */
+export function requireAICap(
+  el: unknown,
+  cap: ThreeLiveCapabilityName,
+  feature: string,
+  url?: string,
+): void {
+  if (!checkPluginCapability(el, cap, feature, url ? {url} : undefined)) {
+    throw new Error(`${feature}: capability '${cap}' denied.`);
+  }
+}
+
 export function resolveProvider(
   el: AIEditableElement,
   options: {readonly provider?: ThreeLiveAIProvider},
   caller = 'editScene',
 ): ThreeLiveAIProvider {
   const explicit = options.provider ?? el.aiProvider;
-  if (explicit && typeof explicit.complete === 'function') return explicit;
+  if (explicit && typeof explicit.complete === 'function') {
+    requireAICap(el, 'ai', caller);
+    return explicit;
+  }
   const endpoint = el.getAttribute?.('ai-endpoint');
   if (!endpoint) {
     throw new Error(
       `${caller}: no AI provider. Set el.aiProvider, or the ai-endpoint (and ai-model) attributes.`,
     );
   }
+  requireAICap(el, 'ai', caller, endpoint);
   const kind = (el.getAttribute?.('ai-provider') || 'ai-chat').toLowerCase();
   if (kind !== 'ai-chat') {
     throw new Error(
@@ -843,7 +862,7 @@ export async function editScene(
 ): Promise<EditSceneResult> {
   const text = String(instruction ?? '').trim();
   if (!text) throw new Error('editScene: instruction is empty.');
-  if (!el?.allowClientScripts) {
+  if (!checkPluginCapability(el, 'scripts', 'editScene')) {
     throw new Error(
       'editScene requires client scripts: add the allow-client-scripts attribute.',
     );
@@ -1000,6 +1019,17 @@ export const aiPlugin: ThreeLivePlugin = {
       .querySelectorAll?.('three-live, xr-live')
       .forEach((node) => aiPlugin.onElementConnected?.(node));
   },
+  onAttributeChanged(host: unknown, name: string): void {
+    if (name !== 'capabilities' || !host) return;
+    const voiceEl = host as AIVoiceElement;
+    if (
+      voiceEl.__tlVoiceSession &&
+      (!hasPluginCapability(host, 'ai') ||
+        !hasPluginCapability(host, 'microphone'))
+    ) {
+      voiceEl.__tlVoiceSession.close();
+    }
+  },
   onElementConnected(host: unknown): void {
     const el = host as AIEditableElement;
     if (!el || el.__tlAiInstalled) return;
@@ -1017,7 +1047,7 @@ export const aiPlugin: ThreeLivePlugin = {
       startVoiceEdit(voiceEl, options);
     voiceEl.__tlSelectProvider = () => {
       try {
-        return resolveProvider(el, {});
+        return resolveProvider(el, {}, 'selectByVoice');
       } catch {
         return null;
       }

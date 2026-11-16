@@ -40,8 +40,15 @@ final class AITexturesTests: XCTestCase {
     }
   }
 
+  override func setUp() async throws {
+    try await super.setUp()
+    ThreeLiveCapabilities.defaultPolicy = .all
+  }
+
   override func tearDown() async throws {
     try await AITextures().setPack(nil)
+    ThreeLiveCapabilities.defaultPolicy = .default
+    try await super.tearDown()
   }
 
   func testGeneratesMissingTexturesThroughTheSharedCore() async throws {

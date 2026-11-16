@@ -39,7 +39,8 @@ function element() {
   const el: any = Object.create(ThreeLiveElement.prototype);
   el.currentModel = model('visible');
   el.isModelLoaded = true;
-  el.getAttribute = () => null;
+  el.getAttribute = (name: string) =>
+    name === 'capabilities' ? 'scripts remote_content network' : null;
   el.hasAttribute = () => true;
   el.hidePoster =
     el.setSlotVisible =

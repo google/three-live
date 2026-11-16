@@ -19,6 +19,27 @@
  */
 
 import {
+  CAPABILITIES_ALL,
+  CAPABILITIES_NONE,
+  CAPABILITIES_VIEWER,
+  checkHostCapability,
+  ensureCapabilityChecker,
+  hasCapabilityInPolicy,
+  isNetworkUrlPermitted,
+  isNonNetworkUrl,
+  normalizeCapabilityOrigin,
+  parseCapabilities,
+  resetCapabilityDenials,
+  resolveHostCapabilities,
+  sanitizeDiagnosticUrl,
+  type CapabilityDeniedDetail,
+  type ThreeLiveCapabilities,
+  type ThreeLiveCapabilitiesInit,
+  type ThreeLiveCapabilitiesInput,
+  type ThreeLiveCapabilityName,
+  type ThreeLiveNetworkPolicy,
+} from './capabilities';
+import {
   HOST_BLOOM_DEFAULT_RADIUS,
   HOST_BLOOM_DEFAULT_THRESHOLD,
   parseNumericAttr,
@@ -46,7 +67,28 @@ import {
   type OrbitLimits,
   type ToneMappingMode,
 } from './three-view';
+ensureCapabilityChecker();
 
+export {
+  CAPABILITIES_ALL,
+  CAPABILITIES_NONE,
+  CAPABILITIES_VIEWER,
+  checkHostCapability,
+  hasCapabilityInPolicy,
+  isNetworkUrlPermitted,
+  isNonNetworkUrl,
+  normalizeCapabilityOrigin,
+  parseCapabilities,
+  resetCapabilityDenials,
+  resolveHostCapabilities,
+  sanitizeDiagnosticUrl,
+  type CapabilityDeniedDetail,
+  type ThreeLiveCapabilities,
+  type ThreeLiveCapabilitiesInit,
+  type ThreeLiveCapabilitiesInput,
+  type ThreeLiveCapabilityName,
+  type ThreeLiveNetworkPolicy,
+};
 export type {
   DecoderType,
   MeshDecoder,
@@ -60,6 +102,7 @@ export type ARMode = 'quick-look' | 'webxr' | 'scene-viewer';
 
 export interface ARLaunchOptions {
   model: any;
+  iosSrc?: string;
   glbUrl?: string;
   view?: ThreeView;
   preferredModes?: ARMode[];
@@ -200,7 +243,7 @@ export interface ThreeLiveElement {
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
   static readonly observedAttributes =
-    'src ios-src script-src sandbox allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps'.split(
+    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps'.split(
       ' ',
     );
 
@@ -265,11 +308,44 @@ export class ThreeLiveElement extends BaseElement {
    * compiled by the sandbox unless explicitly enabled.
    */
   static get allowClientScripts(): boolean {
-    return Boolean(getSharedRegistry().allowClientScripts);
+    return Boolean(
+      getSharedRegistry().allowClientScripts ||
+        getSharedRegistry().defaultCapabilities?.scripts,
+    );
   }
 
   static set allowClientScripts(value: boolean) {
     getSharedRegistry().allowClientScripts = value;
+  }
+
+  /**
+   * Process/page-wide default capability policy (`CAPABILITIES_NONE` by default).
+   * Individual `<three-live>` / `<xr-live>` elements override this via `capabilities`.
+   */
+  static get defaultCapabilities(): ThreeLiveCapabilities {
+    return resolveHostCapabilities(undefined);
+  }
+
+  static set defaultCapabilities(
+    value: ThreeLiveCapabilitiesInput | null | undefined,
+  ) {
+    getSharedRegistry().defaultCapabilities = parseCapabilities(
+      value,
+      CAPABILITIES_NONE,
+    );
+  }
+
+  /** Optional global listener notified whenever a capability check is denied. */
+  static get onCapabilityDenied():
+    | ((detail: CapabilityDeniedDetail) => void)
+    | null {
+    return getSharedRegistry().onCapabilityDenied ?? null;
+  }
+
+  static set onCapabilityDenied(
+    value: ((detail: CapabilityDeniedDetail) => void) | null,
+  ) {
+    getSharedRegistry().onCapabilityDenied = value;
   }
 
   /**
@@ -385,6 +461,14 @@ export class ThreeLiveElement extends BaseElement {
   private mutationObserver: MutationObserver | null = null;
 
   connectedCallback(): void {
+    for (const prop of ['capabilities', 'allowClientScripts'] as const) {
+      if (Object.prototype.hasOwnProperty.call(this, prop)) {
+        const selfRec = this as unknown as Record<string, unknown>;
+        const val = selfRec[prop];
+        delete selfRec[prop];
+        selfRec[prop] = val;
+      }
+    }
     if (typeof document === 'undefined') return;
     if (!this.style.display || this.style.display === 'inline') {
       this.style.display = 'block';
@@ -594,6 +678,18 @@ export class ThreeLiveElement extends BaseElement {
         if (v) v.shadowMaps = newVal !== null ? this.shadowMaps : undefined;
         v?.render();
         break;
+
+      case 'capabilities':
+        if (!this._syncingCapsAttr) {
+          this.__tlCapsOverride = null;
+          this.__tlCapsInit = null;
+        }
+        resetCapabilityDenials(this);
+        break;
+
+      case 'allow-client-scripts':
+        resetCapabilityDenials(this);
+        break;
     }
 
     for (const plugin of ThreeView.getRegisteredPlugins()) {
@@ -641,18 +737,88 @@ export class ThreeLiveElement extends BaseElement {
     this.setAttr('sandbox', value);
   }
 
+  /** Optional per-element callback invoked whenever a capability check is denied. */
+  onCapabilityDenied: ((detail: CapabilityDeniedDetail) => void) | null = null;
+  /** Internal structured capability override set via `el.capabilities = {...}`. */
+  __tlCapsOverride: ThreeLiveCapabilities | null = null;
+  __tlCapsInit: ThreeLiveCapabilitiesInit | null = null;
+  private _syncingCapsAttr = false;
+
+  /** Effective normalized capability policy for this element. */
+  get capabilities(): ThreeLiveCapabilities {
+    return resolveHostCapabilities(this);
+  }
+
+  set capabilities(value: ThreeLiveCapabilitiesInput | null | undefined) {
+    resetCapabilityDenials(this);
+    this.__tlCapsOverride = null;
+    if (value == null) {
+      this.__tlCapsInit = null;
+      if (
+        typeof this.hasAttribute === 'function' &&
+        this.hasAttribute('capabilities')
+      ) {
+        this.removeAttribute('capabilities');
+      } else {
+        for (const plugin of ThreeView.getRegisteredPlugins()) {
+          plugin.onAttributeChanged?.(this, 'capabilities', null, null);
+        }
+      }
+    } else if (typeof value === 'string') {
+      this.__tlCapsInit = null;
+      this.setAttr('capabilities', value);
+    } else {
+      this.__tlCapsInit = value;
+      if (
+        typeof this.hasAttribute === 'function' &&
+        this.hasAttribute('capabilities')
+      ) {
+        this._syncingCapsAttr = true;
+        try {
+          this.removeAttribute('capabilities');
+        } finally {
+          this._syncingCapsAttr = false;
+        }
+      } else {
+        for (const plugin of ThreeView.getRegisteredPlugins()) {
+          plugin.onAttributeChanged?.(this, 'capabilities', null, null);
+        }
+      }
+    }
+  }
+
+  /** Returns `true` when `capability` (and optional `url`) is granted on this element. */
+  hasCapability(capability: ThreeLiveCapabilityName, url?: string): boolean {
+    const caps = this.capabilities;
+    if (capability === 'remote_content') {
+      return hasCapabilityInPolicy(caps, 'remote_content', url);
+    }
+    if (capability === 'ai') {
+      return hasCapabilityInPolicy(caps, 'ai', url);
+    }
+    return hasCapabilityInPolicy(caps, capability, url);
+  }
+
+  /**
+   * Evaluates `capability` at a sensitive point of access. Logs a diagnostic and
+   * dispatches `capability-denied` when refused, returning `false` without throwing.
+   */
+  checkCapability(
+    capability: ThreeLiveCapabilityName,
+    feature: string,
+    options?: {readonly url?: string; readonly dedup?: boolean},
+  ): boolean {
+    return checkHostCapability(this, capability, feature, options);
+  }
+
   /**
    * Opt-in flag enabling client-modified procedural script strings on this
    * element (`executeScript(code)` and inline `<script type="text/three">`).
    *
-   * Returns `true` when either the `allow-client-scripts` attribute is set on
-   * this element or `ThreeLiveElement.allowClientScripts` is enabled globally.
+   * Alias for the `'scripts'` capability.
    */
   get allowClientScripts(): boolean {
-    return (
-      this.getBoolAttr('allow-client-scripts') ||
-      ThreeLiveElement.allowClientScripts
-    );
+    return this.hasCapability('scripts');
   }
   set allowClientScripts(value: boolean) {
     this.setBoolAttr('allow-client-scripts', value);
@@ -916,6 +1082,11 @@ export class ThreeLiveElement extends BaseElement {
     try {
       let resolvedModel: GLBData | ArrayBuffer | ArrayBufferView;
       if (typeof model === 'string') {
+        if (!this.checkCapability('remote_content', 'src', {url: model})) {
+          throw new Error(
+            `Capability 'remote_content' or 'network' denied for src "${sanitizeDiagnosticUrl(model)}".`,
+          );
+        }
         const response = await fetch(model, {signal: current.signal});
         if (!response.ok) {
           throw new Error(`Failed to load "${model}": HTTP ${response.status}`);
@@ -1011,7 +1182,7 @@ export class ThreeLiveElement extends BaseElement {
       );
     }
 
-    const iosSrc = this.getAttr('ios-src');
+    const rawIosSrc = this.getAttr('ios-src');
     const preferredModes = (this.getAttr('ar-modes') || '')
       .split(/\s+/)
       .filter(Boolean) as ARMode[];
@@ -1019,7 +1190,8 @@ export class ThreeLiveElement extends BaseElement {
     try {
       this.fireEvent('ar-status', {status: 'session-started'});
       const result = await arProvider.activateAR({
-        model: (iosSrc || this.currentModel) as any,
+        model: this.currentModel as any,
+        iosSrc: rawIosSrc || undefined,
         glbUrl:
           typeof this.currentModel === 'string' ? this.currentModel : undefined,
         view: this.viewer || undefined,
@@ -1048,7 +1220,8 @@ export class ThreeLiveElement extends BaseElement {
           this.isDesktopMac() &&
           typeof document !== 'undefined' &&
           this.currentModel &&
-          arProvider.createUSDZBlob
+          arProvider.createUSDZBlob &&
+          this.checkCapability('external_handoff', 'quick-look-download')
         ) {
           try {
             const usdzBlob =
@@ -1213,6 +1386,9 @@ export class ThreeLiveElement extends BaseElement {
         this.posterEl.remove();
         this.posterEl = null;
       }
+      return;
+    }
+    if (!this.checkCapability('remote_content', 'poster', {url: src})) {
       return;
     }
 
@@ -1518,6 +1694,18 @@ export class ThreeLiveElement extends BaseElement {
    * inside the mandatory sandbox (Use Case 2).
    */
   loadScriptFromSrc(src: string): Promise<ArrayBuffer | GLBData | void> {
+    if (!this.checkCapability('scripts', 'scriptSrc')) {
+      const error = new Error(CLIENT_SCRIPTS_DISABLED_ERROR);
+      this.emitError(error, 'security');
+      return Promise.reject(error);
+    }
+    if (!this.checkCapability('remote_content', 'scriptSrc', {url: src})) {
+      const error = new Error(
+        `Capability 'remote_content' or 'network' denied for script-src "${sanitizeDiagnosticUrl(src)}".`,
+      );
+      this.emitError(error, 'security');
+      return Promise.reject(error);
+    }
     return this.runWithScriptRunner((runner, callbacks) => {
       if (typeof runner.executeUrl !== 'function') {
         const error = new Error(
@@ -1533,13 +1721,13 @@ export class ThreeLiveElement extends BaseElement {
   /**
    * Compiles a client-modified Three.js scene script string inside the
    * mandatory sandbox (Use Case 1). Requires opting in via
-   * `ThreeLiveElement.allowClientScripts = true` or `allow-client-scripts`.
+   * `capabilities="scripts"` or `allow-client-scripts`.
    */
   executeScript(script: string): Promise<ArrayBuffer | GLBData | void> {
     if (!getSharedRegistry().scriptRunner) {
       return this.runWithScriptRunner(() => Promise.resolve());
     }
-    if (!this.allowClientScripts) {
+    if (!this.checkCapability('scripts', 'executeScript')) {
       const error = new Error(CLIENT_SCRIPTS_DISABLED_ERROR);
       this.showToast(CLIENT_SCRIPTS_DISABLED_TOAST);
       this.emitError(error, 'security');
@@ -1562,6 +1750,7 @@ export class ThreeLiveElement extends BaseElement {
     getFloatAttr(name: string, fallback: number): number;
   }
   const proto = ThreeLiveElement.prototype as unknown;
+  (proto as {__tlEl?: boolean}).__tlEl = true;
   const def = (
     prop: string,
     get: (this: AttrTarget) => unknown,

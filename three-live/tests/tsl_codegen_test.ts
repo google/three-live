@@ -1168,6 +1168,7 @@ fragColor=vec4(N,1.0);
     // tslint:disable-next-line:no-any
     const fakeEl: any = {
       allowClientScripts: true,
+      capabilities: 'scripts ai network',
       sandbox: 'worker',
       selectedMesh: 'HoloOrb',
       querySelector: () => ({textContent: baseScript}),

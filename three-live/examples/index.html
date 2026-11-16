@@ -744,7 +744,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">77.9 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">80.9 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -769,7 +769,7 @@ limitations under the License.
       <!-- Canonical <three-live> Web Component -->
       <three-live
         id="viewer"
-        allow-client-scripts
+        capabilities="all"
         camera-controls
         autoplay
         environment="studio"
@@ -2711,7 +2711,7 @@ for (let t = 0; t < 5; t++) {
     let voiceStopHandle = null;
 
     // Storage helpers with window.name fallback so saved keys survive refreshes
-    // on sandboxed hosts like x20web.corp.google.com (Content-Security-Policy: sandbox allow-scripts).
+    // on opaque-origin sandboxed static hosts (Content-Security-Policy: sandbox allow-scripts).
     function readWindowNameStore() {
       try {
         const raw = window.name || "";

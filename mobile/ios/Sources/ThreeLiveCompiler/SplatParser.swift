@@ -685,7 +685,7 @@ public enum SplatParser {
       let scheme = resolved.scheme?.lowercased(), let host = resolved.host?.lowercased(),
       !host.isEmpty
     else { return nil }
-    let loopback = host == "localhost" || host == "127.0.0.1"
+    let loopback = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
     let schemeOk = scheme == "https" || (scheme == "http" && loopback)
     guard schemeOk else { return nil }
     if !allowCrossOrigin && origin(of: resolved) != origin(of: base) { return nil }
@@ -1232,9 +1232,23 @@ public enum SplatParser {
     baseURL: String? = nil,
     allowCrossOrigin: Bool = true,
     maxBytes: Int = maxFileBytes,
-    session: URLSession = .shared
+    session: URLSession = .shared,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
   ) async throws -> SplatData {
     guard let resolved = resolveSplatURL(url, baseURL: baseURL, allowCrossOrigin: allowCrossOrigin)
+    else {
+      throw SplatParserError.urlRejected
+    }
+    let capPolicy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    guard
+      capPolicy.check(
+        .remoteContent,
+        feature: "splatUrl",
+        url: resolved.absoluteString,
+        baseURL: baseURL,
+        onDenied: onCapabilityDenied
+      )
     else {
       throw SplatParserError.urlRejected
     }

@@ -54,7 +54,10 @@ public final class AIVoiceSession: @unchecked Sendable {
     /// Provider-specific fields deep-merged into the setup / session message.
     public var session: [String: Any]?
 
-    public init(model: String? = nil, voice: String? = nil, instructions: String = "", session: [String: Any]? = nil) {
+    public init(
+      model: String? = nil, voice: String? = nil, instructions: String = "",
+      session: [String: Any]? = nil
+    ) {
       self.model = model
       self.voice = voice
       self.instructions = instructions
@@ -68,6 +71,54 @@ public final class AIVoiceSession: @unchecked Sendable {
   /// The voice model changed (or tried to change) the selection with `select_meshes`.
   public var onSelection: ((AIVoiceSelection) -> Void)?
   public var onError: ((String) -> Void)?
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  /// Optional capability policy override (`nil` falls back to `editor.capabilities`).
+  public var capabilities: ThreeLiveCapabilities? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _capabilities
+    }
+    set {
+      lock.lock()
+      _capabilities = newValue
+      lock.unlock()
+      capabilityGuard.reset()
+    }
+  }
+  /// Optional callback notified whenever a voice capability check is denied.
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _onCapabilityDenied
+    }
+    set {
+      lock.lock()
+      _onCapabilityDenied = newValue
+      lock.unlock()
+    }
+  }
+
+  private let capabilityGuard = CapabilityGuard()
+
+  private func checkVoiceCapability(
+    _ capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = nil,
+    dedup: Bool = false
+  ) -> Bool {
+    let policy = capabilities ?? editor.capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    return capabilityGuard.check(
+      policy: policy,
+      capability: capability,
+      feature: feature,
+      url: url,
+      dedup: dedup,
+      onDenied: onCapabilityDenied ?? editor.onCapabilityDenied
+    )
+  }
 
   private let editor: AIEditor
   private let transport: GeminiLiveTransport
@@ -91,7 +142,8 @@ public final class AIVoiceSession: @unchecked Sendable {
     sink: PcmAudioSink? = nil, options: Options = Options(), core: AICore = NativeAICore.shared
   ) throws {
     guard provider == "ai-realtime" || provider == "gemini-live" else {
-      throw AIEditError("AIVoiceSession: unknown provider '\(provider)' (use ai-realtime or gemini-live).")
+      throw AIEditError(
+        "AIVoiceSession: unknown provider '\(provider)' (use ai-realtime or gemini-live).")
     }
     self.editor = editor
     self.transport = transport
@@ -116,7 +168,15 @@ public final class AIVoiceSession: @unchecked Sendable {
 
   /// Sends the session setup and returns the microphone sample rate to stream at.
   public func start() async throws -> Int {
-    var req: [String: Any] = ["op": "voice_setup", "provider": provider, "instructions": options.instructions]
+    let endpointURL = (transport as? URLSessionLiveTransport)?.endpointURLString
+    guard checkVoiceCapability(.ai, feature: "aiVoice", url: endpointURL) else {
+      transport.close()
+      setState(.error)
+      throw AIEditError("AIVoiceSession: capability 'ai' or 'network' denied.")
+    }
+    var req: [String: Any] = [
+      "op": "voice_setup", "provider": provider, "instructions": options.instructions,
+    ]
     if let m = options.model { req["model"] = m }
     if let v = options.voice { req["voice"] = v }
     if let s = options.session { req["session"] = s }
@@ -150,10 +210,13 @@ public final class AIVoiceSession: @unchecked Sendable {
   /// Streams one microphone chunk (16-bit little-endian mono PCM at the rate `start()` returned).
   public func sendAudio(_ pcm16le: Data) {
     guard !isClosed, !pcm16le.isEmpty else { return }
+    guard checkVoiceCapability(.microphone, feature: "aiVoiceAudio", dedup: true) else { return }
     let b64 = pcm16le.base64EncodedString()
     // Built locally (not through the core) so audio never waits on the native call.
     if provider == "gemini-live" {
-      transport.send(["realtimeInput": ["audio": ["mimeType": "audio/pcm;rate=16000", "data": b64]]])
+      transport.send([
+        "realtimeInput": ["audio": ["mimeType": "audio/pcm;rate=16000", "data": b64]]
+      ])
     } else {
       transport.send(["type": "input_audio_buffer.append", "audio": b64])
     }
@@ -163,7 +226,13 @@ public final class AIVoiceSession: @unchecked Sendable {
   public func sendText(_ text: String) async {
     let t = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maxText))
     guard !t.isEmpty, !isClosed else { return }
-    sendAll((try? await core.call(["op": "voice_text", "provider": provider, "text": t, "respond": true]))?["messages"])
+    let endpointURL = (transport as? URLSessionLiveTransport)?.endpointURLString
+    guard checkVoiceCapability(.ai, feature: "aiVoice", url: endpointURL, dedup: true) else {
+      return
+    }
+    sendAll(
+      (try? await core.call(["op": "voice_text", "provider": provider, "text": t, "respond": true]))?[
+        "messages"])
   }
 
   /// Ends the session. Idempotent.
@@ -191,7 +260,10 @@ public final class AIVoiceSession: @unchecked Sendable {
 
   private func sendContext(_ text: String) async {
     guard !isClosed else { return }
-    sendAll((try? await core.call(["op": "voice_text", "provider": provider, "text": text, "respond": false]))?["messages"])
+    sendAll(
+      (try? await core.call([
+        "op": "voice_text", "provider": provider, "text": text, "respond": false,
+      ]))?["messages"])
   }
 
   private func sendAll(_ messages: Any?) {
@@ -214,7 +286,11 @@ public final class AIVoiceSession: @unchecked Sendable {
 
   func handle(_ message: [String: Any]) async {
     guard !isClosed else { return }
-    guard let parsed = try? await core.call(["op": "voice_parse", "provider": provider, "message": message]) else { return }
+    guard
+      let parsed = try? await core.call([
+        "op": "voice_parse", "provider": provider, "message": message,
+      ])
+    else { return }
     var calls = 0
     for ev in parsed["events"] as? [[String: Any]] ?? [] {
       switch ev["type"] as? String {
@@ -232,7 +308,11 @@ public final class AIVoiceSession: @unchecked Sendable {
         var text = speaker == "user" ? userText : modelText
         text = String((isFinal ? fragment : text + fragment).suffix(Self.maxText))
         onTranscript?(speaker, text, isFinal)
-        if speaker == "user" { userText = isFinal ? "" : text } else { modelText = isFinal ? "" : text }
+        if speaker == "user" {
+          userText = isFinal ? "" : text
+        } else {
+          modelText = isFinal ? "" : text
+        }
       case "turnComplete":
         if !userText.isEmpty {
           onTranscript?("user", userText, true)
@@ -264,7 +344,8 @@ public final class AIVoiceSession: @unchecked Sendable {
     switch name {
     case "edit_scene":
       let instruction = String(
-        (args["instruction"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.maxText))
+        (args["instruction"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+          .prefix(Self.maxText))
       if instruction.isEmpty {
         output = ["applied": false, "error": "instruction is empty"]
       } else {
@@ -272,7 +353,8 @@ public final class AIVoiceSession: @unchecked Sendable {
         let result = await editor.editScene(instruction)
         onEdit?(instruction, result)
         setState(.thinking)
-        output = result.applied
+        output =
+          result.applied
           ? ["applied": true, "repairs": result.repairs]
           : ["applied": false, "error": result.error ?? "edit rejected"]
       }
@@ -288,7 +370,10 @@ public final class AIVoiceSession: @unchecked Sendable {
         ? await editor.selectNames(names, mode: mode)
         : await editor.selectByVoice(args["query"] as? String ?? "", mode: mode)
       onSelection?(sel)
-      output = ["changed": sel.applied, "selected": Array(sel.meshes.prefix(AIEditor.maxSelection)), "say": sel.say]
+      output = [
+        "changed": sel.applied, "selected": Array(sel.meshes.prefix(AIEditor.maxSelection)),
+        "say": sel.say,
+      ]
       if !sel.applied {
         output["question"] = sel.say
         output["candidates"] = sel.candidates
@@ -298,6 +383,8 @@ public final class AIVoiceSession: @unchecked Sendable {
     }
     guard !isClosed else { return }
     sendAll(
-      (try? await core.call(["op": "voice_tool_result", "provider": provider, "id": id, "name": name, "output": output]))?["messages"])
+      (try? await core.call([
+        "op": "voice_tool_result", "provider": provider, "id": id, "name": name, "output": output,
+      ]))?["messages"])
   }
 }

@@ -150,13 +150,24 @@ public enum ThreeCompiler {
   ///
   /// - Parameter script: The Three.js scene script to compile.
   /// - Returns: A `Data` instance containing the binary `.glb` wire bytes.
-  public static func compile(_ script: String) async throws -> Data {
-    try await offloadFromCooperativePool { try compileSync(script) }
+  public static func compile(
+    _ script: String,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: (@Sendable (CapabilityDeniedEvent) -> Void)? = nil
+  ) async throws -> Data {
+    try requireScriptsCapability(capabilities, onCapabilityDenied: onCapabilityDenied)
+    return try await offloadFromCooperativePool {
+      try compileSync(script, capabilities: .default)
+    }
   }
 
   /// Convenience alias for `compile(_:)` matching `compileUSDZ(_:)`.
-  public static func compileGLB(_ script: String) async throws -> Data {
-    try await compile(script)
+  public static func compileGLB(
+    _ script: String,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: (@Sendable (CapabilityDeniedEvent) -> Void)? = nil
+  ) async throws -> Data {
+    try await compile(script, capabilities: capabilities, onCapabilityDenied: onCapabilityDenied)
   }
 
   /// Compiles a Three.js scene script into binary USDZ Data with ZERO memory copies.
@@ -166,8 +177,15 @@ public enum ThreeCompiler {
   ///
   /// - Parameter script: The Three.js scene script to compile.
   /// - Returns: A `Data` instance containing the 64-byte aligned binary `.usdz` archive.
-  public static func compileUSDZ(_ script: String) async throws -> Data {
-    try await offloadFromCooperativePool { try compileUSDZSync(script) }
+  public static func compileUSDZ(
+    _ script: String,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: (@Sendable (CapabilityDeniedEvent) -> Void)? = nil
+  ) async throws -> Data {
+    try requireScriptsCapability(capabilities, onCapabilityDenied: onCapabilityDenied)
+    return try await offloadFromCooperativePool {
+      try compileUSDZSync(script, capabilities: .default)
+    }
   }
 
   /// Transcodes binary GLB Data directly into binary USDZ Data with ZERO memory copies.
@@ -187,7 +205,12 @@ public enum ThreeCompiler {
   ///
   /// - Parameter script: The Three.js scene script to compile.
   /// - Returns: A `Data` instance containing the binary `.glb` wire bytes.
-  public static func compileSync(_ script: String) throws -> Data {
+  public static func compileSync(
+    _ script: String,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
+  ) throws -> Data {
+    try requireScriptsCapability(capabilities, onCapabilityDenied: onCapabilityDenied)
     let cScript = try nullTerminatedUTF8(script)
     return try CompilerWorkerThread.shared.performSync {
       let result = cScript.withUnsafeBufferPointer { ptr in
@@ -198,21 +221,41 @@ public enum ThreeCompiler {
   }
 
   /// Convenience alias for `compileSync(_:)` matching `compileUSDZSync(_:)`.
-  public static func compileGLBSync(_ script: String) throws -> Data {
-    try compileSync(script)
+  public static func compileGLBSync(
+    _ script: String,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
+  ) throws -> Data {
+    try compileSync(script, capabilities: capabilities, onCapabilityDenied: onCapabilityDenied)
   }
 
   /// Synchronous USDZ compilation entry point. Safe to call from background threads.
   ///
   /// - Parameter script: The Three.js scene script to compile.
   /// - Returns: A `Data` instance containing the 64-byte aligned binary `.usdz` archive.
-  public static func compileUSDZSync(_ script: String) throws -> Data {
+  public static func compileUSDZSync(
+    _ script: String,
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
+  ) throws -> Data {
+    try requireScriptsCapability(capabilities, onCapabilityDenied: onCapabilityDenied)
     let cScript = try nullTerminatedUTF8(script)
     return try CompilerWorkerThread.shared.performSync {
       let result = cScript.withUnsafeBufferPointer { ptr in
         three_live_compile_usdz(ptr.baseAddress)
       }
       return try takeOwnership(of: result, operation: "compileUSDZ")
+    }
+  }
+
+  private static func requireScriptsCapability(
+    _ capabilities: ThreeLiveCapabilities?,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  ) throws {
+    let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    guard policy.check(.scripts, feature: "compile", onDenied: onCapabilityDenied) else {
+      throw ThreeCompilerError.compilationFailed(
+        "Capability 'scripts' is disabled in ThreeLiveCapabilities.")
     }
   }
 

@@ -24,13 +24,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * An on-device object detector (for example the optional `three-live-detect-mlkit` module). It
- * receives a rendered (or camera) frame and reports 2D boxes in the `detections` format:
- * `[ymin, xmin, ymax, xmax]`, normalized 0..1 (or 0..1000), top-left origin.
+ * receives a rendered (or camera) frame and reports 2D boxes in the `detections` format: `[ymin,
+ * xmin, ymax, xmax]`, normalized 0..1 (or 0..1000), top-left origin.
  */
 fun interface ThreeLiveObjectDetector {
   /**
-   * Detects objects in [frame] (JPEG plus the camera it was rendered with). Calls [callback] exactly
-   * once, on any thread, with an empty list when nothing was found or detection failed.
+   * Detects objects in [frame] (JPEG plus the camera it was rendered with). Calls [callback]
+   * exactly once, on any thread, with an empty list when nothing was found or detection failed.
    */
   fun detect(frame: CapturedFrame, callback: (List<ThreeLiveDetections.Box>) -> Unit)
 }
@@ -66,6 +66,25 @@ constructor(
   /** When `true`, no frames are captured. */
   @Volatile var paused: Boolean = false
 
+  private val capabilityGuard = CapabilityGuard()
+
+  /** Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]). */
+  @Volatile
+  var capabilities: ThreeLiveCapabilities? = null
+    set(value) {
+      field = value
+      capabilityGuard.reset()
+    }
+
+  /** Set to `true` when [detector] forwards frames to an AI model endpoint. */
+  @Volatile var requiresAi: Boolean = false
+
+  /** Optional AI endpoint URL checked against `network` scheme/origin policy when [requiresAi]. */
+  @Volatile var endpointUrl: String? = null
+
+  /** Optional listener notified when object detection is blocked by capability policy. */
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null
+
   private val inFlight = AtomicBoolean(false)
   private val lock = Any()
   private var scheduler: ScheduledExecutorService? = null
@@ -78,9 +97,19 @@ constructor(
       if (scheduler != null) return
       stopped = false
       val interval = intervalMs.coerceIn(MIN_INTERVAL_MS, MAX_INTERVAL_MS)
-      val s = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "three-live-detect").apply { isDaemon = true } }
+      val s = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "three-live-detect").apply { isDaemon = true }
+      }
       scheduler = s
-      task = s.scheduleWithFixedDelay({ val unused = tick() }, interval, interval, TimeUnit.MILLISECONDS)
+      task =
+        s.scheduleWithFixedDelay(
+          {
+            val unused = tick()
+          },
+          interval,
+          interval,
+          TimeUnit.MILLISECONDS,
+        )
     }
   }
 
@@ -97,7 +126,33 @@ constructor(
 
   /** Runs one capture → detect → locate cycle. Returns `false` when skipped. */
   fun tick(): Boolean {
-    if (paused || !inFlight.compareAndSet(false, true)) return false
+    if (paused) return false
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    if (
+      !capabilityGuard.check(
+        policy = policy,
+        capability = ThreeLiveCapability.CAMERA,
+        feature = "objectDetection",
+        dedup = true,
+        listener = onCapabilityDenied,
+      )
+    ) {
+      return false
+    }
+    if (
+      requiresAi &&
+        !capabilityGuard.check(
+          policy = policy,
+          capability = ThreeLiveCapability.AI,
+          feature = "objectDetection",
+          url = endpointUrl,
+          dedup = true,
+          listener = onCapabilityDenied,
+        )
+    ) {
+      return false
+    }
+    if (!inFlight.compareAndSet(false, true)) return false
     try {
       renderer.captureFrame(maxEdge.coerceIn(64, 4096)) { frame ->
         if (frame == null) {

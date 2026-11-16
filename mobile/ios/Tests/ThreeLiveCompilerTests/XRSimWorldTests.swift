@@ -362,15 +362,14 @@ final class XRSimWorldTests: XCTestCase {
       .deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent("testdata/golden")
     var candidates = [spm]
-    if let src = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
-      let base = URL(fileURLWithPath: src)
-      for p in [
-        "google3/experimental/users/binghamj/three_live/testdata/golden",
-        "_main/experimental/users/binghamj/three_live/testdata/golden",
-        "experimental/users/binghamj/three_live/testdata/golden",
-      ] {
-        candidates.append(base.appendingPathComponent(p))
+    if let envDir = ProcessInfo.processInfo.environment["THREE_LIVE_GOLDEN_DIR"] {
+      if let src = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
+        candidates.append(URL(fileURLWithPath: src).appendingPathComponent(envDir))
+        candidates.append(
+          URL(fileURLWithPath: src).appendingPathComponent("_main").appendingPathComponent(envDir)
+        )
       }
+      candidates.append(URL(fileURLWithPath: envDir))
     }
     if let res = Bundle(for: Self.self).resourceURL {
       candidates.append(res.appendingPathComponent("testdata/golden"))

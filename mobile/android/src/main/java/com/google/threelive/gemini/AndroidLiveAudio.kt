@@ -33,6 +33,9 @@ import android.os.Process
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.google.threelive.CapabilityDeniedListener
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import com.google.threelive.XRHoldToAskTrait
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -104,7 +107,12 @@ class AudioTrackPcmSink : PcmAudioSink {
   private fun trackFor(rate: Int): AudioTrack? {
     if (track != null && trackRate == rate) return track
     track?.release()
-    val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+    val min =
+      AudioTrack.getMinBufferSize(
+        rate,
+        AudioFormat.CHANNEL_OUT_MONO,
+        AudioFormat.ENCODING_PCM_16BIT,
+      )
     if (min <= 0) return null
     val t =
       AudioTrack.Builder()
@@ -139,12 +147,21 @@ class AudioTrackPcmSink : PcmAudioSink {
  * Streams 16 kHz mono PCM16 microphone audio to an [XRGeminiLiveController]. Requires the
  * `RECORD_AUDIO` runtime permission (checked in [start]); declare it in the app manifest.
  */
-class MicrophoneStreamer(
-  private val sampleRate: Int,
-  private val onChunk: (ByteArray) -> Unit,
-) {
+class MicrophoneStreamer(private val sampleRate: Int, private val onChunk: (ByteArray) -> Unit) {
+  /** Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]). */
+  @Volatile var capabilities: ThreeLiveCapabilities? = null
+
+  /** Optional listener notified when microphone capture is refused by capability policy. */
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null
+
+  private var fallbackController: XRGeminiLiveController? = null
+
   /** Streams 16 kHz audio to a Gemini Live [controller]. */
-  constructor(controller: XRGeminiLiveController) : this(RATE, { chunk -> controller.sendAudioChunk(chunk, RATE) })
+  constructor(
+    controller: XRGeminiLiveController
+  ) : this(RATE, { chunk -> controller.sendAudioChunk(chunk, RATE) }) {
+    this.fallbackController = controller
+  }
 
   private val chunkBytes = sampleRate / 10 * 2
   private val running = AtomicBoolean(false)
@@ -153,18 +170,39 @@ class MicrophoneStreamer(
   /** Starts capturing. Returns `false` when permission is missing or the mic is unavailable. */
   @SuppressLint("MissingPermission")
   fun start(context: Context): Boolean {
-    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+    val policy = capabilities ?: fallbackController?.capabilities ?: ThreeLiveCapabilities.default
+    val deniedListener = onCapabilityDenied ?: fallbackController?.onCapabilityDenied
+    if (
+      !policy.check(ThreeLiveCapability.MICROPHONE, "microphoneStreamer", listener = deniedListener)
+    ) {
+      return false
+    }
+    if (
+      context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+        PackageManager.PERMISSION_GRANTED
+    ) {
       return false
     }
     if (!running.compareAndSet(false, true)) return true
-    val min = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+    val min =
+      AudioRecord.getMinBufferSize(
+        sampleRate,
+        AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT,
+      )
     if (min <= 0) {
       running.set(false)
       return false
     }
     val record =
       try {
-        AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, chunkBytes * 2))
+        AudioRecord(
+          MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+          sampleRate,
+          AudioFormat.CHANNEL_IN_MONO,
+          AudioFormat.ENCODING_PCM_16BIT,
+          maxOf(min, chunkBytes * 2),
+        )
       } catch (e: IllegalArgumentException) {
         running.set(false)
         return false
@@ -222,12 +260,20 @@ class HoldToAskController(
   private val context: Context,
   private val controller: XRGeminiLiveController,
 ) {
-  /** Reports each finished query: `{mesh, transcript, prompt}` (the web `xr-hold-to-ask` detail). */
+  /**
+   * Reports each finished query: `{mesh, transcript, prompt}` (the web `xr-hold-to-ask` detail).
+   */
   fun interface Listener {
     fun onHoldToAsk(mesh: String, transcript: String, prompt: String)
   }
 
   var listener: Listener? = null
+
+  /** Optional capability policy override (`null` falls back to [controller.capabilities]). */
+  var capabilities: ThreeLiveCapabilities? = null
+
+  /** Optional listener notified when a hold-to-ask capability check is denied. */
+  var onCapabilityDenied: CapabilityDeniedListener? = null
 
   private var recognizer: SpeechRecognizer? = null
   private var mesh: String = ""
@@ -242,14 +288,30 @@ class HoldToAskController(
   /** Starts listening for [meshName]. */
   fun begin(meshName: String?, trait: XRHoldToAskTrait) {
     cancel()
+    val policy = capabilities ?: controller.capabilities ?: ThreeLiveCapabilities.default
+    val deniedListener = onCapabilityDenied ?: controller.onCapabilityDenied
+    if (
+      !policy.check(
+        ThreeLiveCapability.AI,
+        "holdToAsk",
+        url = controller.activeEndpointUrl(),
+        listener = deniedListener,
+      )
+    ) {
+      return
+    }
     active = true
     mesh = meshName ?: ""
     options = trait
     transcript = ""
     finalResult = false
+    val micAllowed =
+      policy.check(ThreeLiveCapability.MICROPHONE, "holdToAsk", listener = deniedListener)
     val canListen =
-      SpeechRecognizer.isRecognitionAvailable(context) &&
-        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+      micAllowed &&
+        SpeechRecognizer.isRecognitionAvailable(context) &&
+        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+          PackageManager.PERMISSION_GRANTED
     if (!canListen) return
     val r = SpeechRecognizer.createSpeechRecognizer(context)
     r.setRecognitionListener(
@@ -325,7 +387,9 @@ class HoldToAskController(
   }
 
   private fun bestResult(b: Bundle?): String? =
-    b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }
+    b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf {
+      it.isNotBlank()
+    }
 
   private companion object {
     const val RESULT_TIMEOUT_MS = 2_500L

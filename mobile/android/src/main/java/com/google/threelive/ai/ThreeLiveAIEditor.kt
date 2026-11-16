@@ -16,8 +16,11 @@
 
 package com.google.threelive.ai
 
+import com.google.threelive.CapabilityDeniedListener
 import com.google.threelive.MiniJson
 import com.google.threelive.ThreeCompiler
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import com.google.threelive.WorldUnderstanding
 import com.google.threelive.gemini.LiveBase64
 import com.google.threelive.gemini.RendererFrameSource
@@ -60,7 +63,15 @@ constructor(
     it.openConnection() as HttpURLConnection
   },
   private val reasoningEffort: String? = null,
+  @Volatile var capabilities: ThreeLiveCapabilities? = null,
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null,
 ) : AIProvider {
+
+  internal val endpointUrl: String
+    get() = endpoint
+
+  @Volatile internal var fallbackCapabilities: (() -> ThreeLiveCapabilities?)? = null
+  @Volatile internal var fallbackOnDenied: (() -> CapabilityDeniedListener?)? = null
 
   init {
     require(isAllowedEndpoint(endpoint)) {
@@ -70,6 +81,13 @@ constructor(
 
   override suspend fun complete(messages: List<AIChatMessage>): String =
     withContext(Dispatchers.IO) {
+      val policy = capabilities ?: fallbackCapabilities?.invoke() ?: ThreeLiveCapabilities.default
+      val deniedListener = onCapabilityDenied ?: fallbackOnDenied?.invoke()
+      if (
+        !policy.check(ThreeLiveCapability.AI, "aiChat", url = endpoint, listener = deniedListener)
+      ) {
+        throw AIEditException("ai-chat: capability 'ai' or 'network' denied.")
+      }
       val serializedMessages = messages.map { msg ->
         val msgContent: Any =
           if (msg.imageUrls.isEmpty()) {
@@ -412,6 +430,36 @@ constructor(
 
   @Volatile var listener: Listener? = null
 
+  /** Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]). */
+  @Volatile var capabilities: ThreeLiveCapabilities? = null
+
+  /**
+   * Optional listener notified whenever this editor blocks an operation under capability policy.
+   */
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null
+
+  init {
+    bindProviderFallback(provider)
+  }
+
+  private fun bindProviderFallback(p: AIProvider) {
+    val chat = p as? AIChatProvider ?: return
+    if (chat.fallbackCapabilities == null) chat.fallbackCapabilities = { this.capabilities }
+    if (chat.fallbackOnDenied == null) chat.fallbackOnDenied = { this.onCapabilityDenied }
+  }
+
+  private fun checkEditorCapability(
+    capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = null,
+  ): Boolean {
+    bindProviderFallback(provider)
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    return policy.check(capability, feature, url = url, listener = onCapabilityDenied)
+  }
+
+  internal fun providerEndpointUrl(): String? = (provider as? AIChatProvider)?.endpointUrl
+
   /** The current scene script (the base for the next edit). */
   @Volatile
   var source: String = initialSource
@@ -439,7 +487,15 @@ constructor(
    * [ThreeLiveAITextures.sceneLoaded]; in [ThreeLiveAITextures.Mode.AUTO] missing textures are
    * generated in the background and the current script is re-applied when they arrive.
    */
-  @Volatile var textures: ThreeLiveAITextures? = null
+  @Volatile
+  var textures: ThreeLiveAITextures? = null
+    set(value) {
+      field = value
+      if (value != null) {
+        if (value.fallbackCapabilities == null) value.fallbackCapabilities = { this.capabilities }
+        if (value.fallbackOnDenied == null) value.fallbackOnDenied = { this.onCapabilityDenied }
+      }
+    }
 
   /** Let [provider] resolve references the local matcher can't (tier 2; default true). */
   @Volatile var selectWithModel: Boolean = true
@@ -541,7 +597,8 @@ constructor(
       selectWithModel &&
         q.isNotBlank() &&
         match["confidence"] == "none" &&
-        (reason == "relation" || reason == "no_match")
+        (reason == "relation" || reason == "no_match") &&
+        checkEditorCapability(ThreeLiveCapability.AI, "selectByVoice", providerEndpointUrl())
     ) {
       try {
         val built =
@@ -725,6 +782,18 @@ constructor(
     val base = source
     val repairsAllowed = maxRepairs.coerceIn(0, 3)
     listener?.onEditStart(text, selection.firstOrNull())
+    if (!checkEditorCapability(ThreeLiveCapability.SCRIPTS, "editScene")) {
+      return finish(
+        text,
+        EditResult(false, "", 0, emptyList(), "Capability 'scripts' is disabled."),
+      )
+    }
+    if (!checkEditorCapability(ThreeLiveCapability.AI, "editScene", providerEndpointUrl())) {
+      return finish(
+        text,
+        EditResult(false, "", 0, emptyList(), "Capability 'ai' or 'network' is disabled."),
+      )
+    }
     var code = ""
     var error: String? = null
     var warnings = emptyList<String>()
@@ -815,6 +884,39 @@ constructor(
     val base = source
     val repairsAllowed = maxRepairs.coerceIn(0, 3)
     listener?.onImageStart(cleanPrompt)
+    if (!checkEditorCapability(ThreeLiveCapability.SCRIPTS, "compileFromImage")) {
+      return finishImage(
+        cleanPrompt,
+        EditResult(false, "", 0, emptyList(), "Capability 'scripts' is disabled."),
+      )
+    }
+    val trimmedImageUrl = imageUrl.trim()
+    if (
+      trimmedImageUrl.isNotEmpty() &&
+        !ThreeLiveCapabilities.isNonNetworkUrl(trimmedImageUrl) &&
+        !checkEditorCapability(
+          ThreeLiveCapability.REMOTE_CONTENT,
+          "compileFromImage",
+          trimmedImageUrl,
+        )
+    ) {
+      return finishImage(
+        cleanPrompt,
+        EditResult(
+          false,
+          "",
+          0,
+          emptyList(),
+          "Capability 'remote_content' or 'network' is disabled.",
+        ),
+      )
+    }
+    if (!checkEditorCapability(ThreeLiveCapability.AI, "compileFromImage", providerEndpointUrl())) {
+      return finishImage(
+        cleanPrompt,
+        EditResult(false, "", 0, emptyList(), "Capability 'ai' or 'network' is disabled."),
+      )
+    }
     var code = ""
     var error: String? = null
     var warnings = emptyList<String>()
@@ -960,6 +1062,8 @@ constructor(
 
   /** Restores the script from before the last applied edit. Returns false when nothing to undo. */
   suspend fun undo(): Boolean {
+    if (synchronized(lock) { history.isEmpty() }) return false
+    if (!checkEditorCapability(ThreeLiveCapability.SCRIPTS, "undo")) return false
     val prev = synchronized(lock) { history.removeLastOrNull() } ?: return false
     applyScene(prev)
     synchronized(lock) { source = prev }

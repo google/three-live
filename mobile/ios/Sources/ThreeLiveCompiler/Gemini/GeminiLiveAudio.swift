@@ -36,7 +36,9 @@ import Foundation
       queue.async { [self] in
         let frames = pcm16le.count / 2
         guard frames > 0,
-          let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false),
+          let fmt = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1,
+            interleaved: false),
           let buffer = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
           let out = buffer.floatChannelData?[0]
         else { return }
@@ -76,6 +78,18 @@ import Foundation
     }
   }
 
+  /// Errors thrown by `MicrophoneStreamer`.
+  public enum MicrophoneStreamerError: Error, LocalizedError, Equatable {
+    case capabilityDenied(String)
+
+    public var errorDescription: String? {
+      switch self {
+      case .capabilityDenied(let message):
+        return message
+      }
+    }
+  }
+
   /// Streams 16 kHz mono PCM16 microphone audio to an `XRGeminiLiveController`.
   public final class MicrophoneStreamer: @unchecked Sendable {
     private let sampleRate: Double
@@ -83,25 +97,72 @@ import Foundation
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var running = false
+    private let capLock = NSLock()
+    private var _capabilities: ThreeLiveCapabilities?
+    private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+    private weak var fallbackController: XRGeminiLiveController?
+
+    public var capabilities: ThreeLiveCapabilities? {
+      get {
+        capLock.lock()
+        defer { capLock.unlock() }
+        return _capabilities
+      }
+      set {
+        capLock.lock()
+        _capabilities = newValue
+        capLock.unlock()
+      }
+    }
+
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+      get {
+        capLock.lock()
+        defer { capLock.unlock() }
+        return _onCapabilityDenied
+      }
+      set {
+        capLock.lock()
+        _onCapabilityDenied = newValue
+        capLock.unlock()
+      }
+    }
 
     /// Streams 16 kHz audio to a Gemini Live `controller`.
     public convenience init(controller: XRGeminiLiveController) {
-      self.init(sampleRate: 16_000) { controller.sendAudioChunk($0, sampleRate: 16_000) }
+      self.init(sampleRate: 16_000) {
+        controller.sendAudioChunk($0, sampleRate: 16_000)
+      }
+      self.fallbackController = controller
     }
 
     /// Streams mono PCM16 chunks at `sampleRate` to `onChunk` (e.g. `AIVoiceSession.sendAudio`).
-    public init(sampleRate: Int, onChunk: @escaping (Data) -> Void) {
+    public init(
+      sampleRate: Int,
+      capabilities: ThreeLiveCapabilities? = nil,
+      onChunk: @escaping (Data) -> Void
+    ) {
       self.sampleRate = Double(sampleRate)
+      self._capabilities = capabilities
       self.onChunk = onChunk
     }
 
     /// Starts capturing (the system prompts for microphone permission on first use).
     public func start() throws {
       guard !running else { return }
+      let policy =
+        capabilities ?? fallbackController?.capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      let deniedListener = onCapabilityDenied ?? fallbackController?.onCapabilityDenied
+      guard policy.check(.microphone, feature: "microphoneStreamer", onDenied: deniedListener)
+      else {
+        throw MicrophoneStreamerError.capabilityDenied(
+          "Capability 'microphone' is disabled in ThreeLiveCapabilities.")
+      }
       let input = engine.inputNode
       let inFormat = input.outputFormat(forBus: 0)
       guard
-        let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true),
+        let outFormat = AVAudioFormat(
+          commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true),
         let conv = AVAudioConverter(from: inFormat, to: outFormat)
       else { return }
       converter = conv
@@ -110,7 +171,9 @@ import Foundation
       input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { buffer, _ in
         let ratio = outRate / inFormat.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 16)
-        guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
+        guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
+          return
+        }
         var fed = false
         var error: NSError?
         conv.convert(to: out, error: &error) { _, status in
@@ -149,6 +212,10 @@ import Foundation
   public final class HoldToAskController {
     /// `{mesh, transcript, prompt}` (the web `xr-hold-to-ask` detail).
     public var onHoldToAsk: ((_ mesh: String, _ transcript: String, _ prompt: String) -> Void)?
+    /// Optional capability policy override (`nil` falls back to `controller.capabilities`).
+    public var capabilities: ThreeLiveCapabilities?
+    /// Optional callback notified whenever a hold-to-ask capability check is denied.
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
 
     private let controller: XRGeminiLiveController
     private let recognizer = SFSpeechRecognizer()
@@ -158,6 +225,7 @@ import Foundation
     private var mesh = ""
     private var options = XRLiveHoldToAsk()
     private var transcript = ""
+    private var active = false
 
     public init(controller: XRGeminiLiveController) {
       self.controller = controller
@@ -166,16 +234,30 @@ import Foundation
     /// Starts listening for `meshName`.
     public func begin(meshName: String?, options: XRLiveHoldToAsk) {
       cancel()
+      let policy = capabilities ?? controller.capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      let deniedListener = onCapabilityDenied ?? controller.onCapabilityDenied
+      guard
+        policy.check(
+          .ai,
+          feature: "holdToAsk",
+          url: controller.activeEndpointURL,
+          onDenied: deniedListener
+        )
+      else { return }
+      active = true
       mesh = meshName ?? ""
       self.options = options
       transcript = ""
-      guard SFSpeechRecognizer.authorizationStatus() == .authorized, let recognizer = recognizer,
+      guard policy.check(.microphone, feature: "holdToAsk", onDenied: deniedListener),
+        SFSpeechRecognizer.authorizationStatus() == .authorized,
+        let recognizer = recognizer,
         recognizer.isAvailable
       else { return }
       let req = SFSpeechAudioBufferRecognitionRequest()
       req.shouldReportPartialResults = true
       let input = audioEngine.inputNode
-      input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+      input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) {
+        buffer, _ in
         req.append(buffer)
       }
       audioEngine.prepare()
@@ -192,14 +274,18 @@ import Foundation
 
     /// The press ended: sends the query with whatever was transcribed.
     public func end() {
+      guard active else { return }
+      active = false
       stopAudio()
-      let prompt = XRGeminiLiveController.buildHoldToAskPrompt(meshName: mesh, options: options, transcript: transcript)
+      let prompt = XRGeminiLiveController.buildHoldToAskPrompt(
+        meshName: mesh, options: options, transcript: transcript)
       controller.sendText(prompt)
       onHoldToAsk?(mesh, String(transcript.prefix(XRGeminiLiveController.maxTextChars)), prompt)
     }
 
     /// Abandons the press without sending.
     public func cancel() {
+      active = false
       stopAudio()
       task?.cancel()
       task = nil

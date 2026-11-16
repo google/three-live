@@ -737,6 +737,7 @@ async function testGeminiLive(): Promise<void> {
   const sent: Array<Record<string, unknown>> = [];
   const events: Array<{type: string; detail: unknown}> = [];
   const element = {
+    capabilities: 'ai network camera microphone sensors',
     dispatchEvent(e: Event) {
       events.push({type: e.type, detail: (e as CustomEvent).detail});
       return true;
@@ -2169,6 +2170,7 @@ async function testPersistentAnchors(): Promise<void> {
 
   const restoredEvents: Array<{count: number; source: string}> = [];
   const makeHost = (urlHashEnabled: boolean) => ({
+    capabilities: 'storage',
     hasAttribute: (n: string) =>
       n === 'persistent-anchors' ||
       (urlHashEnabled && n === 'persist-url-hash'),
@@ -2453,14 +2455,13 @@ function testGoldenParity(): void {
   // tslint:disable-next-line:no-require-imports
   const path = require('path');
   const goldenCandidates = [
+    ...(process.env['THREE_LIVE_GOLDEN_DIR']
+      ? [process.env['THREE_LIVE_GOLDEN_DIR']]
+      : []),
     path.resolve(__dirname, '../../../testdata/golden'),
     path.resolve(__dirname, '../../testdata/golden'),
     path.resolve(__dirname, '../testdata/golden'),
     path.resolve(process.cwd(), 'testdata/golden'),
-    path.resolve(
-      process.cwd(),
-      'experimental/users/binghamj/three_live/testdata/golden',
-    ),
   ];
   const goldenDir =
     goldenCandidates.find((d: string) =>
@@ -2847,6 +2848,7 @@ function testSharedRoom(): void {
     const map = new Map<string, Set<EventListener>>();
     const events: Array<{type: string; detail: unknown}> = [];
     const el: Record<string, unknown> = {
+      capabilities: 'network microphone',
       getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
       hasAttribute: (k: string) => k in attrs,
       setAttribute: (k: string, v: string) => {
@@ -3243,6 +3245,7 @@ function testSharedRoom(): void {
 function auditHost(attrs: Record<string, string>): any {
   const events: Array<{type: string; detail: any}> = [];
   return {
+    capabilities: 'storage network microphone remote_content sensors',
     events,
     hasAttribute: (k: string) => k in attrs,
     getAttribute: (k: string) => (k in attrs ? attrs[k] : null),

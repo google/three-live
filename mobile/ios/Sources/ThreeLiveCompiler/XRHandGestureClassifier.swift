@@ -392,12 +392,27 @@ public final class XRMediaPipeHandJointSource: XRHandJointSource, @unchecked Sen
   /// try await hands.start()
   /// ```
   @available(visionOS 1.0, *)
+  /// Errors thrown when starting visionOS hand tracking.
+  public enum XRHandTrackingError: Error, LocalizedError {
+    case capabilityDenied(String)
+
+    public var errorDescription: String? {
+      switch self {
+      case .capabilityDenied(let message): return message
+      }
+    }
+  }
+
   @MainActor
   public final class XRHandTrackingSource: XRHandJointSource {
     /// Called when a hand's gesture changes to something other than `.none`.
     public var onGesture: ((XRHandGestureEvent) -> Void)?
     /// Called for every tracked hand update with world-space joint positions.
     public var onJoints: ((XRHand, XRHandJointMap) -> Void)?
+    /// Optional capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+    public var capabilities: ThreeLiveCapabilities?
+    /// Optional callback notified whenever hand tracking is refused by capability policy.
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
     /// Latest world-space wrist pose per tracked hand.
     public private(set) var handPoses: [XRHand: XRPose] = [:]
 
@@ -466,6 +481,11 @@ public final class XRMediaPipeHandJointSource: XRHandJointSource, @unchecked Sen
     /// Starts hand tracking (prompts for authorization on first use).
     public func start() async throws {
       guard updatesTask == nil else { return }
+      let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      guard policy.check(.sensors, feature: "handTracking", onDenied: onCapabilityDenied) else {
+        throw XRHandTrackingError.capabilityDenied(
+          "Capability 'sensors' is disabled in ThreeLiveCapabilities.")
+      }
       try await arSession.run([provider])
       let updates = provider.anchorUpdates
       updatesTask = Task { @MainActor [weak self] in

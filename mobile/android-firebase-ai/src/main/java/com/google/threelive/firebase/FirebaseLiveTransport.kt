@@ -24,7 +24,10 @@ import com.google.firebase.ai.type.LiveServerMessage
 import com.google.firebase.ai.type.LiveSession
 import com.google.firebase.ai.type.Part
 import com.google.firebase.ai.type.TextPart
+import com.google.threelive.CapabilityDeniedListener
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import com.google.threelive.gemini.GeminiLiveTransport
 import com.google.threelive.gemini.LiveBase64
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,9 +44,9 @@ import kotlinx.coroutines.launch
  *
  * Lets apps that already use Firebase (App Check, Firebase Auth, Vertex AI backend) drive the same
  * `XRGeminiLiveController` as the default plain Live API transport. Server messages are converted
- * back to Live API JSON shapes, and client `clientContent` / `realtimeInput` messages are mapped onto
- * the session's text, audio and video methods. Model, voice and system instruction come from the
- * [LiveGenerativeModel], so `setup` messages are ignored.
+ * back to Live API JSON shapes, and client `clientContent` / `realtimeInput` messages are mapped
+ * onto the session's text, audio and video methods. Model, voice and system instruction come from
+ * the [LiveGenerativeModel], so `setup` messages are ignored.
  *
  * ```kotlin
  * val model = Firebase.ai(backend = GenerativeBackend.googleAI()).liveModel("gemini-live-2.5-flash", ...)
@@ -109,7 +112,8 @@ class FirebaseLiveTransport(private val session: LiveSession) : GeminiLiveTransp
       if (text.isNotEmpty()) session.send(text)
       return
     }
-    val chunks = MiniJson.asList(MiniJson.asMap(message["realtimeInput"])?.get("mediaChunks")) ?: return
+    val chunks =
+      MiniJson.asList(MiniJson.asMap(message["realtimeInput"])?.get("mediaChunks")) ?: return
     for (chunk in chunks) {
       val c = MiniJson.asMap(chunk) ?: continue
       val mime = c["mimeType"] as? String ?: continue
@@ -129,7 +133,18 @@ class FirebaseLiveTransport(private val session: LiveSession) : GeminiLiveTransp
   companion object {
     /** Connects [model] and wraps the resulting session. */
     @JvmStatic
-    suspend fun connect(model: LiveGenerativeModel): FirebaseLiveTransport = FirebaseLiveTransport(model.connect())
+    @JvmOverloads
+    suspend fun connect(
+      model: LiveGenerativeModel,
+      capabilities: ThreeLiveCapabilities? = null,
+      onCapabilityDenied: CapabilityDeniedListener? = null,
+    ): FirebaseLiveTransport {
+      val policy = capabilities ?: ThreeLiveCapabilities.default
+      if (!policy.check(ThreeLiveCapability.AI, "firebaseLive", listener = onCapabilityDenied)) {
+        throw SecurityException("Capability 'ai' or 'network' denied for Firebase Live session.")
+      }
+      return FirebaseLiveTransport(model.connect())
+    }
 
     /** Concatenated text of a `clientContent` message's user turns. */
     @JvmStatic
@@ -176,7 +191,10 @@ class FirebaseLiveTransport(private val session: LiveSession) : GeminiLiveTransp
           is TextPart -> if (!part.isThought) parts.add(mapOf("text" to part.text))
           is InlineDataPart ->
             parts.add(
-              mapOf("inlineData" to mapOf("mimeType" to part.mimeType, "data" to LiveBase64.encode(part.inlineData)))
+              mapOf(
+                "inlineData" to
+                  mapOf("mimeType" to part.mimeType, "data" to LiveBase64.encode(part.inlineData))
+              )
             )
           else -> {}
         }

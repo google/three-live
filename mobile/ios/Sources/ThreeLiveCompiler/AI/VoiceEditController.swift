@@ -34,6 +34,10 @@
     /// The utterance changed (or tried to change) the selection.
     public var onSelection: ((String, AIVoiceSelection) -> Void)?
     public var onError: ((String) -> Void)?
+    /// Optional capability policy override (`nil` falls back to `editor.capabilities`).
+    public var capabilities: ThreeLiveCapabilities?
+    /// Optional callback notified whenever a voice capability check is denied.
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
 
     private let editor: AIEditor
     private let speakResults: Bool
@@ -46,7 +50,8 @@
     private var latest = ""
 
     public init(
-      editor: AIEditor, locale: Locale = .current, speakResults: Bool = true, talkToSelect: Bool = true
+      editor: AIEditor, locale: Locale = .current, speakResults: Bool = true,
+      talkToSelect: Bool = true
     ) {
       self.editor = editor
       self.speakResults = speakResults
@@ -60,6 +65,23 @@
     /// Requests permission if needed and starts listening for one utterance.
     public func start() {
       guard task == nil else { return }
+      let policy = capabilities ?? editor.capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      let deniedListener = onCapabilityDenied ?? editor.onCapabilityDenied
+      guard policy.check(.microphone, feature: "voiceEdit", onDenied: deniedListener) else {
+        onError?("Capability 'microphone' is disabled.")
+        return
+      }
+      guard
+        policy.check(
+          .ai,
+          feature: "voiceEdit",
+          url: editor.providerEndpointURL,
+          onDenied: deniedListener
+        )
+      else {
+        onError?("Capability 'ai' or 'network' is disabled.")
+        return
+      }
       guard let recognizer = recognizer, recognizer.isAvailable else {
         onError?("Speech recognition is not available; use AIVoiceSession instead.")
         return
@@ -124,7 +146,8 @@
 
     private func finish() {
       guard task != nil else { return }
-      let text = String(latest.trimmingCharacters(in: .whitespacesAndNewlines).prefix(AIVoiceSession.maxText))
+      let text = String(
+        latest.trimmingCharacters(in: .whitespacesAndNewlines).prefix(AIVoiceSession.maxText))
       teardown()
       guard !text.isEmpty else {
         report("I didn't catch that.")
@@ -142,7 +165,9 @@
           self.onSelection?(text, selection)
           // Edit right away only when the reference was resolved locally (tier 1) and confidently.
           guard command.kind == "mixed", selection.applied, selection.tier == 1 else {
-            let hint = command.kind == "mixed" && selection.applied ? " Say the change again to apply it." : ""
+            let hint =
+              command.kind == "mixed" && selection.applied
+              ? " Say the change again to apply it." : ""
             if self.speakResults { self.speak(selection.say + hint) }
             return
           }

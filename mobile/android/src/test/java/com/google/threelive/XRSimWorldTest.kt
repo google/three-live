@@ -628,10 +628,10 @@ class XRSimWorldTest {
   @Test
   fun matchesWebParityGoldens() {
     val dir =
-      listOf(
+      listOfNotNull(
+          System.getenv("THREE_LIVE_GOLDEN_DIR")?.let { java.io.File(it) },
           java.io.File("testdata/golden"),
           java.io.File("../../testdata/golden"),
-          java.io.File("experimental/users/binghamj/three_live/testdata/golden"),
         )
         .firstOrNull { java.io.File(it, "sim_scene.json").isFile }
         ?: error("testdata/golden/sim_scene.json not found")
@@ -718,7 +718,8 @@ class XRSimWorldTest {
           "BallBob",
           t = listOf(2.35, 1.5, 2.0),
           cube = 0.15,
-          xr = """{"constraint":{"type":"ball","anchor":[-0.35,0.5,0],"limits":[-25,25],"damping":2}}""",
+          xr =
+            """{"constraint":{"type":"ball","anchor":[-0.35,0.5,0],"limits":[-25,25],"damping":2}}""",
         ),
       )
     val (w, _) = world(json)
@@ -733,9 +734,15 @@ class XRSimWorldTest {
     val ballBob = w.body("BallBob")!!
 
     assertEquals(Math.toRadians(45.0), doorY.yaw, 0.02)
-    assertTrue("X-axis hinge rotates body.rot", Math.abs(flapX.rot[0]) > 0.25 && flapX.rot[3].isFinite())
+    assertTrue(
+      "X-axis hinge rotates body.rot",
+      Math.abs(flapX.rot[0]) > 0.25 && flapX.rot[3].isFinite(),
+    )
     assertEquals(-2.0 + 0.35, slider.pos[0], 0.02)
-    assertTrue("L-stable stiff spring stays finite", stiff.pos.all { it.isFinite() } && Math.abs(stiff.pos[1] - 2.2) < 0.1)
+    assertTrue(
+      "L-stable stiff spring stays finite",
+      stiff.pos.all { it.isFinite() } && Math.abs(stiff.pos[1] - 2.2) < 0.1,
+    )
     assertTrue("TwinA & TwinB pull symmetrically", twinA.pos[0] > -1.85 && twinB.pos[0] < -0.95)
     assertEquals(-2.8, twinA.pos[0] + twinB.pos[0], 0.02)
     assertTrue("BallBob swings inward", ballBob.pos[0] < 2.35 && ballBob.pos[1].isFinite())

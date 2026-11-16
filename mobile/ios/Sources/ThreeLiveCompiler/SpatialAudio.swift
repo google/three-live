@@ -311,12 +311,42 @@ public enum SpatialAudio {
     private let session: XRLiveRuntimeSession
     private var emitters: [Int: EmitterState] = [:]
     private var muted = false
+    private let capabilityGuard = CapabilityGuard()
+    public var capabilities: ThreeLiveCapabilities? {
+      didSet {
+        capabilityGuard.reset()
+        emitters.removeAll()
+        syncFromSession()
+      }
+    }
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
     public var onAudioPlay: ((PlayEvent) -> Void)?
 
-    public init(session: XRLiveRuntimeSession, onAudioPlay: ((PlayEvent) -> Void)? = nil) {
+    public init(
+      session: XRLiveRuntimeSession,
+      capabilities: ThreeLiveCapabilities? = nil,
+      onAudioPlay: ((PlayEvent) -> Void)? = nil
+    ) {
       self.session = session
+      self.capabilities = capabilities
       self.onAudioPlay = onAudioPlay
       syncFromSession()
+    }
+
+    private func canPlayOptions(_ opts: XRLiveAudioEmitter) -> Bool {
+      guard opts.preset == nil,
+        let src = opts.src?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !src.isEmpty
+      else { return true }
+      let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      return capabilityGuard.check(
+        policy: policy,
+        capability: .remoteContent,
+        feature: "spatialAudio",
+        url: src,
+        dedup: true,
+        onDenied: onCapabilityDenied
+      )
     }
 
     /// Discovers or refreshes emitters from `session`.
@@ -350,12 +380,13 @@ public enum SpatialAudio {
             emitterForward: eFwd,
             opts: opts
           )
+          let canAutoplay = opts.autoplay && canPlayOptions(opts)
           emitters[i] = EmitterState(
             nodeIndex: i,
             nodeName: name,
             options: opts,
-            playing: opts.autoplay,
-            triggerCount: opts.autoplay ? 1 : 0,
+            playing: canAutoplay,
+            triggerCount: canAutoplay ? 1 : 0,
             lastMix: initialMix
           )
         }
@@ -443,7 +474,7 @@ public enum SpatialAudio {
     /// Unconditionally triggers or retriggers `nodeIndex` and invokes `onAudioPlay`.
     @discardableResult
     public func trigger(nodeIndex: Int) -> Mix? {
-      guard var state = emitters[nodeIndex] else { return nil }
+      guard var state = emitters[nodeIndex], canPlayOptions(state.options) else { return nil }
       state.playing = true
       state.triggerCount += 1
       emitters[nodeIndex] = state
@@ -452,7 +483,7 @@ public enum SpatialAudio {
           nodeIndex: state.nodeIndex,
           nodeName: state.nodeName,
           preset: state.options.preset,
-          src: state.options.src,
+          src: state.options.preset == nil ? state.options.src : nil,
           gain: state.lastMix.gain,
           pan: state.lastMix.pan,
           triggerCount: state.triggerCount

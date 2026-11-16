@@ -29,10 +29,21 @@ import {
 } from './visual_judge.ts';
 
 function resolveRootDir(): string {
+  const scriptDir =
+    typeof __dirname === 'string'
+      ? __dirname
+      : process.argv[1]
+        ? path.dirname(path.resolve(process.argv[1]))
+        : process.cwd();
   const candidates = [
+    ...(process.env['THREE_LIVE_ROOT_DIR']
+      ? [process.env['THREE_LIVE_ROOT_DIR']]
+      : []),
+    path.resolve(scriptDir, '..', '..', '..'),
+    path.resolve(scriptDir, '..', '..'),
+    path.resolve(scriptDir, '..'),
     process.cwd(),
     path.resolve(process.cwd(), '..'),
-    path.resolve(process.cwd(), 'experimental/users/binghamj/three_live'),
   ];
   for (const c of candidates) {
     if (fs.existsSync(path.join(c, 'evals', 'prompts', 'prompts_100.json'))) {
@@ -44,7 +55,11 @@ function resolveRootDir(): string {
 
 export const ROOT_DIR = resolveRootDir();
 export const EVALS_DIR = path.join(ROOT_DIR, 'evals');
-export const DEFAULT_PROMPTS_PATH = path.join(EVALS_DIR, 'prompts', 'prompts_100.json');
+export const DEFAULT_PROMPTS_PATH = path.join(
+  EVALS_DIR,
+  'prompts',
+  'prompts_100.json',
+);
 export const SCRIPTS_DIR = path.join(EVALS_DIR, 'scripts');
 export const RESULTS_DIR = path.join(EVALS_DIR, 'results');
 
@@ -115,7 +130,9 @@ export function runCompilerValidate(
                 code: 'TL100',
                 severity: 'error',
                 message:
-                  stderr || stdout || (err ? err.message : 'Compiler exited without output'),
+                  stderr ||
+                  stdout ||
+                  (err ? err.message : 'Compiler exited without output'),
               },
             ],
           };
@@ -129,7 +146,10 @@ export function runCompilerValidate(
 /**
  * Categories that require temporal/interactive verification via `three-live-cli sim`.
  */
-export const SIM_CATEGORIES = new Set<string>(['instancing_animation_ik', 'spatial_xr_sim']);
+export const SIM_CATEGORIES = new Set<string>([
+  'instancing_animation_ik',
+  'spatial_xr_sim',
+]);
 
 /**
  * Default scripted user/agent action sequence for `three-live-cli sim`.
@@ -137,7 +157,14 @@ export const SIM_CATEGORIES = new Set<string>(['instancing_animation_ik', 'spati
 export const DEFAULT_SIM_ACTIONS = JSON.stringify([
   {at: 0.2, type: 'select'},
   {at: 0.4, type: 'explode', factor: 1.0},
-  {at: 0.2, type: 'moveCharacter', dx: -0.4, dz: -1.0, duration: 1.5, jump: true},
+  {
+    at: 0.2,
+    type: 'moveCharacter',
+    dx: -0.4,
+    dz: -1.0,
+    duration: 1.5,
+    jump: true,
+  },
 ]);
 
 /**
@@ -173,7 +200,9 @@ export function runCompilerSim(
             const lastBrace = stdout.lastIndexOf('}');
             if (firstBrace !== -1 && lastBrace > firstBrace) {
               try {
-                simReport = JSON.parse(stdout.slice(firstBrace, lastBrace + 1)) as SimRawReport;
+                simReport = JSON.parse(
+                  stdout.slice(firstBrace, lastBrace + 1),
+                ) as SimRawReport;
               } catch {
                 // Ignore parse error
               }
@@ -273,7 +302,11 @@ export async function evaluateSingleScript(
 
   for (const d of diagnostics) {
     const msg = d.message || '';
-    if (msg.includes('unsupported geometry is unsupported; degraded to BoxGeometry')) {
+    if (
+      msg.includes(
+        'unsupported geometry is unsupported; degraded to BoxGeometry',
+      )
+    ) {
       boxGeometryFallbackCount++;
     }
     const threeMatch = msg.match(
@@ -282,7 +315,10 @@ export async function evaluateSingleScript(
     if (threeMatch) {
       const sym = threeMatch[1];
       noopDrops.push(sym);
-      if (d.code === 'TL103' && !GENUINE_TL103_LOADER_CONTROL_SYMBOLS.has(sym)) {
+      if (
+        d.code === 'TL103' &&
+        !GENUINE_TL103_LOADER_CONTROL_SYMBOLS.has(sym)
+      ) {
         misclassifiedTl103.push({
           symbol: sym,
           code: d.code,
@@ -297,24 +333,36 @@ export async function evaluateSingleScript(
 
   const summary = report.summary ?? null;
   const meshCount = summary ? summary.meshCount : 0;
-  const visibleMeshCount = summary?.camera ? summary.camera.visibleMeshCount : 0;
+  const visibleMeshCount = summary?.camera
+    ? summary.camera.visibleMeshCount
+    : 0;
   const compileSucceeded = Boolean(report.valid && meshCount > 0);
-  const frustumVisibilityRatio = meshCount > 0 ? visibleMeshCount / meshCount : 0;
+  const frustumVisibilityRatio =
+    meshCount > 0 ? visibleMeshCount / meshCount : 0;
 
   const cleanCode = stripJsComments(code);
-  const declaresLexicalScene = /\b(?:const|let)\s+scene\s*=\s*new\s+THREE\.Scene\b/.test(cleanCode);
+  const declaresLexicalScene =
+    /\b(?:const|let)\s+scene\s*=\s*new\s+THREE\.Scene\b/.test(cleanCode);
   const lexicalSceneShadowed = Boolean(
     declaresLexicalScene &&
       meshCount === 0 &&
-      diagnostics.some((d) => d.code === 'TL301' && (d.message || '').includes('0 meshes')),
+      diagnostics.some(
+        (d) => d.code === 'TL301' && (d.message || '').includes('0 meshes'),
+      ),
   );
 
   const expectedFeatures = promptEntry?.expectedFeatures ?? [];
-  const matchedExpectedFeatures = expectedFeatures.filter((feat) => code.includes(feat));
+  const matchedExpectedFeatures = expectedFeatures.filter((feat) =>
+    code.includes(feat),
+  );
 
   const diagCodes = diagnostics.map((d) => d.code);
-  const errorCodes = diagnostics.filter((d) => d.severity === 'error').map((d) => d.code);
-  const warningCodes = diagnostics.filter((d) => d.severity !== 'error').map((d) => d.code);
+  const errorCodes = diagnostics
+    .filter((d) => d.severity === 'error')
+    .map((d) => d.code);
+  const warningCodes = diagnostics
+    .filter((d) => d.severity !== 'error')
+    .map((d) => d.code);
 
   const hasDropsOrFallbacks =
     noopDrops.length > 0 ||
@@ -339,7 +387,9 @@ export async function evaluateSingleScript(
     scriptPath: path.relative(ROOT_DIR, scriptPath),
     valid: Boolean(report.valid),
     compileSucceeded,
-    cleanCompileNoDrops: Boolean(compileSucceeded && !hasDropsOrFallbacks && errorCodes.length === 0),
+    cleanCompileNoDrops: Boolean(
+      compileSucceeded && !hasDropsOrFallbacks && errorCodes.length === 0,
+    ),
     executionTimeMs: report.executionTimeMs || 0,
     meshCount,
     visibleMeshCount,
@@ -400,7 +450,8 @@ export async function evaluateSingleScript(
       cameraFraming: 1,
       materialAndLighting: 1,
       overallScore: 1.0,
-      visualCritique: 'Script failed compilation and produced no rendered 4-up contact sheet.',
+      visualCritique:
+        'Script failed compilation and produced no rendered 4-up contact sheet.',
     };
   }
 

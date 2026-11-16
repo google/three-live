@@ -36,7 +36,28 @@ import {
 
 ThreeLiveElement.registerAR({activateAR, createUSDZBlob});
 
-export {ThreeLiveElement, ThreeView} from '../../three-live/src/viewer';
+export {
+  CAPABILITIES_ALL,
+  CAPABILITIES_NONE,
+  CAPABILITIES_VIEWER,
+  checkHostCapability,
+  hasCapabilityInPolicy,
+  isNetworkUrlPermitted,
+  isNonNetworkUrl,
+  normalizeCapabilityOrigin,
+  parseCapabilities,
+  resetCapabilityDenials,
+  resolveHostCapabilities,
+  sanitizeDiagnosticUrl,
+  ThreeLiveElement,
+  ThreeView,
+  type CapabilityDeniedDetail,
+  type ThreeLiveCapabilities,
+  type ThreeLiveCapabilitiesInit,
+  type ThreeLiveCapabilitiesInput,
+  type ThreeLiveCapabilityName,
+  type ThreeLiveNetworkPolicy,
+} from '../../three-live/src/viewer';
 export * from './xr-input';
 export * from './xr-mobile-bridge';
 export * from './xr-spatial-slot';

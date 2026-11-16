@@ -21,7 +21,10 @@
  * tape measure that emits `measurecomplete`.
  */
 
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  checkPluginCapability,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {
   parseDimensions,
   type DimensionAxis,
@@ -1072,7 +1075,15 @@ export const spatialMeasurePlugin: ThreeLivePlugin = {
   // tslint:disable-next-line:no-any WebXR session init dictionary.
   onConfigureXRSessionInit(element: any, sessionInit: any): void {
     const cfg = resolveSpatialMeasureConfig(element);
-    if (!cfg.tapeEnabled || !sessionInit) return;
+    if (
+      !cfg.tapeEnabled ||
+      !sessionInit ||
+      !checkPluginCapability(element, 'sensors', 'spatialMeasure', {
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     const optional = new Set<string>(sessionInit.optionalFeatures ?? []);
     optional.add('plane-detection');
     optional.add('hit-test');

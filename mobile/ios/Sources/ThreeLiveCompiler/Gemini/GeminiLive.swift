@@ -97,6 +97,9 @@ public final class URLSessionLiveTransport: NSObject, GeminiLiveTransport,
   public var onMessage: (([String: Any]) -> Void)?
   public var onClose: (() -> Void)?
 
+  /// Validated WebSocket endpoint URL string.
+  public let endpointURLString: String
+
   private let lock = NSLock()
   private var task: URLSessionWebSocketTask?
   private var session: URLSession?
@@ -107,9 +110,25 @@ public final class URLSessionLiveTransport: NSObject, GeminiLiveTransport,
   public static let maxMessageBytes = 16 * 1024 * 1024
 
   /// Connects to `url` (must pass `GeminiLiveEndpoints.isAllowedLiveURL`), with optional extra
-  /// handshake `headers` (e.g. `Authorization: Token …`). Returns `nil` for disallowed URLs.
-  public init?(url: URL, headers: [String: String] = [:]) {
+  /// handshake `headers` (e.g. `Authorization: Token …`). Returns `nil` for disallowed URLs or
+  /// when `network` capability is denied.
+  public init?(
+    url: URL,
+    headers: [String: String] = [:],
+    capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
+  ) {
     guard GeminiLiveEndpoints.isAllowedLiveURL(url.absoluteString) else { return nil }
+    let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    guard
+      policy.check(
+        .network,
+        feature: "webSocketTransport",
+        url: url.absoluteString,
+        onDenied: onCapabilityDenied
+      )
+    else { return nil }
+    self.endpointURLString = url.absoluteString
     super.init()
     var request = URLRequest(url: url)
     for (k, v) in headers where !v.contains("\r") && !v.contains("\n") {
@@ -263,19 +282,74 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   /// validated like the `detections` prop; locate them against the camera of the last frame sent
   /// (for example `ARViewFrameSource.history.latest`).
   public var onObjectsReported: (([XRDetections.Box]) -> Void)?
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  /// Optional capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+  public var capabilities: ThreeLiveCapabilities? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _capabilities
+    }
+    set {
+      lock.lock()
+      _capabilities = newValue
+      lock.unlock()
+      capabilityGuard.reset()
+    }
+  }
+  /// Optional callback notified whenever a Gemini Live capability check is denied.
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _onCapabilityDenied
+    }
+    set {
+      lock.lock()
+      _onCapabilityDenied = newValue
+      lock.unlock()
+    }
+  }
 
   public let transcripts = TranscriptionManager()
+
+  private let capabilityGuard = CapabilityGuard()
+
+  func checkGeminiCapability(
+    _ capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = nil,
+    dedup: Bool = false
+  ) -> Bool {
+    let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    return capabilityGuard.check(
+      policy: policy,
+      capability: capability,
+      feature: feature,
+      url: url,
+      dedup: dedup,
+      onDenied: onCapabilityDenied
+    )
+  }
 
   private let frameProvider: FrameProvider?
   private let audioSink: PcmAudioSink?
   private let callbackQueue: DispatchQueue
   private let lock = NSLock()
   private var transport: GeminiLiveTransport?
+  private var endpointURL: String?
   private var playAudio = true
   private var detectObjects = false
   private var frameTimer: DispatchSourceTimer?
   private var captureInFlight = false
   private var turnHasOutputTranscription = false
+
+  var activeEndpointURL: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return endpointURL
+  }
 
   public init(
     frameProvider: FrameProvider? = nil, audioSink: PcmAudioSink? = nil,
@@ -299,8 +373,14 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     streamFrames: Bool = true, playAudio: Bool = true, detectObjects: Bool = false
   ) {
     disconnect()
+    let resolvedURL = (transport as? URLSessionLiveTransport)?.endpointURLString
+    guard checkGeminiCapability(.ai, feature: "geminiLive", url: resolvedURL) else {
+      transport.close()
+      return
+    }
     lock.lock()
     self.transport = transport
+    self.endpointURL = resolvedURL
     self.playAudio = playAudio
     self.detectObjects = detectObjects
     turnHasOutputTranscription = false
@@ -315,6 +395,7 @@ public final class XRGeminiLiveController: @unchecked Sendable {
       let current = transport != nil && self.transport === transport
       if current {
         self.transport = nil
+        self.endpointURL = nil
         self.stopFramesLocked()
       }
       self.lock.unlock()
@@ -323,7 +404,9 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     if let setup = detectObjects ? Self.withDetectionTool(setup) : setup {
       transport.send(["setup": setup])
     }
-    if streamFrames, frameProvider != nil {
+    if streamFrames, frameProvider != nil,
+      checkGeminiCapability(.camera, feature: "geminiStreamFrames", dedup: true)
+    {
       let interval = min(10, max(0.25, frameInterval.isFinite ? frameInterval : 1))
       let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
       timer.schedule(deadline: .now() + interval, repeating: interval)
@@ -341,6 +424,7 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     stopFramesLocked()
     let t = transport
     transport = nil
+    endpointURL = nil
     lock.unlock()
     t?.close()
     audioSink?.flush()
@@ -351,6 +435,14 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   @discardableResult
   public func sendFrame() -> Bool {
     guard let provider = frameProvider else { return false }
+    lock.lock()
+    let hasTransport = transport != nil
+    let busy = captureInFlight
+    lock.unlock()
+    guard hasTransport, !busy else { return false }
+    guard checkGeminiCapability(.camera, feature: "geminiStreamFrames", dedup: true) else {
+      return false
+    }
     lock.lock()
     guard transport != nil, !captureInFlight else {
       lock.unlock()
@@ -377,6 +469,9 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     let t = transport
     lock.unlock()
     guard let t = t, !pcm16le.isEmpty else { return }
+    guard checkGeminiCapability(.microphone, feature: "geminiLiveAudio", dedup: true) else {
+      return
+    }
     let rate = min(48_000, max(8_000, sampleRate))
     t.send(Self.realtimeChunk(mime: "audio/pcm;rate=\(rate)", data: pcm16le))
   }
@@ -385,9 +480,13 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   public func sendText(_ text: String) {
     lock.lock()
     let t = transport
+    let url = endpointURL
     lock.unlock()
     let clipped = String(text.prefix(Self.maxTextChars))
     guard let t = t, !clipped.isEmpty else { return }
+    guard checkGeminiCapability(.ai, feature: "geminiLive", url: url, dedup: true) else {
+      return
+    }
     t.send([
       "clientContent": [
         "turns": [["role": "user", "parts": [["text": clipped]]]],

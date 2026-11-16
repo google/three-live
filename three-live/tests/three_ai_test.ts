@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {ensureCapabilityChecker} from '../src/capabilities';
 import {getSharedRegistry, registerPlugin} from '../src/plugin';
 import {
   aiPlugin,
@@ -21,6 +22,7 @@ import {
   type ThreeLiveAIProvider,
 } from '../src/plugins/ai';
 import {Scene, THREE} from '../src/three-author';
+ensureCapabilityChecker();
 
 let passed = 0;
 let failed = 0;
@@ -84,6 +86,7 @@ function fakeElement(opts: {allow?: boolean; selected?: string | null} = {}) {
   const attrs: Record<string, string> = {};
   const el: any = {
     allowClientScripts: opts.allow ?? true,
+    capabilities: (opts.allow ?? true) ? 'scripts ai network' : 'ai network',
     sandbox: 'worker',
     selectedMesh: opts.selected ?? null,
     failNextExecute: false,

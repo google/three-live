@@ -593,9 +593,20 @@ async function runElementTests() {
     'executeScript fails closed when Worker unavailable in sandbox=worker mode after allowClientScripts opt-in',
   );
 
-  // Reset allowClientScripts to false and verify Use Case 2 (loadScriptFromSrc)
-  // passes scriptUrl directly to the sandbox without requiring allowClientScripts
+  // Reset allowClientScripts to false and verify loadScriptFromSrc requires
+  // scripts + remote_content + network capabilities, then routes to executeUrl.
   instance.allowClientScripts = false;
+  let deniedScriptSrcMsg = '';
+  try {
+    await instance.loadScriptFromSrc('https://cdn.example.com/scene.js');
+  } catch (error: unknown) {
+    deniedScriptSrcMsg = error instanceof Error ? error.message : String(error);
+  }
+  assert(
+    deniedScriptSrcMsg.includes('SecurityError'),
+    'loadScriptFromSrc fails closed when scripts capability is omitted',
+  );
+  instance.capabilities = 'scripts remote_content network';
   let useCase2Message = '';
   try {
     await instance.loadScriptFromSrc('https://cdn.example.com/scene.js');
@@ -604,8 +615,9 @@ async function runElementTests() {
   }
   assert(
     useCase2Message.includes('Workers are unavailable'),
-    'loadScriptFromSrc (Use Case 2) routes directly to sandbox executeUrl without requiring allowClientScripts',
+    'loadScriptFromSrc routes to sandbox executeUrl once scripts + remote_content + network capabilities are granted',
   );
+  instance.capabilities = null;
 
   // Test events dispatch
   let eventFired = false;

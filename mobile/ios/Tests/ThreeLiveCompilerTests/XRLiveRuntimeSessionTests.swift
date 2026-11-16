@@ -1148,13 +1148,14 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   }
 
   func testSplatLoadURLStreamingCapAndErrors() async throws {
+    let caps = ThreeLiveCapabilities(network: true, remoteContent: true)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [SplatStubURLProtocol.self]
     let session = URLSession(configuration: config)
     // Body larger than maxBytes without a Content-Length header.
     do {
       _ = try await SplatParser.loadURL(
-        "https://site.test/big.spz", maxBytes: 100, session: session)
+        "https://site.test/big.spz", maxBytes: 100, session: session, capabilities: caps)
       XCTFail("expected fileTooLarge")
     } catch {
       XCTAssertEqual(error as? SplatParserError, .fileTooLarge)
@@ -1162,26 +1163,29 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     // Declared Content-Length over the cap is rejected up front.
     do {
       _ = try await SplatParser.loadURL(
-        "https://site.test/declared.spz", maxBytes: 100, session: session)
+        "https://site.test/declared.spz", maxBytes: 100, session: session, capabilities: caps)
       XCTFail("expected fileTooLarge")
     } catch {
       XCTAssertEqual(error as? SplatParserError, .fileTooLarge)
     }
     // HTTP errors and rejected URLs map to dedicated error cases.
     do {
-      _ = try await SplatParser.loadURL("https://site.test/missing.spz", session: session)
+      _ = try await SplatParser.loadURL(
+        "https://site.test/missing.spz", session: session, capabilities: caps)
       XCTFail("expected httpStatus")
     } catch {
       XCTAssertEqual(error as? SplatParserError, .httpStatus(404))
     }
     do {
-      _ = try await SplatParser.loadURL("javascript:alert(1)", session: session)
+      _ = try await SplatParser.loadURL(
+        "javascript:alert(1)", session: session, capabilities: caps)
       XCTFail("expected urlRejected")
     } catch {
       XCTAssertEqual(error as? SplatParserError, .urlRejected)
     }
     // A valid payload still decodes.
-    let ok = try await SplatParser.loadURL("https://site.test/ok.spz", session: session)
+    let ok = try await SplatParser.loadURL(
+      "https://site.test/ok.spz", session: session, capabilities: caps)
     XCTAssertEqual(ok.count, 1)
   }
 
@@ -1318,18 +1322,15 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       .deletingLastPathComponent()
       .appendingPathComponent("testdata/golden")
     var candidates: [URL] = [spmGoldenDir]
-    if let srcDir = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
-      let base = URL(fileURLWithPath: srcDir)
-      candidates.append(
-        base.appendingPathComponent(
-          "google3/experimental/users/binghamj/three_live/testdata/golden")
-      )
-      candidates.append(
-        base.appendingPathComponent("_main/experimental/users/binghamj/three_live/testdata/golden")
-      )
-      candidates.append(
-        base.appendingPathComponent("experimental/users/binghamj/three_live/testdata/golden")
-      )
+    if let envDir = ProcessInfo.processInfo.environment["THREE_LIVE_GOLDEN_DIR"] {
+      if let srcDir = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
+        candidates.append(URL(fileURLWithPath: srcDir).appendingPathComponent(envDir))
+        candidates.append(
+          URL(fileURLWithPath: srcDir).appendingPathComponent("_main").appendingPathComponent(
+            envDir)
+        )
+      }
+      candidates.append(URL(fileURLWithPath: envDir))
     }
     if let resourceURL = Bundle(for: Self.self).resourceURL {
       candidates.append(resourceURL.appendingPathComponent("testdata/golden"))

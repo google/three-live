@@ -18,19 +18,32 @@ package com.google.threelive.gemini
 
 import com.google.threelive.CapturedFrame
 import com.google.threelive.ThreeLiveCameraOptions
+import com.google.threelive.ThreeLiveCapabilities
 import com.google.threelive.ThreeLiveDetections
 import com.google.threelive.ThreeLiveRendererListener
 import com.google.threelive.ThreeLiveSceneRenderer
 import com.google.threelive.WorldUnderstanding
 import java.nio.ByteBuffer
+import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /** Frame streaming from a renderer to Gemini Live. */
 class RendererFrameSourceTest {
+
+  @Before
+  fun setUp() {
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.ALL
+  }
+
+  @After
+  fun tearDown() {
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.DEFAULT
+  }
 
   @Test
   fun fitWithinKeepsAspectAndNeverUpscales() {
@@ -120,8 +133,22 @@ class RendererFrameSourceTest {
         callback(null)
         return
       }
-      val world = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[14] = frameCameraZ; it[15] = 1f }
-      val proj = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = -1f; it[11] = -1f; it[14] = -0.2f }
+      val world =
+        FloatArray(16).also {
+          it[0] = 1f
+          it[5] = 1f
+          it[10] = 1f
+          it[14] = frameCameraZ
+          it[15] = 1f
+        }
+      val proj =
+        FloatArray(16).also {
+          it[0] = 1f
+          it[5] = 1f
+          it[10] = -1f
+          it[11] = -1f
+          it[14] = -0.2f
+        }
       callback(CapturedFrame(byteArrayOf(calls.toByte()), 4, 3, world, proj, calls.toLong()))
     }
 
@@ -129,7 +156,12 @@ class RendererFrameSourceTest {
 
     override fun setCameraOptions(options: ThreeLiveCameraOptions) {}
 
-    override fun setNodeTransform(nodeIndex: Int, translation: FloatArray, rotation: FloatArray, scale: FloatArray) {}
+    override fun setNodeTransform(
+      nodeIndex: Int,
+      translation: FloatArray,
+      rotation: FloatArray,
+      scale: FloatArray,
+    ) {}
 
     override fun setNodeVisible(nodeIndex: Int, visible: Boolean) {}
 

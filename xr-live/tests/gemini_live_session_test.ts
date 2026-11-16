@@ -14,14 +14,16 @@
 
 /** Regression tests for asynchronous work crossing Gemini Live sessions. */
 
+import {ensureCapabilityChecker} from '../../three-live/src/capabilities';
 import {
+  connectGeminiLive,
   createWebSocketTransport,
   geminiLivePlugin,
-  connectGeminiLive,
   type GeminiLiveTransport,
   REPORT_OBJECTS_TOOL,
   XRGeminiLiveController,
 } from '../src/plugins/gemini-live';
+ensureCapabilityChecker();
 
 let passed = 0;
 let failed = 0;
@@ -55,22 +57,44 @@ function transport() {
   const sent: Array<Record<string, unknown>> = [];
   let closed = 0;
   const socket: GeminiLiveTransport = {
-    send: (message) => { sent.push(message); },
-    close: () => { closed++; socket.onClose?.(); },
+    send: (message) => {
+      sent.push(message);
+    },
+    close: () => {
+      closed++;
+      socket.onClose?.();
+    },
   };
-  return {socket, sent, get closed() { return closed; }};
+  return {
+    socket,
+    sent,
+    get closed() {
+      return closed;
+    },
+  };
 }
 
 function host() {
   const captures: Array<ReturnType<typeof deferredFrame>> = [];
   const events: Array<{type: string; detail: unknown}> = [];
   // Translation alone is enough to distinguish detection-camera snapshots.
-  const matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const matrix = new Float32Array([
+    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+  ]);
   const element = {
-    viewer: {container: {simulator: {
-      active: true,
-      getHeadPose: () => ({matrix, position: [matrix[12], 0, 0], quaternion: [0, 0, 0, 1]}),
-    }}},
+    capabilities: 'ai network camera microphone sensors',
+    viewer: {
+      container: {
+        simulator: {
+          active: true,
+          getHeadPose: () => ({
+            matrix,
+            position: [matrix[12], 0, 0],
+            quaternion: [0, 0, 0, 1],
+          }),
+        },
+      },
+    },
     captureViewFrame() {
       const capture = deferredFrame();
       captures.push(capture);
@@ -87,41 +111,68 @@ function host() {
 const frame = (base64: string): Frame => ({base64, mimeType: 'image/jpeg'});
 const detection = {
   toolCall: {
-    functionCalls: [{
-      id: 'object-1',
-      name: REPORT_OBJECTS_TOOL,
-      args: {objects: [{label: 'cup', box_2d: [400, 400, 600, 600]}]},
-    }],
+    functionCalls: [
+      {
+        id: 'object-1',
+        name: REPORT_OBJECTS_TOOL,
+        args: {objects: [{label: 'cup', box_2d: [400, 400, 600, 600]}]},
+      },
+    ],
   },
 };
 
-async function testPendingCapture(rejectOld: boolean, reuseTransport: boolean): Promise<void> {
+async function testPendingCapture(
+  rejectOld: boolean,
+  reuseTransport: boolean,
+): Promise<void> {
   const h = host();
   const first = transport();
   const next = reuseTransport ? first : transport();
   const ctrl = new XRGeminiLiveController(h.element);
-  ctrl.connect({transport: first.socket, streamFrames: false, detectObjects: true});
+  ctrl.connect({
+    transport: first.socket,
+    streamFrames: false,
+    detectObjects: true,
+  });
   const oldFrame = ctrl.sendFrame();
-  ctrl.connect({transport: next.socket, streamFrames: false, detectObjects: true});
+  ctrl.connect({
+    transport: next.socket,
+    streamFrames: false,
+    detectObjects: true,
+  });
   h.matrix[12] = 10;
   const newFrame = ctrl.sendFrame();
   const label = `${rejectOld ? 'rejected' : 'resolved'} old capture, ${reuseTransport ? 'reused' : 'new'} transport`;
-  assert(h.captures.length === 2, `${label}: replacement capture starts immediately`);
+  assert(
+    h.captures.length === 2,
+    `${label}: replacement capture starts immediately`,
+  );
   assert(!(await ctrl.sendFrame()), `${label}: only one capture per session`);
 
   if (rejectOld) h.captures[0].reject(new Error('old capture failed'));
   else h.captures[0].resolve(frame('old'));
   assert(!(await oldFrame), `${label}: old capture is discarded`);
-  assert(next.sent.length === 0, `${label}: no stale frame reaches replacement`);
+  assert(
+    next.sent.length === 0,
+    `${label}: no stale frame reaches replacement`,
+  );
   const extraFrame = ctrl.sendFrame();
-  assert(h.captures.length === 2, `${label}: old finally cannot release new capture lock`);
+  assert(
+    h.captures.length === 2,
+    `${label}: old finally cannot release new capture lock`,
+  );
 
   // Settle every request even against the unfixed implementation.
   for (const capture of h.captures.slice(1)) capture.resolve(frame('new'));
   const [newSent, extraSent] = await Promise.all([newFrame, extraFrame]);
-  assert(newSent && !extraSent, `${label}: only the new session's original capture sends`);
-  assert(next.sent.length === 1 && JSON.stringify(next.sent[0]).includes('"new"'),
-    `${label}: current frame is sent once`);
+  assert(
+    newSent && !extraSent,
+    `${label}: only the new session's original capture sends`,
+  );
+  assert(
+    next.sent.length === 1 && JSON.stringify(next.sent[0]).includes('"new"'),
+    `${label}: current frame is sent once`,
+  );
   ctrl.disconnect();
 }
 
@@ -130,9 +181,17 @@ async function testStaleCamera(): Promise<void> {
   const first = transport();
   const next = transport();
   const ctrl = new XRGeminiLiveController(h.element);
-  ctrl.connect({transport: first.socket, streamFrames: false, detectObjects: true});
+  ctrl.connect({
+    transport: first.socket,
+    streamFrames: false,
+    detectObjects: true,
+  });
   const oldFrame = ctrl.sendFrame();
-  ctrl.connect({transport: next.socket, streamFrames: false, detectObjects: true});
+  ctrl.connect({
+    transport: next.socket,
+    streamFrames: false,
+    detectObjects: true,
+  });
   h.matrix[12] = 10;
   const newFrame = ctrl.sendFrame();
   h.captures[1]?.resolve(frame('new'));
@@ -141,8 +200,12 @@ async function testStaleCamera(): Promise<void> {
   await oldFrame;
   h.matrix[12] = 20;
   next.socket.onMessage?.(detection);
-  const located = h.events.find((event) => event.type === 'xr-object-detected')?.detail as {x?: number};
-  assert(located?.x === 10, 'late old frame cannot replace the new detection camera');
+  const located = h.events.find((event) => event.type === 'xr-object-detected')
+    ?.detail as {x?: number};
+  assert(
+    located?.x === 10,
+    'late old frame cannot replace the new detection camera',
+  );
   ctrl.disconnect();
 }
 
@@ -153,31 +216,66 @@ function testStaleCallbacks(reuseTransport: boolean): void {
   const ctrl = new XRGeminiLiveController(h.element);
   let enqueued = 0;
   let flushed = 0;
-  ctrl.audio.enqueue = () => { enqueued++; };
-  ctrl.audio.flush = () => { flushed++; };
-  ctrl.connect({transport: first.socket, streamFrames: false, detectObjects: true});
+  ctrl.audio.enqueue = () => {
+    enqueued++;
+  };
+  ctrl.audio.flush = () => {
+    flushed++;
+  };
+  ctrl.connect({
+    transport: first.socket,
+    streamFrames: false,
+    detectObjects: true,
+  });
   const oldMessage = first.socket.onMessage!;
   const oldClose = first.socket.onClose!;
-  ctrl.connect({transport: next.socket, streamFrames: false, detectObjects: true});
+  ctrl.connect({
+    transport: next.socket,
+    streamFrames: false,
+    detectObjects: true,
+  });
   h.events.length = 0;
   flushed = 0;
-  oldMessage({...detection, serverContent: {
-    interrupted: true,
-    inputTranscription: {text: 'old input'},
-    outputTranscription: {text: 'old output'},
-    modelTurn: {parts: [{inlineData: {mimeType: 'audio/pcm;rate=24000', data: 'AAA='}}]},
-    turnComplete: true,
-  }});
+  oldMessage({
+    ...detection,
+    serverContent: {
+      interrupted: true,
+      inputTranscription: {text: 'old input'},
+      outputTranscription: {text: 'old output'},
+      modelTurn: {
+        parts: [{inlineData: {mimeType: 'audio/pcm;rate=24000', data: 'AAA='}}],
+      },
+      turnComplete: true,
+    },
+  });
   oldClose();
   const label = reuseTransport ? 'reused transport' : 'new transport';
   assert(h.events.length === 0, `${label}: old callbacks emit no events`);
   assert(next.sent.length === 0, `${label}: old tool calls send no responses`);
-  assert(enqueued === 0 && flushed === 0, `${label}: old messages cannot play or interrupt audio`);
-  assert(ctrl.connected, `${label}: old close cannot disconnect the replacement`);
-  next.socket.onMessage?.({serverContent: {modelTurn: {parts: [{text: 'new output'}]}, turnComplete: true}});
-  assert(h.events.some((event) => event.type === 'xr-transcription' &&
-    (event.detail as {text: string; isFinal: boolean}).text === 'new output' &&
-    (event.detail as {isFinal: boolean}).isFinal), `${label}: current callback still works`);
+  assert(
+    enqueued === 0 && flushed === 0,
+    `${label}: old messages cannot play or interrupt audio`,
+  );
+  assert(
+    ctrl.connected,
+    `${label}: old close cannot disconnect the replacement`,
+  );
+  next.socket.onMessage?.({
+    serverContent: {
+      modelTurn: {parts: [{text: 'new output'}]},
+      turnComplete: true,
+    },
+  });
+  assert(
+    h.events.some(
+      (event) =>
+        event.type === 'xr-transcription' &&
+        (event.detail as {text: string; isFinal: boolean}).text ===
+          'new output' &&
+        (event.detail as {isFinal: boolean}).isFinal,
+    ),
+    `${label}: current callback still works`,
+  );
   ctrl.disconnect();
 }
 
@@ -190,11 +288,19 @@ async function testClosedSession(remote: boolean): Promise<void> {
   const pending = ctrl.sendFrame();
   if (remote) first.socket.onClose?.();
   else ctrl.disconnect();
-  oldMessage({serverContent: {modelTurn: {parts: [{text: 'late'}]}, turnComplete: true}});
+  oldMessage({
+    serverContent: {modelTurn: {parts: [{text: 'late'}]}, turnComplete: true},
+  });
   h.captures[0].resolve(frame('late'));
   const label = remote ? 'remote close' : 'disconnect';
-  assert(!ctrl.connected && !(await pending), `${label}: pending frame is discarded`);
-  assert(first.sent.length === 0 && h.events.length === 0, `${label}: late work has no effects`);
+  assert(
+    !ctrl.connected && !(await pending),
+    `${label}: pending frame is discarded`,
+  );
+  assert(
+    first.sent.length === 0 && h.events.length === 0,
+    `${label}: late work has no effects`,
+  );
   const next = transport();
   ctrl.connect({transport: next.socket, streamFrames: false});
   const fresh = ctrl.sendFrame();
@@ -209,14 +315,33 @@ function testTranscriptReset(): void {
   const next = transport();
   const ctrl = new XRGeminiLiveController(h.element);
   ctrl.connect({transport: first.socket, streamFrames: false});
-  first.socket.onMessage?.({serverContent: {outputTranscription: {text: 'unfinished'}}});
+  first.socket.onMessage?.({
+    serverContent: {outputTranscription: {text: 'unfinished'}},
+  });
   ctrl.connect({transport: next.socket, streamFrames: false});
-  assert(h.events.some((event) => (event.detail as {text?: string; isFinal?: boolean}).text === 'unfinished' &&
-    (event.detail as {isFinal?: boolean}).isFinal), 'reconnect still finalizes the old transcript');
+  assert(
+    h.events.some(
+      (event) =>
+        (event.detail as {text?: string; isFinal?: boolean}).text ===
+          'unfinished' && (event.detail as {isFinal?: boolean}).isFinal,
+    ),
+    'reconnect still finalizes the old transcript',
+  );
   h.events.length = 0;
-  next.socket.onMessage?.({serverContent: {modelTurn: {parts: [{text: 'fresh text'}]}, turnComplete: true}});
-  assert(h.events.some((event) => (event.detail as {text?: string; isFinal?: boolean}).text === 'fresh text' &&
-    (event.detail as {isFinal?: boolean}).isFinal), 'old output transcription does not suppress the new text turn');
+  next.socket.onMessage?.({
+    serverContent: {
+      modelTurn: {parts: [{text: 'fresh text'}]},
+      turnComplete: true,
+    },
+  });
+  assert(
+    h.events.some(
+      (event) =>
+        (event.detail as {text?: string; isFinal?: boolean}).text ===
+          'fresh text' && (event.detail as {isFinal?: boolean}).isFinal,
+    ),
+    'old output transcription does not suppress the new text turn',
+  );
   ctrl.disconnect();
 }
 
@@ -230,33 +355,51 @@ function testReconnectDuringDisconnect(): void {
   const dispatch = h.element.dispatchEvent;
   h.element.dispatchEvent = (event: Event) => {
     dispatch(event);
-    const detail = (event as CustomEvent).detail as {text?: string; isFinal?: boolean};
+    const detail = (event as CustomEvent).detail as {
+      text?: string;
+      isFinal?: boolean;
+    };
     if (!switched && detail?.isFinal && detail.text === 'old input') {
       switched = true;
       ctrl.connect({transport: nested.socket, streamFrames: false});
-      nested.socket.onMessage?.({serverContent: {outputTranscription: {text: 'new output'}}});
+      nested.socket.onMessage?.({
+        serverContent: {outputTranscription: {text: 'new output'}},
+      });
     }
     return true;
   };
   ctrl.connect({transport: first.socket, streamFrames: false});
-  first.socket.onMessage?.({serverContent: {
-    inputTranscription: {text: 'old input'}, outputTranscription: {text: 'old output'},
-  }});
+  first.socket.onMessage?.({
+    serverContent: {
+      inputTranscription: {text: 'old input'},
+      outputTranscription: {text: 'old output'},
+    },
+  });
   ctrl.connect({transport: outer.socket, streamFrames: false});
   ctrl.sendText('current');
-  assert(switched && nested.sent.length === 1 && outer.sent.length === 0,
-    'reconnect during finalization keeps the newest transport');
-  assert(!h.events.some((event) => {
-    const detail = event.detail as {text?: string; isFinal?: boolean};
-    return detail.text === 'old output' && detail.isFinal;
-  }), 'reconnect during finalization stops remaining old transcript events');
+  assert(
+    switched && nested.sent.length === 1 && outer.sent.length === 0,
+    'reconnect during finalization keeps the newest transport',
+  );
+  assert(
+    !h.events.some((event) => {
+      const detail = event.detail as {text?: string; isFinal?: boolean};
+      return detail.text === 'old output' && detail.isFinal;
+    }),
+    'reconnect during finalization stops remaining old transcript events',
+  );
   ctrl.disconnect();
-  assert(first.closed === 1 && outer.closed === 1 && nested.closed === 1,
-    'reconnect during finalization closes the superseded and active transports');
-  assert(h.events.some((event) => {
-    const detail = event.detail as {text?: string; isFinal?: boolean};
-    return detail.text === 'new output' && detail.isFinal;
-  }), 'reconnect during finalization preserves the new transcript');
+  assert(
+    first.closed === 1 && outer.closed === 1 && nested.closed === 1,
+    'reconnect during finalization closes the superseded and active transports',
+  );
+  assert(
+    h.events.some((event) => {
+      const detail = event.detail as {text?: string; isFinal?: boolean};
+      return detail.text === 'new output' && detail.isFinal;
+    }),
+    'reconnect during finalization preserves the new transcript',
+  );
 }
 
 function testReconnectDuringTransportClose(): void {
@@ -266,19 +409,29 @@ function testReconnectDuringTransportClose(): void {
   const ctrl = new XRGeminiLiveController(h.element);
   first.socket.close = () => {
     ctrl.connect({transport: next.socket, streamFrames: false});
-    next.socket.onMessage?.({serverContent: {outputTranscription: {text: 'new output'}}});
+    next.socket.onMessage?.({
+      serverContent: {outputTranscription: {text: 'new output'}},
+    });
   };
   ctrl.connect({transport: first.socket, streamFrames: false});
   ctrl.disconnect();
-  assert(ctrl.connected && !h.events.some((event) => {
-    const detail = event.detail as {text?: string; isFinal?: boolean};
-    return detail.text === 'new output' && detail.isFinal;
-  }), 'transport close reconnect does not finalize the new session');
+  assert(
+    ctrl.connected &&
+      !h.events.some((event) => {
+        const detail = event.detail as {text?: string; isFinal?: boolean};
+        return detail.text === 'new output' && detail.isFinal;
+      }),
+    'transport close reconnect does not finalize the new session',
+  );
   ctrl.disconnect();
-  assert(next.closed === 1 && h.events.some((event) => {
-    const detail = event.detail as {text?: string; isFinal?: boolean};
-    return detail.text === 'new output' && detail.isFinal;
-  }), 'new session closes and finalizes normally after transport close reconnect');
+  assert(
+    next.closed === 1 &&
+      h.events.some((event) => {
+        const detail = event.detail as {text?: string; isFinal?: boolean};
+        return detail.text === 'new output' && detail.isFinal;
+      }),
+    'new session closes and finalizes normally after transport close reconnect',
+  );
 
   // Reconnecting with a pre-built outer transport when close() connects an inner one.
   const initial = transport();
@@ -291,7 +444,10 @@ function testReconnectDuringTransportClose(): void {
   ctrl.connect({transport: outer.socket, streamFrames: false});
   ctrl.sendText('to inner');
   assert(
-    outer.closed === 1 && inner.closed === 0 && inner.sent.length === 1 && outer.sent.length === 0,
+    outer.closed === 1 &&
+      inner.closed === 0 &&
+      inner.sent.length === 1 &&
+      outer.sent.length === 0,
     'superseded outer transport is closed when transport.close connects an inner session',
   );
   ctrl.disconnect();
@@ -309,7 +465,10 @@ function testReconnectDuringTransportClose(): void {
   ctrl.connect({transport: replacement.socket, streamFrames: false});
   ctrl.sendText('still connected');
   assert(
-    prevClosed === 1 && ctrl.connected && replacement.closed === 0 && replacement.sent.length === 1,
+    prevClosed === 1 &&
+      ctrl.connected &&
+      replacement.closed === 0 &&
+      replacement.sent.length === 1,
     'redundant disconnect during teardown does not abort replacement connect',
   );
   ctrl.disconnect();
@@ -325,7 +484,9 @@ async function testFrameTimers(): Promise<void> {
     active.add(callbacks.length);
     return callbacks.length;
   }) as typeof setInterval;
-  globalThis.clearInterval = ((id: number) => { active.delete(id); }) as typeof clearInterval;
+  globalThis.clearInterval = ((id: number) => {
+    active.delete(id);
+  }) as typeof clearInterval;
   const h = host();
   const first = transport();
   const next = transport();
@@ -333,9 +494,15 @@ async function testFrameTimers(): Promise<void> {
   try {
     ctrl.connect({transport: first.socket});
     ctrl.connect({transport: next.socket});
-    assert(active.size === 1 && active.has(2), 'reconnect replaces the frame timer');
+    assert(
+      active.size === 1 && active.has(2),
+      'reconnect replaces the frame timer',
+    );
     callbacks[0]();
-    assert(h.captures.length === 0, 'a queued old timer cannot capture for the replacement');
+    assert(
+      h.captures.length === 0,
+      'a queued old timer cannot capture for the replacement',
+    );
     callbacks[1]();
     assert(h.captures.length === 1, 'the current frame timer still captures');
     h.captures[0].resolve(frame('current timer'));
@@ -349,10 +516,15 @@ async function testFrameTimers(): Promise<void> {
     const closing = transport();
     closing.socket.send = () => closing.socket.onClose?.();
     ctrl.connect({transport: closing.socket, setup: {model: 'm'}});
-    assert(!ctrl.connected && active.size === 0, 'close during setup cannot leave an orphan frame timer');
+    assert(
+      !ctrl.connected && active.size === 0,
+      'close during setup cannot leave an orphan frame timer',
+    );
 
     const throwing = transport();
-    throwing.socket.send = () => { throw new Error('setup failed'); };
+    throwing.socket.send = () => {
+      throw new Error('setup failed');
+    };
     let setupThrew = false;
     try {
       ctrl.connect({transport: throwing.socket, setup: {model: 'm'}});
@@ -360,7 +532,10 @@ async function testFrameTimers(): Promise<void> {
       setupThrew = true;
     }
     assert(
-      setupThrew && !ctrl.connected && throwing.closed === 1 && active.size === 0,
+      setupThrew &&
+        !ctrl.connected &&
+        throwing.closed === 1 &&
+        active.size === 0,
       'throwing setup closes transport and leaves no timer',
     );
 
@@ -375,11 +550,17 @@ async function testFrameTimers(): Promise<void> {
     };
     ctrl.connect({transport: reentering.socket, setup: {model: 'm'}});
     assert(
-      ctrl.connected && reentering.closed === 1 && nested.closed === 0 && active.size === 1,
+      ctrl.connected &&
+        reentering.closed === 1 &&
+        nested.closed === 0 &&
+        active.size === 1,
       'reconnect during setup send keeps only the nested session timer and transport',
     );
     ctrl.disconnect();
-    assert(nested.closed === 1 && active.size === 0, 'nested session timer and transport close cleanly');
+    assert(
+      nested.closed === 1 && active.size === 0,
+      'nested session timer and transport close cleanly',
+    );
 
     const firstCtrl = new XRGeminiLiveController(h.element);
     const t1 = transport();
@@ -389,7 +570,11 @@ async function testFrameTimers(): Promise<void> {
     const secondCtrl = new XRGeminiLiveController(h.element);
     secondCtrl.connect({transport: t2.socket});
     assert(
-      !firstCtrl.connected && secondCtrl.connected && t1.closed === 1 && t2.closed === 0 && active.size === 1,
+      !firstCtrl.connected &&
+        secondCtrl.connected &&
+        t1.closed === 1 &&
+        t2.closed === 0 &&
+        active.size === 1,
       'connecting a second controller on the same element closes the previous timer and transport',
     );
     const rawT2Close = t2.socket.close.bind(t2.socket);
@@ -401,7 +586,11 @@ async function testFrameTimers(): Promise<void> {
     const supersededCtrl = transport();
     thirdCtrl.connect({transport: supersededCtrl.socket});
     assert(
-      thirdCtrl.connected && t2.closed === 1 && supersededCtrl.closed === 1 && t3.closed === 0 && active.size === 1,
+      thirdCtrl.connected &&
+        t2.closed === 1 &&
+        supersededCtrl.closed === 1 &&
+        t3.closed === 0 &&
+        active.size === 1,
       'reentrant connectGeminiLive during cross-controller teardown preserves inner session and closes superseded transport',
     );
     geminiLivePlugin.onElementDisconnected?.(h.element);
@@ -421,7 +610,15 @@ function testReentrantReconnect(): void {
   const originalSpeech = globals['speechSynthesis'];
   const originalUtterance = globals['SpeechSynthesisUtterance'];
   try {
-    for (const trigger of ['input', 'output', 'text', 'interrupted', 'final-user', 'final-model', 'detection']) {
+    for (const trigger of [
+      'input',
+      'output',
+      'text',
+      'interrupted',
+      'final-user',
+      'final-model',
+      'detection',
+    ]) {
       const h = host();
       const first = transport();
       const next = transport();
@@ -433,64 +630,123 @@ function testReentrantReconnect(): void {
       let staleSpeech = 0;
       globals['speechSynthesis'] = {
         cancel() {},
-        speak() { if (replacementStarted) staleSpeech++; },
+        speak() {
+          if (replacementStarted) staleSpeech++;
+        },
       };
-      globals['SpeechSynthesisUtterance'] = class { constructor(readonly text: string) {} };
-      ctrl.audio.enqueue = () => { if (replacementStarted) staleAudio++; };
+      globals['SpeechSynthesisUtterance'] = class {
+        constructor(readonly text: string) {}
+      };
+      ctrl.audio.enqueue = () => {
+        if (replacementStarted) staleAudio++;
+      };
       const dispatch = h.element.dispatchEvent;
       h.element.dispatchEvent = (event: Event) => {
         dispatch(event);
         if (replacementStarted) staleEvents++;
-        const detail = (event as CustomEvent).detail as {speaker?: string; isFinal?: boolean};
-        const matches = trigger === 'interrupted' ? event.type === 'xr-gemini-interrupted' :
-          trigger === 'detection' ? event.type === 'xr-object-detected' :
-          event.type === 'xr-transcription' && (
-            trigger === 'final-user' ? detail.isFinal && detail.speaker === 'user' :
-            trigger === 'final-model' ? detail.isFinal && detail.speaker === 'model' :
-            !detail.isFinal && detail.speaker === (trigger === 'input' ? 'user' : 'model'));
+        const detail = (event as CustomEvent).detail as {
+          speaker?: string;
+          isFinal?: boolean;
+        };
+        const matches =
+          trigger === 'interrupted'
+            ? event.type === 'xr-gemini-interrupted'
+            : trigger === 'detection'
+              ? event.type === 'xr-object-detected'
+              : event.type === 'xr-transcription' &&
+                (trigger === 'final-user'
+                  ? detail.isFinal && detail.speaker === 'user'
+                  : trigger === 'final-model'
+                    ? detail.isFinal && detail.speaker === 'model'
+                    : !detail.isFinal &&
+                      detail.speaker ===
+                        (trigger === 'input' ? 'user' : 'model'));
         if (matches && !switched) {
           switched = true;
-          ctrl.connect({transport: next.socket, streamFrames: false, detectObjects: true, speakReplies: true});
+          ctrl.connect({
+            transport: next.socket,
+            streamFrames: false,
+            detectObjects: true,
+            speakReplies: true,
+          });
           replacementStarted = true;
         }
         return true;
       };
-      ctrl.connect({transport: first.socket, streamFrames: false, detectObjects: true, speakReplies: true});
+      ctrl.connect({
+        transport: first.socket,
+        streamFrames: false,
+        detectObjects: true,
+        speakReplies: true,
+      });
       first.socket.onMessage?.({
-        ...(trigger === 'detection' ? {toolCall: {functionCalls: [{
-          id: 'old-call', name: REPORT_OBJECTS_TOOL,
-          args: {objects: [
-            {label: 'cup', box_2d: [400, 400, 600, 600]},
-            {label: 'plate', box_2d: [200, 200, 300, 300]},
-          ]},
-        }]}} : {}),
+        ...(trigger === 'detection'
+          ? {
+              toolCall: {
+                functionCalls: [
+                  {
+                    id: 'old-call',
+                    name: REPORT_OBJECTS_TOOL,
+                    args: {
+                      objects: [
+                        {label: 'cup', box_2d: [400, 400, 600, 600]},
+                        {label: 'plate', box_2d: [200, 200, 300, 300]},
+                      ],
+                    },
+                  },
+                ],
+              },
+            }
+          : {}),
         serverContent: {
           interrupted: trigger === 'interrupted',
-          ...(trigger === 'text' ? {} : {
-            inputTranscription: {text: 'old input'},
-            outputTranscription: {text: 'old output'},
-          }),
-          modelTurn: {parts: [
-            {text: 'old text', inlineData: {mimeType: 'audio/pcm;rate=24000', data: 'AAA='}},
-            {text: 'more old text'},
-          ]},
+          ...(trigger === 'text'
+            ? {}
+            : {
+                inputTranscription: {text: 'old input'},
+                outputTranscription: {text: 'old output'},
+              }),
+          modelTurn: {
+            parts: [
+              {
+                text: 'old text',
+                inlineData: {mimeType: 'audio/pcm;rate=24000', data: 'AAA='},
+              },
+              {text: 'more old text'},
+            ],
+          },
           turnComplete: true,
         },
       });
       assert(switched && ctrl.connected, `${trigger} listener can reconnect`);
-      assert(staleEvents === 0 && staleAudio === 0 && staleSpeech === 0,
-        `${trigger} reconnect stops remaining old events, audio and speech`);
-      assert(next.sent.length === 0, `${trigger} reconnect does not forward the old tool response`);
+      assert(
+        staleEvents === 0 && staleAudio === 0 && staleSpeech === 0,
+        `${trigger} reconnect stops remaining old events, audio and speech`,
+      );
+      assert(
+        next.sent.length === 0,
+        `${trigger} reconnect does not forward the old tool response`,
+      );
       replacementStarted = false;
-      next.socket.onMessage?.({serverContent: {modelTurn: {parts: [{text: 'new reply'}]}, turnComplete: true}});
-      assert(h.events.some((event) => (event.detail as {text?: string}).text === 'new reply'),
-        `${trigger} reconnect accepts the new reply`);
+      next.socket.onMessage?.({
+        serverContent: {
+          modelTurn: {parts: [{text: 'new reply'}]},
+          turnComplete: true,
+        },
+      });
+      assert(
+        h.events.some(
+          (event) => (event.detail as {text?: string}).text === 'new reply',
+        ),
+        `${trigger} reconnect accepts the new reply`,
+      );
       ctrl.disconnect();
     }
   } finally {
     if (originalSpeech === undefined) delete globals['speechSynthesis'];
     else globals['speechSynthesis'] = originalSpeech;
-    if (originalUtterance === undefined) delete globals['SpeechSynthesisUtterance'];
+    if (originalUtterance === undefined)
+      delete globals['SpeechSynthesisUtterance'];
     else globals['SpeechSynthesisUtterance'] = originalUtterance;
   }
 }
@@ -503,7 +759,9 @@ async function testDeferredBlobCallback(): Promise<void> {
     onopen?: () => void;
     onmessage?: (event: MessageEvent) => Promise<void>;
     onclose?: () => void;
-    constructor() { ws = this; }
+    constructor() {
+      ws = this;
+    }
     send() {}
     close() {}
   }
@@ -511,20 +769,36 @@ async function testDeferredBlobCallback(): Promise<void> {
   try {
     const socket = createWebSocketTransport('wss://example.com/live');
     let resolve!: (text: string) => void;
-    const text = new Promise<string>((ok) => { resolve = ok; });
+    const text = new Promise<string>((ok) => {
+      resolve = ok;
+    });
     let oldMessages = 0;
     let newMessages = 0;
-    socket.onMessage = () => { oldMessages++; };
+    socket.onMessage = () => {
+      oldMessages++;
+    };
     const pending = ws.onmessage!({data: {text: () => text}} as MessageEvent);
-    socket.onMessage = () => { newMessages++; };
+    socket.onMessage = () => {
+      newMessages++;
+    };
     resolve('{}');
     await pending;
-    assert(oldMessages === 1 && newMessages === 0, 'Blob decoding retains the callback that received the frame');
+    assert(
+      oldMessages === 1 && newMessages === 0,
+      'Blob decoding retains the callback that received the frame',
+    );
     await ws.onmessage!({data: '{}'} as MessageEvent);
-    assert(newMessages === 1, 'subsequent WebSocket frames use the current callback');
+    assert(
+      newMessages === 1,
+      'subsequent WebSocket frames use the current callback',
+    );
     let resolveAfterClose!: (text: string) => void;
-    const afterCloseText = new Promise<string>((ok) => { resolveAfterClose = ok; });
-    const pendingAfterClose = ws.onmessage!({data: {text: () => afterCloseText}} as MessageEvent);
+    const afterCloseText = new Promise<string>((ok) => {
+      resolveAfterClose = ok;
+    });
+    const pendingAfterClose = ws.onmessage!({
+      data: {text: () => afterCloseText},
+    } as MessageEvent);
     socket.close();
     resolveAfterClose('{}');
     await pendingAfterClose;
@@ -535,44 +809,79 @@ async function testDeferredBlobCallback(): Promise<void> {
 }
 
 async function testFrameQuestionBinding(): Promise<void> {
-  const h = host(), first = transport(), next = transport();
+  const h = host(),
+    first = transport(),
+    next = transport();
   const ctrl = new XRGeminiLiveController(h.element);
   ctrl.connect({transport: first.socket, streamFrames: false});
   const pending = ctrl.sendFrame();
   ctrl.sendText('Which color?');
-  assert(first.sent.length === 0, 'question does not overtake pending canvas capture');
+  assert(
+    first.sent.length === 0,
+    'question does not overtake pending canvas capture',
+  );
   h.captures[0].resolve(frame('green'));
-  await pending; await Promise.resolve();
+  await pending;
+  await Promise.resolve();
   const turns = first.sent[1]?.clientContent as any;
-  assert((first.sent[0]?.realtimeInput as any)?.mediaChunks[0].data === 'green', 'local frame is forwarded before its question');
-  assert(turns?.turns[0].parts[0].inlineData.data === 'green' && turns.turns[0].parts[1].text === 'Which color?',
-    'image and question share a single conversation turn without a fixed delay');
-  const stale = ctrl.sendFrame(); ctrl.sendText('stale question');
+  assert(
+    (first.sent[0]?.realtimeInput as any)?.mediaChunks[0].data === 'green',
+    'local frame is forwarded before its question',
+  );
+  assert(
+    turns?.turns[0].parts[0].inlineData.data === 'green' &&
+      turns.turns[0].parts[1].text === 'Which color?',
+    'image and question share a single conversation turn without a fixed delay',
+  );
+  const stale = ctrl.sendFrame();
+  ctrl.sendText('stale question');
   ctrl.connect({transport: next.socket, streamFrames: false});
-  h.captures[1].resolve(frame('old')); await stale; await Promise.resolve();
-  assert(next.sent.length === 0, 'capture-dependent question cannot enter a replacement session');
+  h.captures[1].resolve(frame('old'));
+  await stale;
+  await Promise.resolve();
+  assert(
+    next.sent.length === 0,
+    'capture-dependent question cannot enter a replacement session',
+  );
   ctrl.disconnect();
 }
 
 async function testVisualCaptureFailures(): Promise<void> {
-  const h = host(), t = transport();
+  const h = host(),
+    t = transport();
   const ctrl = new XRGeminiLiveController(h.element);
   ctrl.connect({transport: t.socket, streamFrames: false});
   ctrl.sendText('fresh question', {captureFrame: true});
-  assert(h.captures.length === 1 && t.sent.length === 0, 'explicit visual question starts a fresh capture');
+  assert(
+    h.captures.length === 1 && t.sent.length === 0,
+    'explicit visual question starts a fresh capture',
+  );
   h.captures[0].reject(new Error('capture unavailable'));
-  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-  assert(t.sent.length === 0, 'failed capture never downgrades a visual question to text');
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert(
+    t.sent.length === 0,
+    'failed capture never downgrades a visual question to text',
+  );
   delete h.element.captureViewFrame;
   ctrl.sendText('visual unavailable', {captureFrame: true});
-  assert(t.sent.length === 0, 'missing capture capability refuses an explicitly visual question');
+  assert(
+    t.sent.length === 0,
+    'missing capture capability refuses an explicitly visual question',
+  );
   ctrl.sendText('ordinary text');
-  assert(t.sent.length === 1, 'ordinary text keeps its immediate text-only behavior');
+  assert(
+    t.sent.length === 1,
+    'ordinary text keeps its immediate text-only behavior',
+  );
   ctrl.disconnect();
 }
 
 async function testCaptureReentry(): Promise<void> {
-  const h = host(), first = transport(), next = transport();
+  const h = host(),
+    first = transport(),
+    next = transport();
   const ctrl = new XRGeminiLiveController(h.element);
   const capture = h.element.captureViewFrame.bind(h.element);
   let nested!: Promise<boolean>;
@@ -586,49 +895,77 @@ async function testCaptureReentry(): Promise<void> {
   };
   ctrl.connect({transport: first.socket, streamFrames: false});
   const old = ctrl.sendFrame();
-  assert(h.captures.length === 2, 'capture host can replace the session and start its own capture');
-  assert(!(await ctrl.sendFrame()), 'outer capture cannot overwrite the replacement admission lock');
+  assert(
+    h.captures.length === 2,
+    'capture host can replace the session and start its own capture',
+  );
+  assert(
+    !(await ctrl.sendFrame()),
+    'outer capture cannot overwrite the replacement admission lock',
+  );
   h.captures[0].resolve(frame('old'));
   assert(!(await old), 'capture reentry revokes the old frame');
-  assert(!(await ctrl.sendFrame()), 'old completion cannot clear the replacement lock');
+  assert(
+    !(await ctrl.sendFrame()),
+    'old completion cannot clear the replacement lock',
+  );
   h.captures[1].resolve(frame('new'));
   assert(await nested, 'replacement capture completes normally');
-  assert(next.sent.length === 1 && JSON.stringify(next.sent[0]).includes('"new"'), 'only replacement pixels reach its transport');
+  assert(
+    next.sent.length === 1 && JSON.stringify(next.sent[0]).includes('"new"'),
+    'only replacement pixels reach its transport',
+  );
   ctrl.disconnect();
 }
 
 function testCloseCleansBeforeReentry(): void {
   for (const remote of [false, true]) {
-    const h = host(), first = transport(), next = transport();
+    const h = host(),
+      first = transport(),
+      next = transport();
     const ctrl = new XRGeminiLiveController(h.element);
     ctrl.connect({transport: first.socket, streamFrames: false});
     ctrl.transcripts.append('model', 'old partial');
-    let cleaned = 0; ctrl.audio.close = () => { cleaned++; };
+    let cleaned = 0;
+    ctrl.audio.close = () => {
+      cleaned++;
+    };
     if (remote) first.socket.onClose?.();
     else {
       first.socket.close = () => {
         assert(cleaned > 0, 'old audio closes before transport-close reentry');
         ctrl.connect({transport: next.socket, streamFrames: false});
-        next.socket.onMessage?.({serverContent: {modelTurn: {parts: [{text: 'fresh'}]}}});
+        next.socket.onMessage?.({
+          serverContent: {modelTurn: {parts: [{text: 'fresh'}]}},
+        });
       };
       ctrl.disconnect();
     }
     const remaining = ctrl.transcripts.finalize();
-    assert(remote ? remaining.length === 0 : remaining[0]?.text === 'fresh',
-      'remote closure and reentrant replacement cannot concatenate old partial transcripts');
+    assert(
+      remote ? remaining.length === 0 : remaining[0]?.text === 'fresh',
+      'remote closure and reentrant replacement cannot concatenate old partial transcripts',
+    );
     ctrl.disconnect();
   }
 }
 
 async function testHoldSessionLease(): Promise<void> {
   const globals = globalThis as any;
-  const timeout = globals.setTimeout, clear = globals.clearTimeout, original = globals.SpeechRecognition;
+  const timeout = globals.setTimeout,
+    clear = globals.clearTimeout,
+    original = globals.SpeechRecognition;
   let tick!: () => void, recognition: any;
-  globals.setTimeout = (fn: () => void) => { tick = fn; return 1; };
+  globals.setTimeout = (fn: () => void) => {
+    tick = fn;
+    return 1;
+  };
   globals.clearTimeout = () => {};
   globals.SpeechRecognition = class {
     onresult: ((e: any) => void) | null = null;
-    constructor() { recognition = this; }
+    constructor() {
+      recognition = this;
+    }
     start() {}
     stop() {}
     abort() {}
@@ -636,26 +973,48 @@ async function testHoldSessionLease(): Promise<void> {
   try {
     for (const startSpeech of [false, true]) {
       const element = new EventTarget() as any;
+      element.capabilities = 'ai network camera microphone';
       element.captureViewFrame = async () => frame('green');
-      const first = transport(), next = transport();
+      const first = transport(),
+        next = transport();
       geminiLivePlugin.onElementConnected?.(element);
-      const ctrl = connectGeminiLive(element, {transport: first.socket, streamFrames: false});
-      element.dispatchEvent(new CustomEvent('xr-select-start', {detail: {hit: {mesh: {
-        name: 'old object', userData: {xr: {holdToAsk: {prompt: 'old question'}}},
-      }}}}));
+      const ctrl = connectGeminiLive(element, {
+        transport: first.socket,
+        streamFrames: false,
+      });
+      element.dispatchEvent(
+        new CustomEvent('xr-select-start', {
+          detail: {
+            hit: {
+              mesh: {
+                name: 'old object',
+                userData: {xr: {holdToAsk: {prompt: 'old question'}}},
+              },
+            },
+          },
+        }),
+      );
       if (startSpeech) tick();
       const late = recognition?.onresult;
       ctrl.connect({transport: next.socket, streamFrames: false});
       if (startSpeech) {
-        assert(recognition.onresult === null, 'reconnect detaches recognition delivery before abort');
+        assert(
+          recognition.onresult === null,
+          'reconnect detaches recognition delivery before abort',
+        );
         late?.({results: [[{transcript: 'old speech'}]]});
       } else tick();
-      await Promise.resolve(); await Promise.resolve();
-      assert(next.sent.length === 0, 'old hold timer/recognition cannot send into the new session');
+      await Promise.resolve();
+      await Promise.resolve();
+      assert(
+        next.sent.length === 0,
+        'old hold timer/recognition cannot send into the new session',
+      );
       geminiLivePlugin.onElementDisconnected?.(element);
     }
   } finally {
-    globals.setTimeout = timeout; globals.clearTimeout = clear;
+    globals.setTimeout = timeout;
+    globals.clearTimeout = clear;
     if (original === undefined) delete globals.SpeechRecognition;
     else globals.SpeechRecognition = original;
   }
@@ -663,7 +1022,8 @@ async function testHoldSessionLease(): Promise<void> {
 
 async function main(): Promise<void> {
   for (const reuseTransport of [false, true]) {
-    for (const rejectOld of [false, true]) await testPendingCapture(rejectOld, reuseTransport);
+    for (const rejectOld of [false, true])
+      await testPendingCapture(rejectOld, reuseTransport);
     testStaleCallbacks(reuseTransport);
   }
   await testStaleCamera();

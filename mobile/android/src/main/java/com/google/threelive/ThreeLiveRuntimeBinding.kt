@@ -53,6 +53,9 @@ class ThreeLiveRuntimeBinding(private val renderer: ThreeLiveSceneRenderer, glb:
 
     /** A hand's gesture changed to a non-`NONE` gesture (when [handsEnabled] is `true`). */
     fun onGesture(event: XRHandGestureEvent) {}
+
+    /** A sensitive operation was refused by [capabilities] (or [ThreeLiveCapabilities.default]). */
+    fun onCapabilityDenied(event: CapabilityDeniedEvent) {}
   }
 
   /** The behavior / trait runtime for the loaded scene. */
@@ -65,6 +68,36 @@ class ThreeLiveRuntimeBinding(private val renderer: ThreeLiveSceneRenderer, glb:
 
   /** Host callbacks. */
   var callbacks: Callbacks? = null
+
+  private val capabilityGuard = CapabilityGuard()
+
+  /**
+   * Optional per-binding capability policy override. When `null`, [ThreeLiveCapabilities.default]
+   * is consulted.
+   */
+  @Volatile
+  var capabilities: ThreeLiveCapabilities? = null
+    set(value) {
+      field = value
+      capabilityGuard.reset()
+    }
+
+  internal fun checkCapability(
+    capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = null,
+    baseUrl: String? = null,
+    dedup: Boolean = false,
+  ): Boolean =
+    capabilityGuard.check(
+      policy = capabilities ?: ThreeLiveCapabilities.default,
+      capability = capability,
+      feature = feature,
+      url = url,
+      baseUrl = baseUrl,
+      dedup = dedup,
+      listener = { callbacks?.onCapabilityDenied(it) },
+    )
 
   /**
    * When `true` (`xrHands != "none"`), polls [handSource] (or [HandJointSources.current] when
@@ -196,7 +229,14 @@ class ThreeLiveRuntimeBinding(private val renderer: ThreeLiveSceneRenderer, glb:
       override fun onFrame(dtSeconds: Double, cameraWorld: FloatArray) {
         if (disposed) return
         syncRootTransform()
-        val hands = if (handsEnabled) (handSource ?: HandJointSources.current()) else null
+        val hands =
+          if (
+            handsEnabled && checkCapability(ThreeLiveCapability.SENSORS, "xrHands", dedup = true)
+          ) {
+            handSource ?: HandJointSources.current()
+          } else {
+            null
+          }
         val handPoses = HandJointSources.handPoses(hands)
         session.step(dtSeconds, headPoseOf(cameraWorld), handPoses)
         if (hands != null) {

@@ -17,6 +17,7 @@
  * Exports the WebGL2 PBR renderer (three-view) and Three.js authoring engine (three-author).
  */
 
+export * from './capabilities';
 export * from './three-author';
 export * from './three-convert';
 export * from './three-view';

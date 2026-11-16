@@ -73,6 +73,14 @@
     public var onPeerGrabConflict: ((_ peerId: String, _ nodeId: String) -> Void)?
     /// Targeted WebRTC voice signaling payload (`peerrtcsignal`).
     public var onPeerRtcSignal: ((_ message: SharedRoom.WireMessage) -> Void)?
+    /// Called whenever a sensitive spatial feature is refused by capability policy.
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+    /// Optional per-features capability policy override (`nil` falls back to `live.capabilities`).
+    public var capabilities: ThreeLiveCapabilities? {
+      didSet { capabilityGuard.reset() }
+    }
+    /// Optional room relay URL validated against `network` scheme/origin policy when set.
+    public var roomEndpointURL: String?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
@@ -137,7 +145,30 @@
     public nonisolated static let splatResortMinInterval: TimeInterval = 1.0 / 15.0
 
     private let live: XRLiveRealityKitSession
+    private let baseURL: String?
+    private let capabilityGuard = CapabilityGuard()
     private let container = Entity()
+
+    private func checkCapability(
+      _ capability: ThreeLiveCapability,
+      feature: String,
+      url: String? = nil,
+      dedup: Bool = false
+    ) -> Bool {
+      let policy = capabilities ?? live.capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      return capabilityGuard.check(
+        policy: policy,
+        capability: capability,
+        feature: feature,
+        url: url,
+        baseURL: baseURL,
+        dedup: dedup,
+        onDenied: { [weak self] event in
+          self?.onCapabilityDenied?(event)
+          self?.live.onCapabilityDenied?(event)
+        }
+      )
+    }
 
     private struct HandleNode {
       let node: Int
@@ -330,9 +361,12 @@
       live: XRLiveRealityKitSession,
       baseURL: String? = nil,
       allowRemoteSplats: Bool = false,
-      maxSplats: Int? = nil
+      maxSplats: Int? = nil,
+      capabilities: ThreeLiveCapabilities? = nil
     ) {
       self.live = live
+      self.baseURL = baseURL
+      self.capabilities = capabilities
       container.name = "XRSpatialFeatures"
       live.root.addChild(container)
       let useGpuBillboard = Self.probeGpuBillboardMaterial(
@@ -403,17 +437,35 @@
         }
         if let rawSplat = traits.splatUrl,
           let resolved = SplatParser.resolveSplatURL(
-            rawSplat, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
+            rawSplat, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats),
+          checkCapability(
+            .remoteContent,
+            feature: "splatUrl",
+            url: resolved.absoluteString,
+            dedup: true
+          )
         {
           let entity = ModelEntity()
           container.addChild(entity)
           let cloud = SplatCloud(node: i, url: resolved, entity: entity)
-          cloud.loadTask = Task { @MainActor [weak cloud] in
+          cloud.loadTask = Task { @MainActor [weak self, weak cloud] in
+            guard let self = self,
+              self.checkCapability(
+                .remoteContent,
+                feature: "splatUrl",
+                url: resolved.absoluteString,
+                dedup: true
+              )
+            else { return }
             let result = await Task.detached(priority: .utility) {
               () -> (SplatData, SplatParser.QuadGeometry?)? in
               guard
                 let loaded = try? await SplatParser.loadURL(
-                  resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
+                  resolved.absoluteString,
+                  baseURL: baseURL,
+                  allowCrossOrigin: allowRemoteSplats,
+                  capabilities: .all
+                )
               else { return nil }
               let sampled = SplatParser.downsample(loaded, maxSplats: effectiveMaxSplats)
               let staticGpu =
@@ -525,7 +577,8 @@
     /// Removes every feature entity and stops updates.
     public func dispose() {
       if !disposed, let sender = roomSend,
-        let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
+        let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId),
+        checkCapability(.network, feature: "sharedRoom", url: roomEndpointURL, dedup: true)
       {
         sender(SharedRoom.serializeMessage(.leave(peerId: cleanId)))
       }
@@ -1485,6 +1538,7 @@
     @discardableResult
     public func savePersistedAnchors() -> Int {
       guard let storageKey = resolveStorageKey() else { return 0 }
+      guard checkCapability(.storage, feature: "persistentAnchors", dedup: true) else { return 0 }
       let poses = collectPersistedPoses()
       writeAnchorStore(storageKey, PersistentAnchors.serializePayload(poses))
       return poses.count
@@ -1494,15 +1548,17 @@
     /// priority) or the active namespace store, firing `onAnchorsRestored`.
     @discardableResult
     public func restorePersistedAnchors(urlHash: String? = nil) -> Int {
-      if let token = PersistentAnchors.extractHashToken(urlHash),
-        let fromHash = PersistentAnchors.decodeState(token), !fromHash.isEmpty
-      {
-        let count = applyPersistedPoses(fromHash)
-        if count > 0 { onAnchorsRestored?(count, "url-hash") }
-        return count
+      if let token = PersistentAnchors.extractHashToken(urlHash) {
+        guard checkCapability(.storage, feature: "persistUrlHash", dedup: true) else { return 0 }
+        if let fromHash = PersistentAnchors.decodeState(token), !fromHash.isEmpty {
+          let count = applyPersistedPoses(fromHash)
+          if count > 0 { onAnchorsRestored?(count, "url-hash") }
+          return count
+        }
       }
-      guard let storageKey = resolveStorageKey(),
-        let raw = readAnchorStore(storageKey),
+      guard let storageKey = resolveStorageKey() else { return 0 }
+      guard checkCapability(.storage, feature: "persistentAnchors", dedup: true) else { return 0 }
+      guard let raw = readAnchorStore(storageKey),
         let fromStore = PersistentAnchors.deserializePayload(raw)
       else { return 0 }
       let count = applyPersistedPoses(fromStore)
@@ -1521,7 +1577,9 @@
       guard let decoded = PersistentAnchors.decodeState(token) else { return 0 }
       let count = applyPersistedPoses(decoded)
       if count > 0 {
-        if let storageKey = resolveStorageKey() {
+        if let storageKey = resolveStorageKey(),
+          checkCapability(.storage, feature: "persistentAnchors", dedup: true)
+        {
           writeAnchorStore(storageKey, PersistentAnchors.serializePayload(decoded))
         }
         onAnchorsRestored?(count, source)
@@ -1531,9 +1589,9 @@
 
     /// Clears persisted anchor data for the active namespace.
     public func clearPersistedAnchors() {
-      if let storageKey = resolveStorageKey() {
-        writeAnchorStore(storageKey, nil)
-      }
+      guard let storageKey = resolveStorageKey() else { return }
+      guard checkCapability(.storage, feature: "persistentAnchors", dedup: true) else { return }
+      writeAnchorStore(storageKey, nil)
     }
 
     // MARK: Spatial Locomotion
@@ -1743,6 +1801,8 @@
       force: Bool = false
     ) -> Bool {
       guard !disposed, let sender = roomSend else { return false }
+      guard checkCapability(.network, feature: "sharedRoom", url: roomEndpointURL, dedup: true)
+      else { return false }
       if !force && atMs - lastPoseSentMs < SharedRoom.poseTickIntervalMs { return false }
       guard let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId) else { return false }
       lastPoseSentMs = atMs
@@ -1773,6 +1833,7 @@
       guard !disposed, nodeIndex >= 0, nodeIndex < session.nodeCount,
         shouldSyncNode(nodeIndex),
         let sender = roomSend,
+        checkCapability(.network, feature: "sharedRoom", url: roomEndpointURL, dedup: true),
         let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
       else { return false }
       let nodeId = syncNodeKey(nodeIndex)
@@ -1804,6 +1865,7 @@
     @discardableResult
     public func broadcastExplode(_ factor: Float) -> Bool {
       guard !disposed, factor.isFinite, let sender = roomSend,
+        checkCapability(.network, feature: "sharedRoom", url: roomEndpointURL, dedup: true),
         let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
       else { return false }
       sender(SharedRoom.serializeMessage(.explode(peerId: cleanId, factor: factor)))
@@ -1819,6 +1881,7 @@
       radius: Float = 0.01
     ) -> Bool {
       guard !disposed, points.count >= 2, let sender = roomSend,
+        checkCapability(.network, feature: "sharedRoom", url: roomEndpointURL, dedup: true),
         let cleanPeerId = XRLiveTraitParser.safeAnchorId(localPeerId),
         let cleanStrokeId = XRLiveTraitParser.safeAnchorId(strokeId)
       else { return false }
@@ -1859,13 +1922,48 @@
       return true
     }
 
+    /// Broadcasts a targeted WebRTC voice signaling payload (`sharedRoomVoice`) to `targetPeerId`.
+    @discardableResult
+    public func broadcastRtcSignal(
+      targetPeerId: String,
+      signalType: String,
+      sdp: String? = nil,
+      candidate: String? = nil,
+      sdpMid: String? = nil,
+      sdpMLineIndex: Int? = nil
+    ) -> Bool {
+      guard !disposed, let sender = roomSend,
+        checkCapability(.network, feature: "sharedRoomVoice", url: roomEndpointURL, dedup: true),
+        checkCapability(.microphone, feature: "sharedRoomVoice", dedup: true),
+        let cleanPeerId = XRLiveTraitParser.safeAnchorId(localPeerId),
+        let cleanTargetId = XRLiveTraitParser.safeAnchorId(targetPeerId),
+        cleanPeerId != cleanTargetId
+      else { return false }
+      let json = SharedRoom.serializeMessage(
+        .rtc(
+          peerId: cleanPeerId,
+          targetPeerId: cleanTargetId,
+          signalType: signalType,
+          sdp: sdp,
+          candidate: candidate,
+          sdpMid: sdpMid,
+          sdpMLineIndex: sdpMLineIndex
+        ))
+      guard json.utf8.count <= SharedRoom.maxPayloadBytes else { return false }
+      sender(json)
+      return true
+    }
+
     /// Processes an incoming room JSON payload, updating peer avatars, soft-locks, and scene state.
     @discardableResult
     public func handleRoomMessage(
       _ rawJson: String,
       atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
     ) -> Bool {
-      guard !disposed, let msg = SharedRoom.parseMessage(rawJson) else { return false }
+      guard !disposed,
+        checkCapability(.network, feature: "sharedRoom", url: roomEndpointURL, dedup: true),
+        let msg = SharedRoom.parseMessage(rawJson)
+      else { return false }
       let selfId = XRLiveTraitParser.safeAnchorId(localPeerId)
       if msg.peerId == selfId { return false }
 
@@ -1963,6 +2061,9 @@
         return true
       case .rtc(let peerId, let targetPeerId, _, _, _, _, _):
         guard targetPeerId == selfId else { return false }
+        guard checkCapability(.microphone, feature: "sharedRoomVoice", dedup: true) else {
+          return false
+        }
         remotePeers[peerId]?.lastSeenMs = atMs
         onPeerRtcSignal?(msg)
         return true

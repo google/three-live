@@ -19,6 +19,10 @@
  */
 
 import type {
+  CapabilityDeniedDetail,
+  ThreeLiveCapabilitiesInput,
+} from './three-live/src/capabilities';
+import type {
   CameraState,
   ShadowMapsMode,
   ThreeLiveElement,
@@ -532,9 +536,15 @@ export interface ThreeLiveAttributes {
    */
   sandbox?: 'worker' | 'iframe';
   /**
+   * Capability policy granting opt-in permissions (`scripts`, `network`,
+   * `remote_content`, `camera`, `microphone`, `sensors`, `storage`, `ai`,
+   * `external_handoff`, or presets `none`, `viewer`, `all`).
+   */
+  capabilities?: ThreeLiveCapabilitiesInput;
+  /**
    * Opt-in attribute allowing client-modified Three.js script strings
-   * (`executeScript(code)` and inline `<script type="text/three-live">`).
-   * Server-generated scripts (`script-src`) are enabled by default.
+   * (`executeScript(code)` and inline `<script type="text/three">`).
+   * Alias for the `scripts` capability.
    */
   'allow-client-scripts'?: boolean | string;
   /** `three-live-ai`: Chat Completions-compatible endpoint (your proxy or a local model) for `editScene()`. */
@@ -593,6 +603,9 @@ export interface ThreeLiveAttributes {
       status: 'session-started' | 'not-presenting' | 'failed';
       error?: any;
     }>,
+  ) => void;
+  'onthree-capability-denied'?: (
+    e: CustomEvent<CapabilityDeniedDetail>,
   ) => void;
 
   // Standard HTML / JSX attributes

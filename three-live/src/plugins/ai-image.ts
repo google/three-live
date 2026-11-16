@@ -15,6 +15,7 @@
  * and verified against `three-live/tests/fixtures/image_cases.json`.
  */
 
+import {checkPluginCapability} from '../plugin';
 import {
   type AIChatContentPart,
   type AIChatMessage,
@@ -463,7 +464,12 @@ export function buildVisualTurnMessages(
     ...(q ? [{type: 'image_url' as const, image_url: {url: q}}] : []),
     {
       type: 'text',
-      text: buildVisualRefinementPrompt(turn, totalTurns, Boolean(q), metricsNote),
+      text: buildVisualRefinementPrompt(
+        turn,
+        totalTurns,
+        Boolean(q),
+        metricsNote,
+      ),
     },
   ];
   return [
@@ -533,7 +539,10 @@ export async function renderComparisonSheetDataUrl(
   const ph = Math.min(512, Math.max(128, refImg.naturalHeight));
   const pw = Math.min(
     768,
-    Math.max(128, Math.round((ph * refImg.naturalWidth) / refImg.naturalHeight)),
+    Math.max(
+      128,
+      Math.round((ph * refImg.naturalWidth) / refImg.naturalHeight),
+    ),
   );
   const host = document.createElement('div');
   const glCanvas = document.createElement('canvas');
@@ -548,8 +557,8 @@ export async function renderComparisonSheetDataUrl(
     viewer.loadModel(model);
     const cam = parseScriptCamera(code);
     if (cam.fov) viewer.setFieldOfView?.(cam.fov);
-    const tgt: [number, number, number] =
-      cam.target ?? viewer.bounds?.center ?? [0, 0, 0];
+    const tgt: [number, number, number] = cam.target ??
+      viewer.bounds?.center ?? [0, 0, 0];
     if (cam.target) viewer.setTarget?.(tgt[0], tgt[1], tgt[2]);
     if (cam.eye) {
       const dx = cam.eye[0] - tgt[0];
@@ -693,7 +702,12 @@ function downscaleDrawableToDataUrl(
   const scale = longest > maxEdge ? maxEdge / longest : 1;
   const targetW = Math.max(1, Math.round(width * scale));
   const targetH = Math.max(1, Math.round(height * scale));
-  const tryUrl = (obj: {toDataURL?: (type?: string, quality?: number) => string} | null | undefined) => {
+  const tryUrl = (
+    obj:
+      | {toDataURL?: (type?: string, quality?: number) => string}
+      | null
+      | undefined,
+  ) => {
     try {
       const u = obj?.toDataURL?.('image/jpeg', 0.88);
       return u && isAllowedImageUrl(u) ? u : null;
@@ -736,6 +750,7 @@ export async function normalizeImageInput(
     readonly maxEdge?: number;
     readonly signal?: AbortSignal;
     readonly fetch?: typeof fetch;
+    readonly host?: unknown;
   } = {},
 ): Promise<string> {
   const checkAbort = () => {
@@ -753,6 +768,20 @@ export async function normalizeImageInput(
     const s = input.trim();
     if (!s) {
       throw new Error('compileFromImage: image input is empty.');
+    }
+    if (
+      options.host !== undefined &&
+      !/^(?:data|blob):/i.test(s) &&
+      !checkPluginCapability(
+        options.host,
+        'remote_content',
+        'compileFromImage',
+        {
+          url: s,
+        },
+      )
+    ) {
+      throw new Error("compileFromImage: capability 'remote_content' denied.");
     }
     if (/^data:/i.test(s)) {
       if (!isAllowedImageUrl(s)) {
@@ -895,10 +924,19 @@ export async function compileFromImage(
   image: AIImageInput,
   options: CompileFromImageOptions = {},
 ): Promise<EditSceneResult> {
-  if (!el?.allowClientScripts) {
+  if (!checkPluginCapability(el, 'scripts', 'compileFromImage')) {
     throw new Error(
       'compileFromImage requires client scripts: add the allow-client-scripts attribute.',
     );
+  }
+  if (
+    typeof image === 'string' &&
+    !/^(?:data|blob):/i.test(image.trim()) &&
+    !checkPluginCapability(el, 'remote_content', 'compileFromImage', {
+      url: image.trim(),
+    })
+  ) {
+    throw new Error("compileFromImage: capability 'remote_content' denied.");
   }
   const provider = resolveProvider(el, options, 'compileFromImage');
   const prevSource = currentSource(el);
@@ -927,7 +965,10 @@ export async function compileFromImage(
   );
   const visualTurns = Math.max(
     0,
-    Math.min(MAX_VISUAL_TURNS, Math.floor(Number(options.visualTurns ?? 0)) || 0),
+    Math.min(
+      MAX_VISUAL_TURNS,
+      Math.floor(Number(options.visualTurns ?? 0)) || 0,
+    ),
   );
 
   let code = '';
@@ -956,7 +997,12 @@ export async function compileFromImage(
       };
     }
     try {
-      const res = await dryRunCompile(el, candidate, signal, 'compileFromImage');
+      const res = await dryRunCompile(
+        el,
+        candidate,
+        signal,
+        'compileFromImage',
+      );
       const warn = [...res.warnings];
       const summary = sceneSummary(res.model);
       if (
@@ -993,9 +1039,14 @@ export async function compileFromImage(
       maxEdge: options.maxEdge,
       signal,
       fetch: options.fetch,
+      host: el,
     });
     if (signal.aborted) throw signal.reason;
-    const initialMessages = buildImageMessages(imageUrl, prompt, options.priors);
+    const initialMessages = buildImageMessages(
+      imageUrl,
+      prompt,
+      options.priors,
+    );
     const messages = [...initialMessages];
 
     el.fireEvent?.('three-live-image-start', {prompt, hasPriors, visualTurns});

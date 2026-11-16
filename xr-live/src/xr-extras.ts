@@ -21,6 +21,7 @@
  */
 
 import {mat4FromRotationTranslationScale} from '../../three-live/src/math';
+import {checkPluginCapability} from '../../three-live/src/plugin';
 import type {XRDepthManager} from './xr-depth';
 import {
   extractPosition,
@@ -419,9 +420,13 @@ export function registerXRLiveWebMCPTools(
           scale: extractScale(m.transform),
           xrTraits: getMeshXRTraits(m) || {},
         }));
-        const headPosition = isWebMCPPoseOmitted(element)
-          ? undefined
-          : quantizeHeadPosition(getHeadPose().position);
+        const headPosition =
+          isWebMCPPoseOmitted(element) ||
+          !checkPluginCapability(element, 'sensors', 'webmcpPose', {
+            dedup: true,
+          })
+            ? undefined
+            : quantizeHeadPosition(getHeadPose().position);
         return {
           headPosition,
           objectCount: meshes.length,
@@ -443,6 +448,12 @@ export function registerXRLiveWebMCPTools(
         required: ['name'],
       },
       execute: async (args: {name: string; distanceMeters?: number}) => {
+        if (!checkPluginCapability(element, 'sensors', 'webmcpGaze')) {
+          return {
+            success: false,
+            error: "Capability 'sensors' denied for WebMCP gaze placement.",
+          };
+        }
         const viewer = getViewer();
         const mesh = (viewer?.meshes || []).find(
           (m: any) => m.name === args.name,
@@ -475,15 +486,33 @@ export function registerXRLiveWebMCPTools(
         properties: {includeDepth: {type: 'boolean'}},
       },
       execute: async (args: {includeDepth?: boolean}) => {
+        const viewer = getViewer();
+        if (!checkPluginCapability(element, 'camera', 'webmcpCapture')) {
+          throw new Error("Capability 'camera' denied for WebMCP XR capture.");
+        }
         markWebMCPCaptureActive(element);
         const allowDepth =
-          Boolean(args?.includeDepth) && isWebMCPDepthAllowed(element);
-        const pose = getHeadPose();
+          Boolean(args?.includeDepth) &&
+          isWebMCPDepthAllowed(element) &&
+          checkPluginCapability(element, 'sensors', 'webmcpDepth');
+        const canReadPose = checkPluginCapability(
+          element,
+          'sensors',
+          'webmcpPose',
+          {dedup: true},
+        );
+        const pose = canReadPose
+          ? getHeadPose()
+          : {
+              position: [0, 0, 0] as [number, number, number],
+              quaternion: [0, 0, 0, 1] as [number, number, number, number],
+              matrix: new Float32Array(16),
+            };
         const quantizedPose: XRPose6DoF = {
           ...pose,
           position: quantizeHeadPosition(pose.position),
         };
-        return captureXRViewFrame(getViewer(), quantizedPose, depthManager, {
+        return captureXRViewFrame(viewer, quantizedPose, depthManager, {
           includeDepth: allowDepth,
         });
       },

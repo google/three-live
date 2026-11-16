@@ -30,7 +30,11 @@ import {
   mat4FromRotationTranslationScale,
   mat4Multiply,
 } from '../../../three-live/src/math';
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  checkPluginCapability,
+  hasPluginCapability,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {
   clampNum,
   safeAnchorId,
@@ -481,9 +485,13 @@ function parseBoundedVec3(raw: unknown, maxAbs = 1000): Vec3 | null {
  */
 // tslint:disable-next-line:no-any Host `<xr-live>` element.
 function isVoiceEnabled(el: any): boolean {
-  return (
+  const optedIn =
     !!el?.hasAttribute?.('shared-room-voice') &&
-    el.getAttribute?.('shared-room-voice') !== 'false'
+    el.getAttribute?.('shared-room-voice') !== 'false';
+  return (
+    optedIn &&
+    checkPluginCapability(el, 'microphone', 'sharedRoomVoice', {dedup: true}) &&
+    checkPluginCapability(el, 'network', 'sharedRoomVoice', {dedup: true})
   );
 }
 
@@ -984,9 +992,17 @@ export class XRSharedRoomController {
     customTransport?: SharedRoomTransport,
   ): boolean {
     this.lastViewer = viewer ?? this.lastViewer;
-    this.bindHostListeners(element);
+    const capHost = element ?? viewer?.container;
 
     if (customTransport) {
+      if (
+        !checkPluginCapability(capHost, 'network', 'sharedRoom', {dedup: true})
+      ) {
+        this.disconnectTransport(viewer, element);
+        this.activeRoomKey = '';
+        return false;
+      }
+      this.bindHostListeners(element);
       this.disconnectTransport(viewer, element);
       this.activeRoomKey = `custom:${roomAttr || 'room'}`;
       this.attachTransport(customTransport, viewer, element);
@@ -999,6 +1015,19 @@ export class XRSharedRoomController {
       this.activeRoomKey = '';
       return false;
     }
+
+    if (
+      !checkPluginCapability(capHost, 'network', 'sharedRoom', {
+        url: target.kind === 'websocket' ? target.url : undefined,
+        dedup: true,
+      })
+    ) {
+      this.disconnectTransport(viewer, element);
+      this.activeRoomKey = '';
+      return false;
+    }
+
+    this.bindHostListeners(element);
 
     const nextKey =
       target.kind === 'websocket'
@@ -1565,6 +1594,15 @@ export class XRSharedRoomController {
     }
 
     if (!this.transport) return;
+    const capHost = element ?? viewer?.container;
+    const roomUrl = this.activeRoomKey.startsWith('ws:')
+      ? this.activeRoomKey.slice(3)
+      : undefined;
+    if (!hasPluginCapability(capHost, 'network', roomUrl)) {
+      this.disconnectTransport(viewer, element, false);
+      this.activeRoomKey = '';
+      return;
+    }
 
     // Sync local `traitSystem` grab lifecycle (`grab` -> 20 Hz `move` -> `release`).
     // tslint:disable-next-line:no-any Heterogeneous scene meshes.
@@ -1731,9 +1769,12 @@ export class XRSharedRoomController {
     viewer: PluginViewer | undefined,
     // tslint:disable-next-line:no-any Host `<xr-live>` element.
     element?: any,
+    sendLeave = true,
   ): void {
     if (this.transport) {
-      this.sendWire({v: 1, type: 'leave', peerId: this.peerId});
+      if (sendLeave) {
+        this.sendWire({v: 1, type: 'leave', peerId: this.peerId});
+      }
       const t = this.transport;
       this.transport = null;
       t.onMessage = undefined;
@@ -1850,6 +1891,10 @@ export const sharedRoomPlugin: ThreeLivePlugin = {
       if (newVal && newVal.trim()) {
         ctrl.connect(newVal, viewer, element);
       } else {
+        ctrl.dispose(viewer);
+      }
+    } else if (name === 'capabilities') {
+      if (!hasPluginCapability(element, 'network')) {
         ctrl.dispose(viewer);
       }
     } else if ((name === 'peer-name' || name === 'peer-color') && viewer) {

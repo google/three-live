@@ -111,9 +111,16 @@ public final class XRFrameHistory: @unchecked Sendable {
   public final class ARViewFrameSource {
     /// When `true`, no frames are captured (e.g. the app is in the background).
     public var paused = false
+    /// Optional capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+    public var capabilities: ThreeLiveCapabilities? {
+      didSet { capabilityGuard.reset() }
+    }
+    /// Optional callback notified whenever frame capture is refused by capability policy.
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
     /// Recently sent frames and their camera matrices.
     public let history = XRFrameHistory()
 
+    private let capabilityGuard = CapabilityGuard()
     private weak var arView: ARView?
     private let maxEdge: Int
     private let fieldOfViewDegrees: () -> Double
@@ -175,7 +182,20 @@ public final class XRFrameHistory: @unchecked Sendable {
     }
 
     private func capture(_ done: @escaping (XRCapturedFrame?) -> Void) {
-      guard !paused, let arView = arView,
+      guard !paused else {
+        done(nil)
+        return
+      }
+      let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      guard
+        capabilityGuard.check(
+          policy: policy,
+          capability: .camera,
+          feature: "arViewFrameSource",
+          dedup: true,
+          onDenied: onCapabilityDenied
+        ),
+        let arView = arView,
         let matrices = ARViewFrameSource.cameraMatrices(of: arView, fieldOfViewDegrees: fieldOfViewDegrees())
       else {
         done(nil)

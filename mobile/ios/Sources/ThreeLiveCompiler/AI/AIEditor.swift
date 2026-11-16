@@ -63,12 +63,46 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
   private let temperature: Double
   private let timeout: TimeInterval
   private let session: URLSession
+  private let capLock = NSLock()
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  var fallbackCapabilities: (() -> ThreeLiveCapabilities?)?
+  var fallbackOnDenied: (() -> ((CapabilityDeniedEvent) -> Void)?)?
+
+  public var capabilities: ThreeLiveCapabilities? {
+    get {
+      capLock.lock()
+      defer { capLock.unlock() }
+      return _capabilities
+    }
+    set {
+      capLock.lock()
+      _capabilities = newValue
+      capLock.unlock()
+    }
+  }
+
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get {
+      capLock.lock()
+      defer { capLock.unlock() }
+      return _onCapabilityDenied
+    }
+    set {
+      capLock.lock()
+      _onCapabilityDenied = newValue
+      capLock.unlock()
+    }
+  }
+
+  var endpointURLString: String { endpoint.absoluteString }
 
   /// Returns `nil` unless `endpoint` is `https://` (or `http://` to a loopback host).
   public init?(
     endpoint: String, model: String? = nil, headers: [String: String] = [:],
     reasoningEffort: String? = nil, temperature: Double = 0.2, timeout: TimeInterval = 120,
-    session: URLSession = .shared
+    session: URLSession = .shared, capabilities: ThreeLiveCapabilities? = nil,
+    onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
   ) {
     guard Self.isAllowedEndpoint(endpoint), let url = URL(string: endpoint) else { return nil }
     self.endpoint = url
@@ -78,6 +112,8 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
     self.temperature = temperature
     self.timeout = timeout
     self.session = session
+    self._capabilities = capabilities
+    self._onCapabilityDenied = onCapabilityDenied
   }
 
   public static func isAllowedEndpoint(_ raw: String) -> Bool {
@@ -88,6 +124,27 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
   }
 
   public func complete(_ messages: [AIChatMessage]) async throws -> String {
+    let (customCaps, customDenied, fbCaps, fbDenied) = {
+      () -> (
+        ThreeLiveCapabilities?, ((CapabilityDeniedEvent) -> Void)?,
+        (() -> ThreeLiveCapabilities?)?, (() -> ((CapabilityDeniedEvent) -> Void)?)?
+      ) in
+      capLock.lock()
+      defer { capLock.unlock() }
+      return (_capabilities, _onCapabilityDenied, fallbackCapabilities, fallbackOnDenied)
+    }()
+    let policy = customCaps ?? fbCaps?() ?? ThreeLiveCapabilities.defaultPolicy
+    let deniedListener = customDenied ?? fbDenied?()
+    guard
+      policy.check(
+        .ai,
+        feature: "aiChat",
+        url: endpoint.absoluteString,
+        onDenied: deniedListener
+      )
+    else {
+      throw AIEditError("ai-chat: capability 'ai' or 'network' denied.")
+    }
     let serializedMessages: [[String: Any]] = messages.map { msg in
       let content: Any
       if msg.imageUrls.isEmpty {
@@ -468,7 +525,41 @@ public final class AIEditor: @unchecked Sendable {
   /// AI textures (B5). When set, every applied script goes to `AITextures.sceneLoaded`; in
   /// `.auto` mode missing textures are generated in the background and the current script is
   /// re-applied when they arrive.
-  public var textures: AITextures?
+  public var textures: AITextures? {
+    didSet {
+      if let tex = textures {
+        tex.bindEditorFallback(
+          capabilities: { [weak self] in self?.capabilities },
+          onDenied: { [weak self] in self?.onCapabilityDenied }
+        )
+      }
+    }
+  }
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+  /// Optional capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+  public var capabilities: ThreeLiveCapabilities? {
+    get { locked { _capabilities } }
+    set { locked { _capabilities = newValue } }
+  }
+  /// Optional callback notified whenever an editor operation is refused by capability policy.
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get { locked { _onCapabilityDenied } }
+    set { locked { _onCapabilityDenied = newValue } }
+  }
+
+  var providerEndpointURL: String? {
+    (provider as? AIChatProvider)?.endpointURLString
+  }
+
+  func checkEditorCapability(
+    _ capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = nil
+  ) -> Bool {
+    let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+    return policy.check(capability, feature: feature, url: url, onDenied: onCapabilityDenied)
+  }
 
   public init(
     source: String = "", provider: AIProvider, core: AICore = NativeAICore.shared,
@@ -478,6 +569,14 @@ public final class AIEditor: @unchecked Sendable {
     self.provider = provider
     self.core = core
     self.applyScene = applyScene
+    if let chat = provider as? AIChatProvider {
+      if chat.fallbackCapabilities == nil {
+        chat.fallbackCapabilities = { [weak self] in self?.capabilities }
+      }
+      if chat.fallbackOnDenied == nil {
+        chat.fallbackOnDenied = { [weak self] in self?.onCapabilityDenied }
+      }
+    }
   }
 
   /// Runs `body` under the lock (a synchronous helper, so async methods never call
@@ -595,7 +694,8 @@ public final class AIEditor: @unchecked Sendable {
     var question = ""
     let reason = match["reason"] as? String
     if selectWithModel, !q.trimmingCharacters(in: .whitespaces).isEmpty,
-      (match["confidence"] as? String) == "none", reason == "relation" || reason == "no_match"
+      (match["confidence"] as? String) == "none", reason == "relation" || reason == "no_match",
+      checkEditorCapability(.ai, feature: "selectByVoice", url: providerEndpointURL)
     {
       do {
         let built = try await core.call(
@@ -758,6 +858,20 @@ public final class AIEditor: @unchecked Sendable {
           applied: false, code: "", repairs: 0, warnings: [], error: "instruction is empty"))
     }
     onEditStart?(text, sel?.first)
+    guard checkEditorCapability(.scripts, feature: "editScene") else {
+      return finish(
+        text,
+        EditResult(
+          applied: false, code: "", repairs: 0, warnings: [],
+          error: "Capability 'scripts' is disabled."))
+    }
+    guard checkEditorCapability(.ai, feature: "editScene", url: providerEndpointURL) else {
+      return finish(
+        text,
+        EditResult(
+          applied: false, code: "", repairs: 0, warnings: [],
+          error: "Capability 'ai' or 'network' is disabled."))
+    }
     let allowed = min(3, max(0, maxRepairs))
     var code = ""
     var error: String?
@@ -842,6 +956,31 @@ public final class AIEditor: @unchecked Sendable {
     }
     let isSuperseded = { [self] () -> Bool in locked { generation != myGen } }
     onImageStart?(cleanPrompt)
+    guard checkEditorCapability(.scripts, feature: "compileFromImage") else {
+      return finishImage(
+        cleanPrompt,
+        EditResult(
+          applied: false, code: "", repairs: 0, warnings: [],
+          error: "Capability 'scripts' is disabled."))
+    }
+    let trimmedImageURL = imageUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmedImageURL.isEmpty,
+      !ThreeLiveCapabilities.isNonNetworkURL(trimmedImageURL),
+      !checkEditorCapability(.remoteContent, feature: "compileFromImage", url: trimmedImageURL)
+    {
+      return finishImage(
+        cleanPrompt,
+        EditResult(
+          applied: false, code: "", repairs: 0, warnings: [],
+          error: "Capability 'remote_content' or 'network' is disabled."))
+    }
+    guard checkEditorCapability(.ai, feature: "compileFromImage", url: providerEndpointURL) else {
+      return finishImage(
+        cleanPrompt,
+        EditResult(
+          applied: false, code: "", repairs: 0, warnings: [],
+          error: "Capability 'ai' or 'network' is disabled."))
+    }
     let allowed = min(3, max(0, maxRepairs))
     var code = ""
     var error: String?
@@ -1033,6 +1172,8 @@ public final class AIEditor: @unchecked Sendable {
   /// Restores the script from before the last applied edit. Returns false when nothing to undo.
   @discardableResult
   public func undo() async throws -> Bool {
+    guard locked({ !history.isEmpty }) else { return false }
+    guard checkEditorCapability(.scripts, feature: "undo") else { return false }
     guard let prev = locked({ history.popLast() }) else { return false }
     try await applyScene(prev)
     locked { _source = prev }

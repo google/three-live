@@ -55,10 +55,18 @@ constructor(
    */
   private val splatLoader: (url: String, baseUrl: String?, allowCrossOrigin: Boolean) -> SplatData =
     { u, b, a ->
-      SplatParser.loadUrl(u, b, a, decodeSh = !renderer.supportsGpuSplats)
+      SplatParser.loadUrl(
+        u,
+        b,
+        a,
+        decodeSh = !renderer.supportsGpuSplats,
+        capabilities = ThreeLiveCapabilities.ALL,
+      )
     },
   /** Background executor for splat downloads and depth sorting. */
   private val backgroundExecutor: Executor? = null,
+  /** Optional capability policy override (`null` falls back to [binding.capabilities]). */
+  capabilities: ThreeLiveCapabilities? = null,
 ) {
   /** Feature events, matching the web `xr-handles-change` / `xr-paint-stroke` details. */
   interface Listener {
@@ -106,9 +114,49 @@ constructor(
 
     /** Targeted WebRTC voice signaling payload (`peerrtcsignal`). */
     fun onPeerRtcSignal(msg: SharedRoom.WireMessage.Rtc) {}
+
+    /** A sensitive spatial feature was refused by capability policy. */
+    fun onCapabilityDenied(event: CapabilityDeniedEvent) {}
   }
 
   var listener: Listener? = null
+
+  private val capabilityGuard = CapabilityGuard()
+
+  /**
+   * Optional per-features capability policy override. When `null`, [binding.capabilities] (or
+   * [ThreeLiveCapabilities.default]) is consulted.
+   */
+  @Volatile
+  var capabilities: ThreeLiveCapabilities? = capabilities
+    set(value) {
+      field = value
+      capabilityGuard.reset()
+    }
+
+  /** Optional room relay URL validated against `network` scheme/origin policy when set. */
+  var roomEndpointUrl: String? = null
+
+  private fun checkCapability(
+    capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = null,
+    dedup: Boolean = false,
+  ): Boolean {
+    val policy = capabilities ?: binding.capabilities ?: ThreeLiveCapabilities.default
+    return capabilityGuard.check(
+      policy = policy,
+      capability = capability,
+      feature = feature,
+      url = url,
+      baseUrl = baseUrl,
+      dedup = dedup,
+      listener = { event ->
+        listener?.onCapabilityDenied(event)
+        binding.callbacks?.onCapabilityDenied(event)
+      },
+    )
+  }
 
   /** Linear RGBA paint color, or `null` to disable spatial paint (the default). */
   var paintColor: FloatArray? = null
@@ -378,11 +426,29 @@ constructor(
       if (t.pointerEvents == "none") pointerNoneNodes.add(node)
       t.splatUrl?.let { raw ->
         val resolved = SplatParser.resolveSplatUrl(raw, baseUrl, allowRemoteSplats)
-        if (resolved != null) {
+        if (
+          resolved != null &&
+            checkCapability(
+              ThreeLiveCapability.REMOTE_CONTENT,
+              "splatUrl",
+              url = resolved,
+              dedup = true,
+            )
+        ) {
           val cloud = SplatCloud(node, resolved)
           splats.add(cloud)
           executor.execute {
             if (disposed) return@execute
+            if (
+              !checkCapability(
+                ThreeLiveCapability.REMOTE_CONTENT,
+                "splatUrl",
+                url = resolved,
+                dedup = true,
+              )
+            ) {
+              return@execute
+            }
             try {
               val loaded = splatLoader(resolved, baseUrl, allowRemoteSplats)
               if (!disposed) {
@@ -484,7 +550,16 @@ constructor(
     session.grabGuards.remove(grabGuard)
     val sender = roomSend
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId)
-    if (sender != null && cleanId != null) {
+    if (
+      sender != null &&
+        cleanId != null &&
+        checkCapability(
+          ThreeLiveCapability.NETWORK,
+          "sharedRoom",
+          url = roomEndpointUrl,
+          dedup = true,
+        )
+    ) {
       sender(SharedRoom.serializeMessage(SharedRoom.WireMessage.Leave(cleanId)))
     }
     disposed = true
@@ -1508,6 +1583,7 @@ constructor(
   fun savePersistedAnchors(): Int {
     if (disposed) return 0
     val storageKey = resolveStorageKey() ?: return 0
+    if (!checkCapability(ThreeLiveCapability.STORAGE, "persistentAnchors", dedup = true)) return 0
     val poses = collectPersistedPoses()
     writeAnchorStore(storageKey, PersistentAnchors.serializePayload(poses))
     return poses.size
@@ -1523,6 +1599,7 @@ constructor(
     if (disposed) return 0
     val hashToken = PersistentAnchors.extractHashToken(urlHash)
     if (hashToken != null) {
+      if (!checkCapability(ThreeLiveCapability.STORAGE, "persistUrlHash", dedup = true)) return 0
       val fromHash = PersistentAnchors.decodeState(hashToken)
       if (fromHash != null && fromHash.isNotEmpty()) {
         val count = applyPersistedPoses(fromHash)
@@ -1531,6 +1608,7 @@ constructor(
       }
     }
     val storageKey = resolveStorageKey() ?: return 0
+    if (!checkCapability(ThreeLiveCapability.STORAGE, "persistentAnchors", dedup = true)) return 0
     val raw = readAnchorStore(storageKey) ?: return 0
     val fromStore = PersistentAnchors.deserializePayload(raw) ?: return 0
     val count = applyPersistedPoses(fromStore)
@@ -1548,7 +1626,11 @@ constructor(
     val decoded = PersistentAnchors.decodeState(token) ?: return 0
     val count = applyPersistedPoses(decoded)
     if (count > 0) {
-      resolveStorageKey()?.let { writeAnchorStore(it, PersistentAnchors.serializePayload(decoded)) }
+      resolveStorageKey()?.let { key ->
+        if (checkCapability(ThreeLiveCapability.STORAGE, "persistentAnchors", dedup = true)) {
+          writeAnchorStore(key, PersistentAnchors.serializePayload(decoded))
+        }
+      }
       listener?.onAnchorsRestored(count, source)
     }
     return count
@@ -1556,7 +1638,9 @@ constructor(
 
   /** Clears persisted anchor data for the active namespace. */
   fun clearPersistedAnchors() {
-    resolveStorageKey()?.let { writeAnchorStore(it, null) }
+    val storageKey = resolveStorageKey() ?: return
+    if (!checkCapability(ThreeLiveCapability.STORAGE, "persistentAnchors", dedup = true)) return
+    writeAnchorStore(storageKey, null)
   }
 
   // ---- Spatial locomotion ----------------------------------------------------------------------
@@ -1776,6 +1860,16 @@ constructor(
   ): Boolean {
     if (disposed) return false
     val sender = roomSend ?: return false
+    if (
+      !checkCapability(
+        ThreeLiveCapability.NETWORK,
+        "sharedRoom",
+        url = roomEndpointUrl,
+        dedup = true,
+      )
+    ) {
+      return false
+    }
     if (!force && atMs - lastPoseSentMs < SharedRoom.POSE_TICK_INTERVAL_MS) return false
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
     lastPoseSentMs = atMs
@@ -1812,6 +1906,16 @@ constructor(
     if (disposed || nodeIndex !in 0 until scene.nodeCount || !shouldSyncNode(nodeIndex))
       return false
     val sender = roomSend ?: return false
+    if (
+      !checkCapability(
+        ThreeLiveCapability.NETWORK,
+        "sharedRoom",
+        url = roomEndpointUrl,
+        dedup = true,
+      )
+    ) {
+      return false
+    }
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
     val nodeId = syncNodeKey(nodeIndex)
     val existing = nodeLeases[nodeId]
@@ -1855,6 +1959,16 @@ constructor(
   fun broadcastExplode(factor: Double): Boolean {
     if (disposed || !factor.isFinite()) return false
     val sender = roomSend ?: return false
+    if (
+      !checkCapability(
+        ThreeLiveCapability.NETWORK,
+        "sharedRoom",
+        url = roomEndpointUrl,
+        dedup = true,
+      )
+    ) {
+      return false
+    }
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
     val json = SharedRoom.serializeMessage(SharedRoom.WireMessage.Explode(cleanId, factor))
     sender(json)
@@ -1871,6 +1985,16 @@ constructor(
   ): Boolean {
     if (disposed || points.size < 2) return false
     val sender = roomSend ?: return false
+    if (
+      !checkCapability(
+        ThreeLiveCapability.NETWORK,
+        "sharedRoom",
+        url = roomEndpointUrl,
+        dedup = true,
+      )
+    ) {
+      return false
+    }
     val cleanPeerId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
     val cleanStrokeId = XRLiveSceneCoreHelper.safeAnchorId(strokeId) ?: return false
     val stride =
@@ -1922,12 +2046,65 @@ constructor(
     return false
   }
 
+  /** Broadcasts a targeted WebRTC voice signaling payload (`sharedRoomVoice`) to [targetPeerId]. */
+  fun broadcastRtcSignal(
+    targetPeerId: String,
+    signalType: String,
+    sdp: String? = null,
+    candidate: String? = null,
+    sdpMid: String? = null,
+    sdpMLineIndex: Int? = null,
+  ): Boolean {
+    if (disposed) return false
+    val sender = roomSend ?: return false
+    if (
+      !checkCapability(
+        ThreeLiveCapability.NETWORK,
+        "sharedRoomVoice",
+        url = roomEndpointUrl,
+        dedup = true,
+      ) || !checkCapability(ThreeLiveCapability.MICROPHONE, "sharedRoomVoice", dedup = true)
+    ) {
+      return false
+    }
+    val cleanPeerId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
+    val cleanTargetId = XRLiveSceneCoreHelper.safeAnchorId(targetPeerId) ?: return false
+    if (cleanPeerId == cleanTargetId) return false
+    val json =
+      SharedRoom.serializeMessage(
+        SharedRoom.WireMessage.Rtc(
+          peerId = cleanPeerId,
+          targetPeerId = cleanTargetId,
+          signalType = signalType,
+          sdp = sdp,
+          candidate = candidate,
+          sdpMid = sdpMid,
+          sdpMLineIndex = sdpMLineIndex,
+        )
+      )
+    if (json.toByteArray(Charsets.UTF_8).size <= SharedRoom.MAX_PAYLOAD_BYTES) {
+      sender(json)
+      return true
+    }
+    return false
+  }
+
   /**
    * Processes an incoming room JSON payload, updating peer avatars, soft-locks, and scene state.
    */
   @JvmOverloads
   fun handleRoomMessage(rawJson: String, atMs: Long = System.currentTimeMillis()): Boolean {
     if (disposed) return false
+    if (
+      !checkCapability(
+        ThreeLiveCapability.NETWORK,
+        "sharedRoom",
+        url = roomEndpointUrl,
+        dedup = true,
+      )
+    ) {
+      return false
+    }
     val msg = SharedRoom.parseMessage(rawJson) ?: return false
     val selfId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId)
     if (msg.peerId == selfId) return false
@@ -2044,6 +2221,9 @@ constructor(
       }
       is SharedRoom.WireMessage.Rtc -> {
         if (msg.targetPeerId != selfId) return false
+        if (!checkCapability(ThreeLiveCapability.MICROPHONE, "sharedRoomVoice", dedup = true)) {
+          return false
+        }
         remotePeers[msg.peerId]?.lastSeenMs = atMs
         listener?.onPeerRtcSignal(msg)
         true

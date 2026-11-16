@@ -113,6 +113,33 @@
     public var onAnimationStart: ((Int?, String?) -> Void)?
     /// Overrides the default `animation/stop` handling (`root.stopAllAnimations()`).
     public var onAnimationStop: (() -> Void)?
+    /// Optional per-session capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+    public var capabilities: ThreeLiveCapabilities? {
+      didSet { capabilityGuard.reset() }
+    }
+    /// Called whenever a sensitive operation on this session is refused by capability policy.
+    public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+
+    private let capabilityGuard = CapabilityGuard()
+
+    func checkCapability(
+      _ capability: ThreeLiveCapability,
+      feature: String,
+      url: String? = nil,
+      baseURL: String? = nil,
+      dedup: Bool = false
+    ) -> Bool {
+      let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      return capabilityGuard.check(
+        policy: policy,
+        capability: capability,
+        feature: feature,
+        url: url,
+        baseURL: baseURL,
+        dedup: dedup,
+        onDenied: onCapabilityDenied
+      )
+    }
 
     private var nodeByEntity: [ObjectIdentifier: Int] = [:]
     private var inverseBakedSceneByNode: [Int: simd_float4x4] = [:]
@@ -449,7 +476,10 @@
     public func step(dt: TimeInterval) {
       let reference = referenceEntity ?? root
       session.rootTransform = reference.transformMatrix(relativeTo: nil)
-      let hands = handsEnabled ? (handSource ?? XRHandJointSources.current()) : nil
+      let hands =
+        (handsEnabled && checkCapability(.sensors, feature: "xrHands", dedup: true))
+        ? (handSource ?? XRHandJointSources.current())
+        : nil
       let poses = handPoseProvider?() ?? XRHandJointSources.handPoses(from: hands)
       session.step(dt: dt, headPose: headPoseProvider?(), handPoses: poses)
       if let hands = hands {

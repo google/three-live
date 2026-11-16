@@ -28,8 +28,8 @@ This file provides high-signal context, architectural invariants, and authoring 
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Goal | Element | Recommended Bundle | Enforced Budget |
 | :--- | :--- | :--- | :---: |
-| `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 31 KB gz` |
-| Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 78 KB gz` |
+| `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 34 KB gz` |
+| Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 82 KB gz` |
 | Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js` | `< 36 KB gz` |
 | Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry`, `PatternInstancer` arrays, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` | `three-live-cad.min.js` | `< 20 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz` |
@@ -40,23 +40,33 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 57 geometries) | `<three-live>` | `three-live-kits.min.js` | `< 82 KB gz` |
 | Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz` |
 | Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz` |
-| Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 33 KB gz` |
+| Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 35 KB gz` |
 | Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 23 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
-| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 233 KB gz` |
-| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 90 KB gz` |
+| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 238 KB gz` |
+| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 94 KB gz` |
 | Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP | `<xr-live>` | `xr-live-sensors.min.js` | `< 10 KB gz` |
-| Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins | `<xr-live>` | `xr-live-spatial.min.js` | `< 63 KB gz` |
+| Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins | `<xr-live>` | `xr-live-spatial.min.js` | `< 65 KB gz` |
 | Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` |
-| Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` | `xr-live-webgpu.min.js` | `< 12 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 342 KB gz` |
+| Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` | `xr-live-webgpu.min.js` | `< 13 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 348 KB gz` |
 <!-- mdformat on -->
 
 ---
 
 ## 2. Scene Authoring Golden Rules (`<script type="text/three">`)
 
-1. **Opt in to inline scripts:** Always set `allow-client-scripts` on any `<three-live>` or `<xr-live>` element that contains an inline `<script type="text/three">` or calls `element.executeScript(code)`. Without `allow-client-scripts`, client-side script strings are refused by default.
+1.  **Declare host `capabilities` explicitly:** All sensitive capabilities
+    (`scripts`, `network`, `remote_content`, `camera`, `microphone`, `sensors`,
+    `storage`, `ai`, `external_handoff`) default to **off** on Web
+    (`ThreeLiveCapabilities` on Android/iOS defaults to `scripts = true` and all
+    other capabilities `false`). Set `capabilities="scripts"` (or legacy
+    `allow-client-scripts`) for pure procedural `<script type="text/three">`,
+    `capabilities="viewer"` for remote `.glb`/`.usdz` + AR handoff, or scoped
+    combinations such as
+    `capabilities="scripts ai network:https@https://your-backend.example"`.
+    `three-live-cli validate <file>.html` warns with `TL401`/`TL403` when
+    required capabilities are missing.
 2. **Use pre-injected globals:** Inside `<script type="text/three">`, `THREE` and `scene` (`new THREE.Scene()`) are already defined in the isolated Worker sandbox. Add nodes via `scene.add(mesh)`.
 3. **Never create a renderer or render loop:** Do not instantiate `THREE.WebGLRenderer`, append `<canvas>` elements, or call `GLTFLoader` / `TextureLoader` inside `<script type="text/three">`. Load external `.glb` models via `<three-live src="...">` or `<xr-anchor src="...">`.
 4. **Use canonical `mesh.userData.xr` traits:** Attach spatial behaviors using the structured `userData.xr` object (serialized identically to WebXR, glTF `ANDROID_xr_scenecore`, and USDZ `customData`):
@@ -108,9 +118,9 @@ This file provides high-signal context, architectural invariants, and authoring 
         bevelEnabled, bevelThickness, bevelSize, bevelSegments, extrudePath })`,
         `new THREE.SweepGeometry(shape, pathOrOptions)`,
         `new THREE.HelixGeometry({ radius, height, turns, wireRadius, shape })`,
-        `new THREE.LoftGeometry(stations, { steps, interpolation, path,
-        openTop, wallThickness })` (`wallThickness` shells a hollow vessel only
-        with `openTop: true`; station `shape.holes` are ignored).
+        `new THREE.LoftGeometry(stations, { steps, interpolation, path, openTop,
+        wallThickness })` (`wallThickness` shells a hollow vessel only with
+        `openTop: true`; station `shape.holes` are ignored).
     -   **CSG Booleans:** `THREE.CSG.union(meshA, meshB)`,
         `THREE.CSG.subtract(meshA, meshB)`, `THREE.CSG.intersect(meshA, meshB)`
         (returns a new `THREE.Mesh` with normals; polygon soup, not guaranteed
@@ -186,11 +196,12 @@ This file provides high-signal context, architectural invariants, and authoring 
         direction, centered, rotationStep, scaleRange, colors })`,
         `.grid(geo, mat, { counts: [nx, ny, nz], spacing, checkerboard })`,
         `.circular(geo, mat, { count, radius, axis, startAngle, angleSpan,
-        axialStep, alignRadial })`, `.alongCurve(geo, mat, { count, path,
-        alignTangent })` (local +Z follows the tangent), or
-        `new THREE.Pattern(geo, mat, { mode, ... })`; each returns an
-        `InstancedMesh` (max 10,000 instances). `THREE.PatternInstancer.toGeometry(inst)`
-        bakes it into one `BufferGeometry` (`<= 100,000` vertices), and
+        axialStep, alignRadial })`,
+        `.alongCurve(geo, mat, { count, path, alignTangent })` (local +Z follows
+        the tangent), or `new THREE.Pattern(geo, mat, { mode, ... })`; each
+        returns an `InstancedMesh` (max 10,000 instances).
+        `THREE.PatternInstancer.toGeometry(inst)` bakes it into one
+        `BufferGeometry` (`<= 100,000` vertices), and
         `THREE.CSG.subtract(plate, inst)` accepts an `InstancedMesh` cutter.
     -   **GPU Instancing:** `const inst = new THREE.InstancedMesh(geo, mat,
         count); inst.setMatrixAt(i, mat4); inst.setColorAt(i, color);` (exports
@@ -322,7 +333,7 @@ and the `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close`
 closed-loop agent gym):
 
 ```bash
-# 1. Static + Spatial + Accessibility Linting (Structured JSON Diagnostics TL100-TL606 + Frustum/Grounding/Lighting/A11y)
+# 1. Static + Spatial + A11y Linting (Structured JSON Diagnostics TL100-TL606)
 three-live-cli validate scene.js --json
 
 # 2. Visual Verification (2x2 Orthographic + Camera Contact Sheet with 1m Grid & AABB Annotations)
@@ -353,6 +364,13 @@ three-live-cli mcp
 ## 5. Security Invariants (Never Bypass)
 
 - **Mandatory Sandboxing:** Procedural scripts must execute inside a dedicated Web Worker (`sandbox="worker"`) or opaque-origin iframe + Worker (`sandbox="iframe"`). Never evaluate author scripts in the host realm (`eval` / `new Function` on the main thread).
+-   **Capability-Based Access Control:** Every sensitive runtime side effect
+    (`scripts`, `network`, `remote_content`, `camera`, `microphone`, `sensors`,
+    `storage`, `ai`, `external_handoff`) must pass `checkPluginCapability()`
+    (Web) or `ThreeLiveCapabilities.check()` (Android/iOS) at the point of
+    access, failing closed and emitting a sanitized `three-capability-denied` /
+    `CapabilityDeniedEvent` without allowing `userData.xr.*` scene traits to
+    self-escalate privileges.
 -   **Safe URLs & Anchor IDs Only:** Media and splat URLs in traits must pass
     `safeMediaUrl()` (`https://` or clean relative paths without `..`,
     ``\`, ``%`, or protocol-relative `//`). Gemini Live and `shared-room`WebSocket endpoints must pass`isAllowedLiveUrl()`/`isAllowedRoomUrl()` (`wss://`, or `ws://`only on`localhost`/`127.0.0.1`/`[::1]`). Persisted anchor keys and `nodeId`s must pass `safeAnchorId()`(rejecting`**proto**`, `constructor`, `prototype`,

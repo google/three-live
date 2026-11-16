@@ -24,6 +24,7 @@
  */
 
 import {
+  checkPluginCapability,
   getRegisteredPlugins,
   type ThreeLivePlugin,
 } from '../../../three-live/src/plugin';
@@ -557,6 +558,9 @@ export class XRGazeDwellController {
     });
 
     if (opts.action === 'ask') {
+      if (!checkPluginCapability(element, 'ai', 'holdToAsk', {dedup: true})) {
+        return;
+      }
       const rawTraits = getMeshXRTraits(mesh);
       const holdOpts = parseHoldToAsk(rawTraits?.holdToAsk) ?? {
         prompt: 'What is this?',

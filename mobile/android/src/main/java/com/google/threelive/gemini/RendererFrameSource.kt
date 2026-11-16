@@ -16,7 +16,11 @@
 
 package com.google.threelive.gemini
 
+import com.google.threelive.CapabilityDeniedListener
+import com.google.threelive.CapabilityGuard
 import com.google.threelive.CapturedFrame
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import com.google.threelive.ThreeLiveDetections
 import com.google.threelive.ThreeLiveSceneRenderer
 import com.google.threelive.WorldUnderstanding
@@ -33,14 +37,39 @@ class RendererFrameSource
 constructor(
   private val renderer: ThreeLiveSceneRenderer,
   private val maxEdge: Int = DEFAULT_MAX_EDGE,
+  capabilities: ThreeLiveCapabilities? = null,
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null,
 ) : FrameSource {
   /** When `true`, no frames are captured or sent. */
   @Volatile var paused: Boolean = false
+
+  private val capabilityGuard = CapabilityGuard()
+
+  /** Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]). */
+  @Volatile
+  var capabilities: ThreeLiveCapabilities? = capabilities
+    set(value) {
+      field = value
+      capabilityGuard.reset()
+    }
 
   private val recent = ArrayDeque<CapturedFrame>()
 
   override fun captureJpeg(onFrame: (ByteArray?) -> Unit) {
     if (paused) {
+      onFrame(null)
+      return
+    }
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    if (
+      !capabilityGuard.check(
+        policy = policy,
+        capability = ThreeLiveCapability.CAMERA,
+        feature = "rendererFrameSource",
+        dedup = true,
+        listener = onCapabilityDenied,
+      )
+    ) {
       onFrame(null)
       return
     }
@@ -54,7 +83,9 @@ constructor(
     }
   }
 
-  /** The most recently delivered frame (its matrices describe what the model last saw), or `null`. */
+  /**
+   * The most recently delivered frame (its matrices describe what the model last saw), or `null`.
+   */
   val latestFrame: CapturedFrame?
     get() = synchronized(recent) { recent.lastOrNull() }
 
@@ -89,14 +120,19 @@ constructor(
     /** Number of delivered frames whose matrices are kept. */
     const val HISTORY: Int = 4
 
-    /** Scales ([width], [height]) so the longest edge is at most [maxEdge], keeping aspect (≥ 1 px). */
+    /**
+     * Scales ([width], [height]) so the longest edge is at most [maxEdge], keeping aspect (≥ 1 px).
+     */
     @JvmStatic
     fun fitWithin(width: Int, height: Int, maxEdge: Int): IntArray {
       if (width <= 0 || height <= 0) return intArrayOf(0, 0)
       val longest = maxOf(width, height)
       if (longest <= maxEdge) return intArrayOf(width, height)
       val k = maxEdge.toDouble() / longest
-      return intArrayOf(maxOf(1, Math.round(width * k).toInt()), maxOf(1, Math.round(height * k).toInt()))
+      return intArrayOf(
+        maxOf(1, Math.round(width * k).toInt()),
+        maxOf(1, Math.round(height * k).toInt()),
+      )
     }
   }
 }

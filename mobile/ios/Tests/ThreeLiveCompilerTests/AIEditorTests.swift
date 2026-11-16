@@ -20,6 +20,16 @@ import XCTest
 /// parsing, sandbox validation, and the realtime voice protocol all come from `three_live_ai_call`.
 final class AIEditorTests: XCTestCase {
 
+  override func setUp() {
+    super.setUp()
+    ThreeLiveCapabilities.defaultPolicy = .all
+  }
+
+  override func tearDown() {
+    ThreeLiveCapabilities.defaultPolicy = .default
+    super.tearDown()
+  }
+
   private let base = """
     const roof = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshStandardMaterial());
     roof.name = 'Roof';

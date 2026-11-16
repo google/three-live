@@ -17,6 +17,7 @@
 package com.google.threelive.ai
 
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveCapabilities
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -28,10 +29,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -39,6 +42,16 @@ import org.junit.Test
  * behavior (keys, image preparation, pack validation) is covered by `ai_texture.rs`.
  */
 class ThreeLiveAITexturesTest {
+
+  @Before
+  fun setUp() {
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.ALL
+  }
+
+  @After
+  fun tearDown() {
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.DEFAULT
+  }
 
   /** Two prompts: "moss" on Wall and "terrazzo" on Floor. Pack = set of keys. */
   private class FakeTextureCore : AICore {
@@ -51,21 +64,21 @@ class ThreeLiveAITexturesTest {
       return when (op) {
         "texture_pack_set" -> {
           val pack = request["pack"] as String?
-          if (pack != null && !pack.startsWith("{")) return mapOf("ok" to false, "error" to "bad pack")
+          if (pack != null && !pack.startsWith("{"))
+            return mapOf("ok" to false, "error" to "bad pack")
           installed = keysOf(pack)
           mapOf("ok" to true)
         }
         "texture_requests" ->
           mapOf(
             "requests" to
-              listOf(
-                req("k_moss", "moss", "Wall"),
-                req("k_terrazzo", "terrazzo", "Floor"),
-              )
+              listOf(req("k_moss", "moss", "Wall"), req("k_terrazzo", "terrazzo", "Floor"))
           )
         "texture_image_request" -> {
           val spec = MiniJson.asMap(request["spec"])!!
-          mapOf("body" to mapOf("prompt" to "${spec["prompt"]} SUFFIX", "model" to request["model"]))
+          mapOf(
+            "body" to mapOf("prompt" to "${spec["prompt"]} SUFFIX", "model" to request["model"])
+          )
         }
         "texture_image_parse" -> {
           val body = request["body"] as String
@@ -76,7 +89,10 @@ class ThreeLiveAITexturesTest {
           val spec = MiniJson.asMap(request["spec"])!!
           val key = "k_${spec["prompt"]}"
           val keys = keysOf(request["pack"] as String?) + key
-          mapOf("key" to key, "pack" to mapOf("keys" to keys.toList().sorted(), "prov" to request["provenance"]))
+          mapOf(
+            "key" to key,
+            "pack" to mapOf("keys" to keys.toList().sorted(), "prov" to request["provenance"]),
+          )
         }
         // Just enough of the editor ops for ThreeLiveAIEditor integration.
         "messages" -> mapOf("messages" to listOf(mapOf("role" to "user", "content" to "edit")))
@@ -96,7 +112,8 @@ class ThreeLiveAITexturesTest {
 
     companion object {
       fun keysOf(pack: String?): Set<String> =
-        pack?.let { MiniJson.asList(MiniJson.parseObjectOrNull(it)?.get("keys")) }
+        pack
+          ?.let { MiniJson.asList(MiniJson.parseObjectOrNull(it)?.get("keys")) }
           .orEmpty()
           .filterIsInstance<String>()
           .toSet()
@@ -232,13 +249,20 @@ class ThreeLiveAITexturesTest {
     val conn =
       object : HttpURLConnection(URL("https://proxy.example/v1/images/generations")) {
         val props = mutableMapOf<String, String>()
+
         override fun connect() {}
+
         override fun disconnect() {}
+
         override fun usingProxy() = false
+
         override fun getResponseCode() = 200
+
         override fun getOutputStream(): OutputStream = sent
+
         override fun getInputStream(): InputStream =
           ByteArrayInputStream("{\"data\":[{\"b64_json\":\"aW1n\"}]}".toByteArray())
+
         override fun setRequestProperty(key: String, value: String) {
           props[key] = value
         }

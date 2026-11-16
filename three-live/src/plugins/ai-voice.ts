@@ -26,17 +26,22 @@
  * at a short-lived ephemeral-token URL your server mints.
  */
 
-import type {EditSceneResult, ThreeLiveAIProvider} from './ai';
+import {checkPluginCapability} from '../plugin';
 import {
-  type AISelectableElement,
-  type AISelectionMode,
-  type AISelectProvider,
+  requireAICap,
+  type EditSceneResult,
+  type ThreeLiveAIProvider,
+} from './ai';
+import {
   describeSelection,
   getSelection,
   resolveSelection,
   resolveSelectionWithModel,
   sceneSelectEntries,
   setSelection,
+  type AISelectableElement,
+  type AISelectionMode,
+  type AISelectProvider,
 } from './ai-select';
 import {hideSelectionChips, showSelectionChips} from './ai-select-chips';
 import {parseVoiceCommand, type SelectMatch} from './ai-select-match';
@@ -289,7 +294,8 @@ export const VOICE_TOOLS: readonly AIVoiceTool[] = [
       properties: {
         query: {
           type: 'string',
-          description: 'The user\'s words for the objects, e.g. "the lamp next to the sofa".',
+          description:
+            'The user\'s words for the objects, e.g. "the lamp next to the sofa".',
         },
         names: {
           type: 'array',
@@ -391,9 +397,16 @@ export function mergeSession(
     if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
     const prev = out[k];
     out[k] =
-      v && typeof v === 'object' && !Array.isArray(v) &&
-      prev && typeof prev === 'object' && !Array.isArray(prev)
-        ? mergeSession(prev as Record<string, unknown>, v as Record<string, unknown>)
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      prev &&
+      typeof prev === 'object' &&
+      !Array.isArray(prev)
+        ? mergeSession(
+            prev as Record<string, unknown>,
+            v as Record<string, unknown>,
+          )
         : v;
   }
   return out;
@@ -434,7 +447,9 @@ export const realtimeAdapter: AIVoiceAdapter = {
       tool_choice: 'auto',
       ...(config.model ? {model: config.model} : {}),
     };
-    return [{type: 'session.update', session: mergeSession(base, config.overrides)}];
+    return [
+      {type: 'session.update', session: mergeSession(base, config.overrides)},
+    ];
   },
   audio(b64) {
     return {type: 'input_audio_buffer.append', audio: b64};
@@ -529,8 +544,7 @@ export const realtimeAdapter: AIVoiceAdapter = {
         return [
           {
             type: 'error',
-            message:
-              str(obj(m['error'])['message']) || 'Realtime server error',
+            message: str(obj(m['error'])['message']) || 'Realtime server error',
           },
         ];
       default:
@@ -626,7 +640,8 @@ export const geminiLiveAdapter: AIVoiceAdapter = {
       });
     }
     const err = obj(m['error']);
-    if (str(err['message'])) out.push({type: 'error', message: str(err['message'])});
+    if (str(err['message']))
+      out.push({type: 'error', message: str(err['message'])});
     return out;
   },
 };
@@ -638,7 +653,11 @@ const ADAPTERS: Record<AIVoiceProviderName, AIVoiceAdapter> = {
 
 /** Encodes Int16 samples as little-endian base64. */
 export function pcm16ToBase64(samples: Int16Array): string {
-  const bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
+  const bytes = new Uint8Array(
+    samples.buffer,
+    samples.byteOffset,
+    samples.byteLength,
+  );
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -682,7 +701,10 @@ export function base64ToFloat(b64: string): Float32Array {
 type AudioCtor = new (opts?: {sampleRate?: number}) => AudioContext;
 
 function audioContextCtor(): AudioCtor | undefined {
-  const g = globalThis as {AudioContext?: AudioCtor; webkitAudioContext?: AudioCtor};
+  const g = globalThis as {
+    AudioContext?: AudioCtor;
+    webkitAudioContext?: AudioCtor;
+  };
   return g.AudioContext ?? g.webkitAudioContext;
 }
 
@@ -694,12 +716,19 @@ export function createBrowserMicrophone(): AIMicrophoneSource {
   return {
     async start(rate, onChunk) {
       const Ctor = audioContextCtor();
-      const media = (globalThis as {navigator?: Navigator}).navigator?.mediaDevices;
+      const media = (globalThis as {navigator?: Navigator}).navigator
+        ?.mediaDevices;
       if (!Ctor || !media?.getUserMedia) {
-        throw new Error('connectVoice: microphone capture is not available here.');
+        throw new Error(
+          'connectVoice: microphone capture is not available here.',
+        );
       }
       stream = await media.getUserMedia({
-        audio: {echoCancellation: true, noiseSuppression: true, channelCount: 1},
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+        },
       });
       ctx = new Ctor();
       const source = ctx.createMediaStreamSource(stream);
@@ -788,11 +817,20 @@ export class AIVoiceSession {
   private userText = '';
   private modelText = '';
   private readonly onSelect = (e: Event) => {
-    const d = (e as CustomEvent<{mesh?: string | null; meshes?: readonly string[]; source?: string}>)
-      .detail;
+    const d = (
+      e as CustomEvent<{
+        mesh?: string | null;
+        meshes?: readonly string[];
+        source?: string;
+      }>
+    ).detail;
     // Voice selections come back in the select_meshes tool result instead.
     if (d?.source === 'voice') return;
-    const meshes = Array.isArray(d?.meshes) ? d.meshes : d?.mesh ? [d.mesh] : [];
+    const meshes = Array.isArray(d?.meshes)
+      ? d.meshes
+      : d?.mesh
+        ? [d.mesh]
+        : [];
     this.sendContext(describeSelection(meshes));
   };
 
@@ -807,10 +845,20 @@ export class AIVoiceSession {
         `connectVoice: unknown provider '${name}' (use ai-realtime or gemini-live).`,
       );
     }
+    if (!options.transport && !options.url) {
+      throw new Error('connectVoice: pass a wss:// url or a transport.');
+    }
+    if (!options.transport && options.url && !isAllowedVoiceUrl(options.url)) {
+      throw new Error(
+        'connectVoice: url must use wss:// (or ws:// on localhost).',
+      );
+    }
+    requireAICap(el, 'ai', 'connectVoice', options.url);
+    if (options.microphone !== false) {
+      requireAICap(el, 'microphone', 'connectVoice');
+    }
     this.adapter = adapter;
-    if (options.transport) this.transport = options.transport;
-    else if (options.url) this.transport = createVoiceWebSocket(options.url);
-    else throw new Error('connectVoice: pass a wss:// url or a transport.');
+    this.transport = options.transport ?? createVoiceWebSocket(options.url!);
     this.mic =
       options.microphone === false
         ? null
@@ -845,7 +893,16 @@ export class AIVoiceSession {
     if (selected.length) this.sendContext(describeSelection(selected));
     try {
       await this.mic?.start(this.adapter.inputRate, (b64) => {
-        if (this.state !== 'closed') this.transport.send(this.adapter.audio(b64));
+        if (this.state === 'closed') return;
+        if (
+          !checkPluginCapability(this.el, 'microphone', 'connectVoice', {
+            dedup: true,
+          })
+        ) {
+          this.close();
+          return;
+        }
+        this.transport.send(this.adapter.audio(b64));
       });
     } catch (e: unknown) {
       this.setState('error', {error: (e as Error)?.message || String(e)});
@@ -858,8 +915,18 @@ export class AIVoiceSession {
 
   /** Sends a typed message (e.g. a text fallback) and asks for a reply. */
   sendText(text: string): void {
-    const t = String(text ?? '').trim().slice(0, MAX_VOICE_TEXT);
+    const t = String(text ?? '')
+      .trim()
+      .slice(0, MAX_VOICE_TEXT);
     if (!t || this.state === 'closed') return;
+    if (
+      !checkPluginCapability(this.el, 'ai', 'connectVoice', {
+        url: this.options.url,
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     for (const msg of this.adapter.text(t, true)) this.transport.send(msg);
   }
 
@@ -885,7 +952,10 @@ export class AIVoiceSession {
     for (const msg of this.adapter.text(text, false)) this.transport.send(msg);
   }
 
-  private setState(state: AIVoiceState, extra: Partial<AIVoiceEventDetail> = {}): void {
+  private setState(
+    state: AIVoiceState,
+    extra: Partial<AIVoiceEventDetail> = {},
+  ): void {
     this.state = state;
     emit(this.el, {state, ...extra});
   }
@@ -904,9 +974,9 @@ export class AIVoiceSession {
           break;
         case 'transcript':
           if (ev.speaker === 'user') {
-            this.userText = (ev.isFinal ? ev.text : this.userText + ev.text).slice(
-              -MAX_VOICE_TEXT,
-            );
+            this.userText = (
+              ev.isFinal ? ev.text : this.userText + ev.text
+            ).slice(-MAX_VOICE_TEXT);
             emit(this.el, {
               state: this.state,
               transcript: this.userText,
@@ -914,21 +984,33 @@ export class AIVoiceSession {
             });
             if (ev.isFinal) this.userText = '';
           } else {
-            this.modelText = (ev.isFinal ? ev.text : this.modelText + ev.text).slice(
-              -MAX_VOICE_TEXT,
-            );
-            emit(this.el, {state: this.state, reply: this.modelText, isFinal: ev.isFinal});
+            this.modelText = (
+              ev.isFinal ? ev.text : this.modelText + ev.text
+            ).slice(-MAX_VOICE_TEXT);
+            emit(this.el, {
+              state: this.state,
+              reply: this.modelText,
+              isFinal: ev.isFinal,
+            });
             if (ev.isFinal) this.modelText = '';
           }
           break;
         case 'turnComplete':
           // Gemini Live never marks user transcripts final; close them here.
           if (this.userText) {
-            emit(this.el, {state: this.state, transcript: this.userText, isFinal: true});
+            emit(this.el, {
+              state: this.state,
+              transcript: this.userText,
+              isFinal: true,
+            });
             this.userText = '';
           }
           if (this.modelText) {
-            emit(this.el, {state: this.state, reply: this.modelText, isFinal: true});
+            emit(this.el, {
+              state: this.state,
+              reply: this.modelText,
+              isFinal: true,
+            });
             this.modelText = '';
           }
           if (this.state === 'speaking' || this.state === 'thinking') {
@@ -936,7 +1018,8 @@ export class AIVoiceSession {
           }
           break;
         case 'toolCall':
-          if (++calls <= MAX_TOOL_CALLS) void this.runTool(ev.id, ev.name, ev.args);
+          if (++calls <= MAX_TOOL_CALLS)
+            void this.runTool(ev.id, ev.name, ev.args);
           break;
         case 'error':
           emit(this.el, {state: this.state, error: ev.message});
@@ -953,7 +1036,9 @@ export class AIVoiceSession {
     let output: Record<string, unknown>;
     try {
       if (name === 'edit_scene') {
-        const instruction = str(args['instruction']).trim().slice(0, MAX_VOICE_TEXT);
+        const instruction = str(args['instruction'])
+          .trim()
+          .slice(0, MAX_VOICE_TEXT);
         if (!instruction) throw new Error('instruction is empty');
         if (typeof this.el.editScene !== 'function') {
           throw new Error('scene editing is not available on this element');
@@ -968,20 +1053,25 @@ export class AIVoiceSession {
         this.setState('thinking', {result});
       } else if (name === 'select_meshes') {
         const rawMode = str(args['mode']);
-        const mode: AISelectionMode = (['replace', 'add', 'remove', 'clear'] as const).includes(
-          rawMode as 'replace',
-        )
+        const mode: AISelectionMode = (
+          ['replace', 'add', 'remove', 'clear'] as const
+        ).includes(rawMode as 'replace')
           ? (rawMode as AISelectionMode)
           : 'replace';
         const names = Array.isArray(args['names'])
-          ? (args['names'] as unknown[]).filter((n): n is string => typeof n === 'string')
+          ? (args['names'] as unknown[]).filter(
+              (n): n is string => typeof n === 'string',
+            )
           : [];
         const sel =
           names.length && mode !== 'clear'
             ? selectNamesByVoice(this.el, names, mode)
             : await selectByVoice(this.el, str(args['query']), {
                 mode,
-                provider: this.options.editProvider ?? this.el.__tlSelectProvider?.() ?? null,
+                provider:
+                  this.options.editProvider ??
+                  this.el.__tlSelectProvider?.() ??
+                  null,
               });
         output = {
           changed: sel.applied,
@@ -993,7 +1083,9 @@ export class AIVoiceSession {
         };
       } else if (name === 'undo_edit') {
         const undone = (await this.el.undoEdit?.()) ?? false;
-        output = undone ? {undone: true} : {undone: false, error: 'nothing to undo'};
+        output = undone
+          ? {undone: true}
+          : {undone: false, error: 'nothing to undo'};
       } else {
         output = {error: `unknown tool ${name}`};
       }
@@ -1034,7 +1126,14 @@ interface RecognitionLike {
   interimResults: boolean;
   continuous: boolean;
   maxAlternatives: number;
-  onresult: ((e: {resultIndex: number; results: ArrayLike<ArrayLike<{transcript: string}> & {isFinal: boolean}>}) => void) | null;
+  onresult:
+    | ((e: {
+        resultIndex: number;
+        results: ArrayLike<
+          ArrayLike<{transcript: string}> & {isFinal: boolean}
+        >;
+      }) => void)
+    | null;
   onerror: ((e: {error?: string}) => void) | null;
   onend: (() => void) | null;
   start(): void;
@@ -1053,7 +1152,11 @@ export function createWebSpeechRecognizer(): AISpeechRecognizer | null {
     listen({lang, signal, onPartial}) {
       return new Promise((resolve, reject) => {
         const rec = new Ctor();
-        rec.lang = lang || (globalThis as {document?: Document}).document?.documentElement?.lang || 'en-US';
+        rec.lang =
+          lang ||
+          (globalThis as {document?: Document}).document?.documentElement
+            ?.lang ||
+          'en-US';
         rec.interimResults = true;
         rec.continuous = false;
         rec.maxAlternatives = 1;
@@ -1084,7 +1187,13 @@ export function createWebSpeechRecognizer(): AISpeechRecognizer | null {
         };
         rec.onerror = (e) => {
           if (e?.error === 'no-speech' || e?.error === 'aborted') return;
-          done(() => reject(new Error(`Speech recognition failed: ${e?.error || 'unknown error'}`)));
+          done(() =>
+            reject(
+              new Error(
+                `Speech recognition failed: ${e?.error || 'unknown error'}`,
+              ),
+            ),
+          );
         };
         rec.onend = () => done(() => resolve((finalText || latest).trim()));
         if (signal?.aborted) return onAbort();
@@ -1146,7 +1255,8 @@ export function describeVoiceSelection(
         ? `Removed ${speakList(match.names)}. ${meshes.length} selected.`
         : `Removed ${speakList(match.names)}. Nothing is selected.`;
     }
-    if (mode === 'add') return `Added ${speakList(match.names)}. ${meshes.length} selected.`;
+    if (mode === 'add')
+      return `Added ${speakList(match.names)}. ${meshes.length} selected.`;
     return match.names.length === 1
       ? `Selected ${speakableName(match.names[0])}.`
       : `Selected ${match.names.length}: ${speakList(match.names)}.`;
@@ -1173,45 +1283,79 @@ export function describeVoiceSelection(
 export async function selectByVoice(
   el: AIVoiceElement,
   query: string,
-  options: {mode?: AISelectionMode; provider?: AISelectProvider | null; signal?: AbortSignal} = {},
+  options: {
+    mode?: AISelectionMode;
+    provider?: AISelectProvider | null;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<AIVoiceSelection> {
   const mode = options.mode ?? 'replace';
   const q = String(query ?? '').slice(0, MAX_VOICE_TEXT);
   if (mode === 'clear') {
     setSelection(el, [], {mode: 'clear', source: 'voice', query: q || 'clear'});
-    return {mode, query: q, match: null, applied: true, tier: 1, meshes: [], say: describeVoiceSelection(mode, null, [], q)};
+    return {
+      mode,
+      query: q,
+      match: null,
+      applied: true,
+      tier: 1,
+      meshes: [],
+      say: describeVoiceSelection(mode, null, [], q),
+    };
   }
   const within = mode === 'remove' ? getSelection(el) : null;
   if (within && !within.length) {
-    return {mode, query: q, match: null, applied: false, tier: 1, meshes: [], say: 'Nothing is selected.'};
+    return {
+      mode,
+      query: q,
+      match: null,
+      applied: false,
+      tier: 1,
+      meshes: [],
+      say: 'Nothing is selected.',
+    };
   }
   let match = resolveSelection(el, q, {within});
   let tier: 1 | 2 = 1;
   let question = '';
-  const provider = options.provider === undefined ? (el.__tlSelectProvider?.() ?? null) : options.provider;
   if (
-    provider &&
     q.trim() &&
     match.confidence === 'none' &&
-    (match.reason === 'relation' || match.reason === 'no_match')
+    (match.reason === 'relation' || match.reason === 'no_match') &&
+    checkPluginCapability(el, 'ai', 'selectByVoice', {dedup: true})
   ) {
-    try {
-      const r = await resolveSelectionWithModel(el, q, provider, {within, signal: options.signal});
-      tier = 2;
-      question = r.question;
-      match =
-        r.confidence === 'high'
-          ? {ids: [], names: r.names, confidence: 'high', candidates: [], reason: 'model'}
-          : {
-              ids: [],
-              names: [],
-              confidence: r.names.length ? 'ambiguous' : 'none',
-              candidates: r.names.slice(0, 10),
-              reason: 'model',
-            };
-    } catch (e: unknown) {
-      if (options.signal?.aborted) throw e;
-      // Tier 2 failed (network, quota): fall back to the tier-1 answer.
+    const provider =
+      options.provider === undefined
+        ? (el.__tlSelectProvider?.() ?? null)
+        : options.provider;
+    if (provider) {
+      try {
+        const r = await resolveSelectionWithModel(el, q, provider, {
+          within,
+          signal: options.signal,
+        });
+        tier = 2;
+        question = r.question;
+        match =
+          r.confidence === 'high'
+            ? {
+                ids: [],
+                names: r.names,
+                confidence: 'high',
+                candidates: [],
+                reason: 'model',
+              }
+            : {
+                ids: [],
+                names: [],
+                confidence: r.names.length ? 'ambiguous' : 'none',
+                candidates: r.names.slice(0, 10),
+                reason: 'model',
+              };
+      } catch (e: unknown) {
+        if (options.signal?.aborted) throw e;
+        // Tier 2 failed (network, quota): fall back to the tier-1 answer.
+      }
     }
   }
   let applied = false;
@@ -1220,7 +1364,10 @@ export async function selectByVoice(
     applied = true;
   }
   const meshes = getSelection(el);
-  const say = !applied && question ? question : describeVoiceSelection(mode, match, meshes, q);
+  const say =
+    !applied && question
+      ? question
+      : describeVoiceSelection(mode, match, meshes, q);
   return {mode, query: q, match, applied, tier, meshes, say};
 }
 
@@ -1231,17 +1378,50 @@ export function selectNamesByVoice(
   mode: AISelectionMode = 'replace',
 ): AIVoiceSelection {
   const known = new Set(sceneSelectEntries(el).map((e) => e.name));
-  const valid = names.filter((n) => typeof n === 'string' && known.has(n)).slice(0, 50);
-  const query = names.filter((n) => typeof n === 'string').join(', ').slice(0, 200);
+  const valid = names
+    .filter((n) => typeof n === 'string' && known.has(n))
+    .slice(0, 50);
+  const query = names
+    .filter((n) => typeof n === 'string')
+    .join(', ')
+    .slice(0, 200);
   if (!valid.length) {
-    const match: SelectMatch = {ids: [], names: [], confidence: 'none', candidates: [], reason: 'no_match'};
+    const match: SelectMatch = {
+      ids: [],
+      names: [],
+      confidence: 'none',
+      candidates: [],
+      reason: 'no_match',
+    };
     const meshes = getSelection(el);
-    return {mode, query, match, applied: false, tier: 1, meshes, say: describeVoiceSelection(mode, match, meshes, query)};
+    return {
+      mode,
+      query,
+      match,
+      applied: false,
+      tier: 1,
+      meshes,
+      say: describeVoiceSelection(mode, match, meshes, query),
+    };
   }
   setSelection(el, valid, {mode, source: 'voice', query});
-  const match: SelectMatch = {ids: [], names: valid, confidence: 'high', candidates: [], reason: 'exact'};
+  const match: SelectMatch = {
+    ids: [],
+    names: valid,
+    confidence: 'high',
+    candidates: [],
+    reason: 'exact',
+  };
   const meshes = getSelection(el);
-  return {mode, query, match, applied: true, tier: 1, meshes, say: describeVoiceSelection(mode, match, meshes, query)};
+  return {
+    mode,
+    query,
+    match,
+    applied: true,
+    tier: 1,
+    meshes,
+    say: describeVoiceSelection(mode, match, meshes, query),
+  };
 }
 
 /** Short spoken summary of an edit result. */
@@ -1265,7 +1445,13 @@ async function applyPendingEdit(
   try {
     result = await el.editScene(instruction);
   } catch (e: unknown) {
-    result = {applied: false, code: '', repairs: 0, warnings: [], error: (e as Error)?.message || String(e)};
+    result = {
+      applied: false,
+      code: '',
+      repairs: 0,
+      warnings: [],
+      error: (e as Error)?.message || String(e),
+    };
   }
   emit(el, {state: 'idle', transcript: instruction, isFinal: true, result});
   if (options.speak !== false) speak(describeEditResult(result), options.lang);
@@ -1280,8 +1466,12 @@ export async function startVoiceEdit(
   options: AIVoiceEditOptions = {},
 ): Promise<AIVoiceEditResult> {
   if (typeof el.editScene !== 'function') {
-    throw new Error('startVoiceEdit needs three-live-ai.min.js (el.editScene).');
+    throw new Error(
+      'startVoiceEdit needs three-live-ai.min.js (el.editScene).',
+    );
   }
+  requireAICap(el, 'microphone', 'startVoiceEdit');
+  requireAICap(el, 'ai', 'startVoiceEdit');
   const recognizer = options.recognizer ?? createWebSpeechRecognizer();
   if (!recognizer) {
     throw new Error(
@@ -1313,21 +1503,27 @@ export async function startVoiceEdit(
   }
   let instruction = transcript;
   let selection: AIVoiceSelection | undefined;
-  const command = options.talkToSelect === false ? null : parseVoiceCommand(transcript);
+  const command =
+    options.talkToSelect === false ? null : parseVoiceCommand(transcript);
   if (command && command.kind !== 'edit') {
     emit(el, {state: 'thinking', transcript, isFinal: true});
     try {
-      selection = await selectByVoice(el, command.kind === 'clear' ? '' : command.query, {
-        mode: command.mode,
-        signal: options.signal,
-      });
+      selection = await selectByVoice(
+        el,
+        command.kind === 'clear' ? '' : command.query,
+        {
+          mode: command.mode,
+          signal: options.signal,
+        },
+      );
     } catch (e: unknown) {
       emit(el, {state: 'error', error: (e as Error)?.message || String(e)});
       throw e;
     }
     const pending = command.kind === 'mixed' ? command.instruction : undefined;
     // Edit right away only when the reference was resolved locally (tier 1) and confidently.
-    const editNow = pending !== undefined && selection.applied && selection.tier === 1;
+    const editNow =
+      pending !== undefined && selection.applied && selection.tier === 1;
     // Chips only without a realtime session; there, the voice model reads the selection back.
     const chips = options.chips !== false && !el.__tlVoiceSession;
     if (chips) {
@@ -1337,7 +1533,13 @@ export async function startVoiceEdit(
         sel.applied || sel.mode === 'clear'
           ? {pending: editNow ? undefined : pending}
           : sel.match?.candidates.length
-            ? {question: sel.say, candidates: sel.match.candidates, mode: sel.mode, query: sel.query, pending}
+            ? {
+                question: sel.say,
+                candidates: sel.match.candidates,
+                mode: sel.mode,
+                query: sel.query,
+                pending,
+              }
             : {},
         (text) => applyPendingEdit(el, text, options),
       );
@@ -1359,7 +1561,12 @@ export async function startVoiceEdit(
   } else if (options.chips !== false && el.__tlChips) {
     hideSelectionChips(el);
   }
-  emit(el, {state: 'editing', transcript, isFinal: true, ...(selection ? {selection} : {})});
+  emit(el, {
+    state: 'editing',
+    transcript,
+    isFinal: true,
+    ...(selection ? {selection} : {}),
+  });
   let result: EditSceneResult;
   try {
     result = await el.editScene(instruction, {signal: options.signal});
@@ -1372,7 +1579,13 @@ export async function startVoiceEdit(
       error: (e as Error)?.message || String(e),
     };
   }
-  emit(el, {state: 'idle', transcript, isFinal: true, result, ...(selection ? {selection} : {})});
+  emit(el, {
+    state: 'idle',
+    transcript,
+    isFinal: true,
+    result,
+    ...(selection ? {selection} : {}),
+  });
   if (options.speak !== false) {
     const said = describeEditResult(result);
     speak(selection ? `${selection.say} ${said}` : said, options.lang);
@@ -1383,7 +1596,8 @@ export async function startVoiceEdit(
 /** Enables or disables tap-to-select (`ai-select-on-tap`). */
 export function setSelectOnTap(el: AIVoiceElement, enabled: boolean): void {
   if (!enabled) {
-    if (el.__tlTapHandler) el.removeEventListener?.('meshclick', el.__tlTapHandler);
+    if (el.__tlTapHandler)
+      el.removeEventListener?.('meshclick', el.__tlTapHandler);
     if (el.__tlTapDown) el.removeEventListener?.('pointerdown', el.__tlTapDown);
     el.__tlTapHandler = null;
     el.__tlTapDown = null;
@@ -1407,11 +1621,20 @@ export function setSelectOnTap(el: AIVoiceElement, enabled: boolean): void {
     const longPress = downAt > 0 && Date.now() - downAt >= LONG_PRESS_MS;
     const current = getSelection(el as AISelectableElement);
     if (additive || longPress) {
-      setSelection(el as AISelectableElement, [name], {mode: 'toggle', source: 'tap'});
+      setSelection(el as AISelectableElement, [name], {
+        mode: 'toggle',
+        source: 'tap',
+      });
     } else if (current.length === 1 && current[0] === name) {
-      setSelection(el as AISelectableElement, [], {mode: 'clear', source: 'tap'});
+      setSelection(el as AISelectableElement, [], {
+        mode: 'clear',
+        source: 'tap',
+      });
     } else {
-      setSelection(el as AISelectableElement, [name], {mode: 'replace', source: 'tap'});
+      setSelection(el as AISelectableElement, [name], {
+        mode: 'replace',
+        source: 'tap',
+      });
     }
     additive = false;
     downAt = 0;
@@ -1444,7 +1667,9 @@ function createMicSvg(): Element {
  */
 export function installVoiceButton(el: AIVoiceElement): void {
   if (el.__tlVoiceButton || typeof document === 'undefined') return;
-  const custom = el.querySelector?.('[slot="voice-button"]') as HTMLElement | null;
+  const custom = el.querySelector?.(
+    '[slot="voice-button"]',
+  ) as HTMLElement | null;
   const btn = custom ?? document.createElement('button');
   if (!custom) {
     btn.setAttribute('type', 'button');
@@ -1473,7 +1698,8 @@ export function installVoiceButton(el: AIVoiceElement): void {
   let busy: AbortController | null = null;
   const setActive = (on: boolean) => {
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    if (!custom) btn.style.background = on ? 'rgba(217,48,37,0.9)' : 'rgba(32,33,36,0.85)';
+    if (!custom)
+      btn.style.background = on ? 'rgba(217,48,37,0.9)' : 'rgba(32,33,36,0.85)';
   };
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1485,15 +1711,26 @@ export function installVoiceButton(el: AIVoiceElement): void {
         return;
       }
       setActive(true);
-      const provider = (el.getAttribute?.('ai-voice-provider') || 'ai-realtime') as AIVoiceProviderName;
-      connectVoice(el, {provider, url, model: el.getAttribute?.('ai-voice-model') || undefined})
+      const provider = (el.getAttribute?.('ai-voice-provider') ||
+        'ai-realtime') as AIVoiceProviderName;
+      connectVoice(el, {
+        provider,
+        url,
+        model: el.getAttribute?.('ai-voice-model') || undefined,
+      })
         .then((s) => {
-          el.addEventListener?.('three-live-voice', function onVoice(ev: Event) {
-            if ((ev as CustomEvent<AIVoiceEventDetail>).detail?.state === 'closed') {
-              el.removeEventListener?.('three-live-voice', onVoice);
-              if (el.__tlVoiceSession !== s) setActive(false);
-            }
-          });
+          el.addEventListener?.(
+            'three-live-voice',
+            function onVoice(ev: Event) {
+              if (
+                (ev as CustomEvent<AIVoiceEventDetail>).detail?.state ===
+                'closed'
+              ) {
+                el.removeEventListener?.('three-live-voice', onVoice);
+                if (el.__tlVoiceSession !== s) setActive(false);
+              }
+            },
+          );
         })
         .catch(() => setActive(false));
       return;

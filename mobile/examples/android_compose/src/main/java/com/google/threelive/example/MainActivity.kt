@@ -52,6 +52,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.google.threelive.GlbBuffer
 import com.google.threelive.ThreeCompiler
 import com.google.threelive.ThreeLiveCameraOptions
+import com.google.threelive.ThreeLiveCapabilities
 import com.google.threelive.ThreeLiveRuntimeBinding
 import com.google.threelive.XRLiveNodeTraits
 import com.google.threelive.XRLiveSceneCoreHelper
@@ -75,6 +76,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.ALL
 
     setContent {
       MaterialTheme(colorScheme = darkColorScheme()) {
@@ -719,7 +721,8 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
               }
             val key = aiApiKey.trim()
             if (aiProviderKind != "custom" && key.isEmpty()) return null
-            val headers = if (key.isNotEmpty()) mapOf("Authorization" to "Bearer $key") else emptyMap()
+            val headers =
+              if (key.isNotEmpty()) mapOf("Authorization" to "Bearer $key") else emptyMap()
             return AIChatProvider(
               endpoint = "$baseUrl/chat/completions",
               model = aiModelId.trim().ifEmpty { null },
@@ -846,37 +849,37 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           if (showAiConnectDialog) {
             AlertDialog(
               onDismissRequest = { showAiConnectDialog = false },
-              title = { Text("Connect AI Provider (BYOA)", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+              title = {
+                Text("Connect AI Provider (BYOA)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+              },
               text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                   Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(
-                      "gemini" to "Gemini",
-                      "openrouter" to "OpenRouter",
-                      "custom" to "Local",
-                    ).forEach { (id, label) ->
-                      FilterChip(
-                        selected = (aiProviderKind == id),
-                        onClick = {
-                          aiProviderKind = id
-                          when (id) {
-                            "gemini" -> {
-                              aiModelId = "gemini-flash-latest"
-                              discoveredModels = listOf("gemini-flash-latest", "gemini-pro-latest")
+                    listOf("gemini" to "Gemini", "openrouter" to "OpenRouter", "custom" to "Local")
+                      .forEach { (id, label) ->
+                        FilterChip(
+                          selected = (aiProviderKind == id),
+                          onClick = {
+                            aiProviderKind = id
+                            when (id) {
+                              "gemini" -> {
+                                aiModelId = "gemini-flash-latest"
+                                discoveredModels =
+                                  listOf("gemini-flash-latest", "gemini-pro-latest")
+                              }
+                              "openrouter" -> {
+                                aiModelId = "openrouter/auto"
+                                discoveredModels = listOf("openrouter/auto")
+                              }
+                              "custom" -> {
+                                aiModelId = ""
+                                discoveredModels = emptyList()
+                              }
                             }
-                            "openrouter" -> {
-                              aiModelId = "openrouter/auto"
-                              discoveredModels = listOf("openrouter/auto")
-                            }
-                            "custom" -> {
-                              aiModelId = ""
-                              discoveredModels = emptyList()
-                            }
-                          }
-                        },
-                        label = { Text(label, fontSize = 11.sp) },
-                      )
-                    }
+                          },
+                          label = { Text(label, fontSize = 11.sp) },
+                        )
+                      }
                   }
                   if (aiProviderKind == "custom") {
                     OutlinedTextField(
@@ -930,7 +933,10 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                                       connectTimeout = 10_000
                                       readTimeout = 10_000
                                       if (aiApiKey.isNotBlank()) {
-                                        setRequestProperty("Authorization", "Bearer ${aiApiKey.trim()}")
+                                        setRequestProperty(
+                                          "Authorization",
+                                          "Bearer ${aiApiKey.trim()}",
+                                        )
                                       }
                                     }
                                 try {
@@ -953,9 +959,15 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                                     for (i in 0 until arr.length()) {
                                       val item = arr.optJSONObject(i) ?: continue
                                       val id =
-                                        item.optString("id").ifEmpty { item.optString("name") }
+                                        item
+                                          .optString("id")
+                                          .ifEmpty { item.optString("name") }
                                           .removePrefix("models/")
-                                      if (id.isNotEmpty() && !skip.containsMatchIn(id) && !out.contains(id)) {
+                                      if (
+                                        id.isNotEmpty() &&
+                                          !skip.containsMatchIn(id) &&
+                                          !out.contains(id)
+                                      ) {
                                         out.add(id)
                                       }
                                     }
@@ -992,10 +1004,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                     }
                   }
                   Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                      checked = aiRememberKey,
-                      onCheckedChange = { aiRememberKey = it },
-                    )
+                    Checkbox(checked = aiRememberKey, onCheckedChange = { aiRememberKey = it })
                     Text("Remember on device", fontSize = 11.sp)
                   }
                 }

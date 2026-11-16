@@ -27,6 +27,7 @@
 import {createProgram} from '../../../three-live/src/gl-program';
 import {mat3NormalFromMat4, mat4Multiply} from '../../../three-live/src/math';
 import {
+  checkPluginCapability,
   getSharedRegistry,
   type SplatGPUFrameOutput,
   type ThreeLivePlugin,
@@ -163,7 +164,8 @@ export async function gunzip(
   }
   const stream = new Blob([bytes]).stream().pipeThrough(new DS('gzip'));
   return readStreamCapped(
-    stream.getReader(), maxBytes,
+    stream.getReader(),
+    maxBytes,
     'splat-loader: decompressed .spz exceeds size limit',
   );
 }
@@ -595,9 +597,17 @@ export async function loadSplat(
   url: string,
   fetchFn: typeof fetch = fetch,
   allowCrossOrigin = true,
+  host?: unknown,
 ): Promise<SplatData> {
   const resolved = resolveSplatUrl(url, undefined, allowCrossOrigin);
   if (!resolved) throw new Error('splat-loader: URL rejected');
+  if (
+    !checkPluginCapability(host, 'remote_content', 'splatUrl', {url: resolved})
+  ) {
+    throw new Error(
+      `splat-loader: capability 'remote_content' or 'network' denied`,
+    );
+  }
   const res = await fetchFn(resolved, {credentials: 'same-origin'});
   if (!res.ok) throw new Error(`splat-loader: HTTP ${res.status}`);
   const declared = Number(res.headers?.get?.('content-length') ?? 0);
@@ -756,12 +766,21 @@ export function computeSplatViewColors(
   // Normal-matrix storage is column-major inverse-transpose, which is also
   // row-major inverse. Initialize the transpose fallback for singular models.
   const inverse = new Float64Array([
-    model[0], model[1], model[2],
-    model[4], model[5], model[6],
-    model[8], model[9], model[10],
+    model[0],
+    model[1],
+    model[2],
+    model[4],
+    model[5],
+    model[6],
+    model[8],
+    model[9],
+    model[10],
   ]);
-  const [i00, i01, i02, i10, i11, i12, i20, i21, i22] =
-    mat3NormalFromMat4(inverse, model, 1e-12);
+  const [i00, i01, i02, i10, i11, i12, i20, i21, i22] = mat3NormalFromMat4(
+    inverse,
+    model,
+    1e-12,
+  );
   const cx = cameraWorldPos[0];
   const cy = cameraWorldPos[1];
   const cz = cameraWorldPos[2];
@@ -808,10 +827,7 @@ function sameSplatDepth(a: Float32Array, b: Float32Array): boolean {
 }
 
 /** Exact depth rows share an order, including during the moving-view cooldown. */
-function createSplatSortCache(
-  gl: WebGL2RenderingContext,
-  data: SplatData,
-) {
+function createSplatSortCache(gl: WebGL2RenderingContext, data: SplatData) {
   const target = gl.ELEMENT_ARRAY_BUFFER;
   let current: SplatEye | undefined;
   let previous: SplatEye | undefined;
@@ -824,10 +840,11 @@ function createSplatSortCache(
       eye: string,
       externalOrder?: Uint32Array | null,
     ): SortedSplatView | undefined {
-      const row = matrix[3] === 0 && matrix[7] === 0 && matrix[11] === 0 ? 2 : 3;
+      const row =
+        matrix[3] === 0 && matrix[7] === 0 && matrix[11] === 0 ? 2 : 3;
       if (current?.eye !== eye) {
-        const next = previous?.eye === eye ? previous :
-          {eye, key: new Float32Array(4)};
+        const next =
+          previous?.eye === eye ? previous : {eye, key: new Float32Array(4)};
         previous = current;
         current = next;
       }
@@ -847,7 +864,7 @@ function createSplatSortCache(
         // A first eye may update a shared buffer. A divergent second eye
         // must split before writing, so it cannot replace the first eye's order.
         if (!view.order || (previous?.seen && view.order === previous.order)) {
-          let storage = orders.find(o => o !== previous?.order);
+          let storage = orders.find((o) => o !== previous?.order);
           if (!storage) {
             const buffer = gl.createBuffer();
             if (!buffer) return;
@@ -881,7 +898,7 @@ function createSplatSortCache(
         gl.deleteBuffer(view.buffer);
       }
       current = previous = undefined;
-    }
+    },
   };
 }
 
@@ -1010,11 +1027,7 @@ export class SplatRenderer {
     externalGpu?: SplatGPUFrameOutput | null,
   ): void {
     const gl = this.gl;
-    if (
-      !this.program ||
-      !this.vao ||
-      this.data.count === 0
-    ) {
+    if (!this.program || !this.vao || this.data.count === 0) {
       return;
     }
     const mvp = this.mvp;
@@ -1108,6 +1121,14 @@ export class XRSplatLoader {
       if (!raw) continue;
       const url = resolveSplatUrl(raw, undefined, allowRemote);
       if (!url || !mesh?.transform) continue;
+      if (
+        !checkPluginCapability(viewer.container, 'remote_content', 'splatUrl', {
+          url,
+          dedup: true,
+        })
+      ) {
+        continue;
+      }
       live.add(mesh);
       const existing = this.entries.get(mesh);
       if (existing?.url === url) continue;
@@ -1116,10 +1137,15 @@ export class XRSplatLoader {
         getSharedRegistry().splatAccelerator?.disposeCloud?.(prevData);
       }
       existing?.renderer?.dispose();
-      const entry: SplatEntry = {url, data: null, renderer: null, failed: false};
+      const entry: SplatEntry = {
+        url,
+        data: null,
+        renderer: null,
+        failed: false,
+      };
       this.entries.set(mesh, entry);
       if (!gl) continue;
-      loadSplat(url, this.fetchFn, allowRemote).then(
+      loadSplat(url, this.fetchFn, allowRemote, viewer.container).then(
         (data) => {
           if (this.entries.get(mesh) === entry) {
             entry.data = data;

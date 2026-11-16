@@ -16,7 +16,11 @@
 
 package com.google.threelive.ai
 
+import com.google.threelive.CapabilityDeniedListener
+import com.google.threelive.CapabilityGuard
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import com.google.threelive.gemini.LiveBase64
 import java.io.File
 import java.net.HttpURLConnection
@@ -37,8 +41,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * A pluggable image generator for AI textures (`userData.xr.material.prompt`, roadmap B5).
- * Mirrors `ThreeLiveImageProvider` on the web.
+ * A pluggable image generator for AI textures (`userData.xr.material.prompt`, roadmap B5). Mirrors
+ * `ThreeLiveImageProvider` on the web.
  */
 interface AIImageProvider {
   /**
@@ -75,9 +79,17 @@ constructor(
   private val openConnection: (URL) -> HttpURLConnection = {
     it.openConnection() as HttpURLConnection
   },
+  @Volatile var capabilities: ThreeLiveCapabilities? = null,
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null,
 ) : AIImageProvider {
 
   override val name: String = "openai-images"
+
+  internal val endpointUrl: String
+    get() = endpoint
+
+  @Volatile internal var fallbackCapabilities: (() -> ThreeLiveCapabilities?)? = null
+  @Volatile internal var fallbackOnDenied: (() -> CapabilityDeniedListener?)? = null
 
   init {
     require(AIChatProvider.isAllowedEndpoint(endpoint)) {
@@ -87,6 +99,18 @@ constructor(
 
   override suspend fun generateImage(requestBody: Map<String, Any?>): String =
     withContext(Dispatchers.IO) {
+      val policy = capabilities ?: fallbackCapabilities?.invoke() ?: ThreeLiveCapabilities.default
+      val deniedListener = onCapabilityDenied ?: fallbackOnDenied?.invoke()
+      if (
+        !policy.check(
+          ThreeLiveCapability.AI,
+          "aiTextures",
+          url = endpoint,
+          listener = deniedListener,
+        )
+      ) {
+        throw AIEditException("ai-image: capability 'ai' or 'network' denied.")
+      }
       val conn = openConnection(URL(endpoint))
       try {
         conn.requestMethod = "POST"
@@ -95,7 +119,9 @@ constructor(
         conn.doOutput = true
         conn.setRequestProperty("Content-Type", "application/json")
         for ((k, v) in headers) conn.setRequestProperty(k, v)
-        conn.outputStream.use { it.write(MiniJson.stringify(requestBody).toByteArray(Charsets.UTF_8)) }
+        conn.outputStream.use {
+          it.write(MiniJson.stringify(requestBody).toByteArray(Charsets.UTF_8))
+        }
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         val text = stream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
@@ -171,6 +197,55 @@ constructor(
 
   @Volatile var listener: Listener? = null
 
+  private val capabilityGuard = CapabilityGuard()
+
+  /** Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]). */
+  @Volatile
+  var capabilities: ThreeLiveCapabilities? = null
+    set(value) {
+      field = value
+      capabilityGuard.reset()
+    }
+
+  /** Optional listener notified whenever texture caching or AI generation is refused. */
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null
+
+  @Volatile internal var fallbackCapabilities: (() -> ThreeLiveCapabilities?)? = null
+  @Volatile internal var fallbackOnDenied: (() -> CapabilityDeniedListener?)? = null
+
+  init {
+    val img = provider as? AIImagesProvider
+    if (img != null) {
+      if (img.fallbackCapabilities == null) img.fallbackCapabilities = { effectiveCapabilities() }
+      if (img.fallbackOnDenied == null) img.fallbackOnDenied = { effectiveOnDenied() }
+    }
+  }
+
+  private fun effectiveCapabilities(): ThreeLiveCapabilities? =
+    capabilities ?: fallbackCapabilities?.invoke()
+
+  private fun effectiveOnDenied(): CapabilityDeniedListener? =
+    onCapabilityDenied ?: fallbackOnDenied?.invoke()
+
+  private fun checkTextureCapability(
+    capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = null,
+    dedup: Boolean = false,
+  ): Boolean {
+    val policy = effectiveCapabilities() ?: ThreeLiveCapabilities.default
+    return capabilityGuard.check(
+      policy = policy,
+      capability = capability,
+      feature = feature,
+      url = url,
+      dedup = dedup,
+      listener = effectiveOnDenied(),
+    )
+  }
+
+  private fun providerEndpointUrl(): String? = (provider as? AIImagesProvider)?.endpointUrl
+
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   private val generateLock = Mutex()
   private val failedKeys = ConcurrentHashMap.newKeySet<String>()
@@ -230,29 +305,35 @@ constructor(
    * previous one. Returns the background job, or null when there is nothing to do.
    */
   @JvmOverloads
-  fun sceneLoaded(
-    script: String,
-    onUpdated: (suspend (AITextureResult) -> Unit)? = null,
-  ): Job? {
+  fun sceneLoaded(script: String, onUpdated: (suspend (AITextureResult) -> Unit)? = null): Job? {
     autoJob?.cancel()
     if (mode != Mode.AUTO || provider == null) return null
-    val job =
-      scope.launch {
-        try {
-          val missing = requests(script).filter { !it.hit && it.key !in failedKeys }
-          if (missing.isEmpty()) return@launch
-          listener?.onTexturesStart(script, missing)
-          val keys = missing.map { it.key }.toSet()
-          val result = generate(script, force = false) { it.key in keys }
-          failedKeys += result.failed.keys
-          listener?.onTexturesUpdated(script, result)
-          onUpdated?.invoke(result)
-        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          // Background work must not crash the app; the scene keeps its presets.
+    val job = scope.launch {
+      try {
+        val missing = requests(script).filter { !it.hit && it.key !in failedKeys }
+        if (missing.isEmpty()) return@launch
+        if (
+          !checkTextureCapability(
+            ThreeLiveCapability.AI,
+            "aiTextures",
+            url = providerEndpointUrl(),
+            dedup = true,
+          )
+        ) {
+          return@launch
         }
+        listener?.onTexturesStart(script, missing)
+        val keys = missing.map { it.key }.toSet()
+        val result = generate(script, force = false) { it.key in keys }
+        failedKeys += result.failed.keys
+        listener?.onTexturesUpdated(script, result)
+        onUpdated?.invoke(result)
+      } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        // Background work must not crash the app; the scene keeps its presets.
       }
+    }
     autoJob = job
     return job
   }
@@ -287,17 +368,34 @@ constructor(
     for (r in wanted) {
       try {
         val spec = mapOf("prompt" to r.prompt, "size" to r.size, "seed" to r.seed)
-        val cacheFile = cacheDir?.let { File(it, "${r.key}.img") }
+        val rawCacheFile = cacheDir?.let { File(it, "${r.key}.img") }
+        val cacheAllowed =
+          rawCacheFile != null &&
+            checkTextureCapability(ThreeLiveCapability.STORAGE, "aiTextureCache", dedup = true)
+        val cacheFile = if (cacheAllowed) rawCacheFile else null
         var fromCache = false
         val image: String =
           if (!force && cacheFile != null && cacheFile.isFile) {
             fromCache = true
             withContext(Dispatchers.IO) { LiveBase64.encode(cacheFile.readBytes()) }
           } else {
-            val p = provider ?: throw AIEditException("generateTextures: no image provider configured.")
-            val req = core.call(mapOf("op" to "texture_image_request", "spec" to spec, "model" to p.model))
+            val p =
+              provider ?: throw AIEditException("generateTextures: no image provider configured.")
+            if (
+              !checkTextureCapability(
+                ThreeLiveCapability.AI,
+                "aiTextures",
+                url = providerEndpointUrl(),
+                dedup = true,
+              )
+            ) {
+              throw AIEditException("generateTextures: capability 'ai' or 'network' denied.")
+            }
+            val req =
+              core.call(mapOf("op" to "texture_image_request", "spec" to spec, "model" to p.model))
             val body = MiniJson.asMap(req["body"]) ?: throw AIEditException("invalid texture spec")
-            val parsed = core.call(mapOf("op" to "texture_image_parse", "body" to p.generateImage(body)))
+            val parsed =
+              core.call(mapOf("op" to "texture_image_parse", "body" to p.generateImage(body)))
             (parsed["error"] as? String)?.let { throw AIEditException(it) }
             val b64 = parsed["image"] as? String ?: throw AIEditException("no image")
             if (cacheFile != null) {

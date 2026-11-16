@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {CAPABILITIES_NONE, CAPABILITIES_VIEWER} from '../src/capabilities';
+import {getSharedRegistry} from '../src/plugin';
 import THREE from '../src/three-author';
 import {
   generateUSDA,
@@ -344,6 +346,7 @@ async function runXRTests() {
   g['setTimeout'] = () => 0;
 
   try {
+    getSharedRegistry().defaultCapabilities = CAPABILITIES_VIEWER;
     for (const hostile of [
       'javascript:alert(document.cookie)',
       'JaVaScRiPt:alert(1)',
@@ -377,6 +380,7 @@ async function runXRTests() {
       'Both safe Quick Look URLs reached anchor.click()',
     );
   } finally {
+    getSharedRegistry().defaultCapabilities = CAPABILITIES_NONE;
     g['document'] = originalDocument;
     g['setTimeout'] = originalSetTimeout;
   }
@@ -400,6 +404,7 @@ async function runXRTests() {
   };
   const origXRWebGLLayer = g['XRWebGLLayer'];
   try {
+    getSharedRegistry().defaultCapabilities = CAPABILITIES_VIEWER;
     let makeXRCompatibleCalled = false;
     let baseLayerAssigned: any = null;
     let requestAttempts = 0;
@@ -681,13 +686,17 @@ async function runXRTests() {
       },
     };
     const xrLiveMgr = new WebXRSessionManager();
-    await xrLiveMgr.start(fakeXrLiveView, {tagName: 'XR-LIVE'});
+    await xrLiveMgr.start(fakeXrLiveView, {
+      tagName: 'XR-LIVE',
+      capabilities: 'camera',
+    });
     await xrLiveMgr.stop();
     assert(
       Math.abs(androidXrRootScale - 0.55) < 1e-3,
       'WebXRSessionManager scales <xr-live> scenes by 0.55x on handheld Android phones so room-scale ballpit fits portrait FOV',
     );
   } finally {
+    getSharedRegistry().defaultCapabilities = CAPABILITIES_NONE;
     if (origNavDesc) {
       Object.defineProperty(globalThis, 'navigator', origNavDesc);
     } else {

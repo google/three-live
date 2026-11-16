@@ -21,15 +21,14 @@ description: >-
     -   A 3D `.glb` / `.usdz` model viewer (`<model-viewer>` drop-in
         replacement) with built-in `EXT_meshopt_compression` decoding and
         `KHR_materials_variants` (`variant-name`)
-    -   A procedural Three.js scene (including 2D `Shape`/`ExtrudeGeometry`,
-        3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry` sweeps, coils, and
-        lofted vessels, `THREE.PatternInstancer` arrays, `THREE.CSG` Booleans, 3D `TextGeometry`, optional a la
-        carte domain kits
-        `THREE.Mechanical`, `THREE.Architecture`, `THREE.Industrial`,
-        `THREE.Science`, and `THREE.Electronics` via `three-live-kits.min.js` or
+    -   A procedural Three.js scene (including 2D `Shape`/`ExtrudeGeometry`, 3D
+        `SweepGeometry`/`HelixGeometry`/`LoftGeometry` sweeps, coils, and lofted
+        vessels, `THREE.PatternInstancer` arrays, `THREE.CSG` Booleans, 3D
+        `TextGeometry`, optional a la carte domain kits `THREE.Mechanical`,
+        `THREE.Architecture`, `THREE.Industrial`, `THREE.Science`, and
+        `THREE.Electronics` via `three-live-kits.min.js` or
         `three-live-kit-<domain>.min.js`, and `THREE.InstancedMesh` GPU
-        instancing) with
-        orbit controls and 1-tap mobile AR handoff (`ar`)
+        instancing) with orbit controls and 1-tap mobile AR handoff (`ar`)
     -   PBR Next materials (clearcoat, transmission, dispersion, iridescence,
         sheen, volume), 5 filmic/commerce tone-mapping modes
         (`tone-mapping="neutral|aces|agx|reinhard|none"`), HDR emissive `bloom`,
@@ -74,9 +73,21 @@ description: >-
 
 ## 2. Critical Rules That Prevent Broken Scenes
 
-1. **Include `allow-client-scripts` whenever using inline `<script type="text/three">` or `executeScript()`:**
-   - `<three-live>` and `<xr-live>` reject inline client scripts unless `allow-client-scripts` is present on the host element.
-   - Server-hosted scripts loaded via `script-src="/path/to/scene.js"` do not require `allow-client-scripts`.
+1.  **Declare `capabilities="..."` explicitly on `<three-live>` and
+    `<xr-live>`:**
+    -   All 9 capabilities (`scripts`, `network`, `remote_content`, `camera`,
+        `microphone`, `sensors`, `storage`, `ai`, `external_handoff`) default to
+        **off** on Web (`ThreeLiveCapabilities` on Android/iOS defaults to
+        `scripts = true` and all sensitive capabilities `false`).
+    -   Use `capabilities="scripts"` (or legacy `allow-client-scripts`) for pure
+        procedural `<script type="text/three">`, `capabilities="viewer"` for
+        remote `.glb`/`.usdz` + AR handoff, `capabilities="all"` for full
+        playgrounds, or scoped tokens like
+        `capabilities="scripts ai network:https@https://api.example.com"`.
+        Server-hosted `script-src` requires
+        `capabilities="scripts remote_content network"`.
+        `three-live-cli validate <file>.html` flags missing capabilities via
+        `TL401` and `TL403`.
 2. **Use the pre-defined `THREE` and `scene` globals inside `<script type="text/three">`:**
    - Do **not** `import * as THREE from 'three'`, do **not** create a `new THREE.WebGLRenderer()`, and do **not** call `document.body.appendChild(...)` inside `<script type="text/three">`. The script runs inside an isolated Web Worker (or Rust Boa sandbox) with zero DOM access and populates the global `scene` directly (`scene.add(mesh)`).
 3. **Never use `GLTFLoader` or `TextureLoader` inside `<script type="text/three">`:**

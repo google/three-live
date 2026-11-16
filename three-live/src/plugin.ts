@@ -17,6 +17,13 @@
  * Provides extensible hooks across lifecycle, glTF parsing, shaders, and rendering.
  */
 
+import type {
+  CapabilityDeniedDetail,
+  checkHostCapability,
+  ThreeLiveCapabilities,
+  ThreeLiveCapabilityName,
+} from './capabilities';
+
 export interface ThreeLivePlugin {
   readonly name: string;
   onRegister?(): void;
@@ -30,7 +37,8 @@ export interface ThreeLivePlugin {
   onCameraChange?(viewer: any, element?: any): void;
   onElementDisconnected?(element: any): void;
   onParseGLB?(glbData: any): void;
-  onLoadModel?(viewer: any, gltf: any): void;
+  onLoadModel?(viewer: any, gltf?: any): void;
+  onSceneLoaded?(viewer: any): void;
   onClearScene?(viewer: any): void;
   onMeshSelect?(viewer: any, hit: any): void;
   onResolveShader?(
@@ -90,6 +98,7 @@ export interface ThreeLivePlugin {
   // tslint:disable-next-line:no-any
   onContextRestored?(gl: WebGL2RenderingContext, viewer: any): void;
   onDestroy?(gl: WebGL2RenderingContext, viewer: any): void;
+  onDispose?(viewer: any): void;
 }
 
 /**
@@ -187,6 +196,18 @@ export interface SharedThreeLiveRegistry {
    * permitted unless explicitly enabled.
    */
   allowClientScripts?: boolean;
+  /** Process/page-wide default capability policy (`CAPABILITIES_NONE` by default). */
+  defaultCapabilities?: ThreeLiveCapabilities;
+  /** Process/page-wide listener invoked whenever any capability check is denied. */
+  onCapabilityDenied?: ((detail: CapabilityDeniedDetail) => void) | null;
+  /** Shared capability check installed by `capabilities.ts` so add-on bundles add ~0 B. */
+  checkCapability?: typeof checkHostCapability;
+  /** Silent capability query installed by `capabilities.ts` (no denial event). */
+  hasCapability?: (
+    host: unknown,
+    capability: ThreeLiveCapabilityName,
+    url?: string,
+  ) => boolean;
   /**
    * `makePngDeflater` from `png-deflate.ts`, published by `three-author.ts` so
    * host-side plugins (AI texture packs) reuse it instead of bundling a copy.
@@ -445,4 +466,50 @@ export function registerPlugin(plugin: ThreeLivePlugin): void {
 
 export function getRegisteredPlugins(): readonly ThreeLivePlugin[] {
   return getSharedRegistry().plugins;
+}
+
+/**
+ * Evaluates `capability` at a plugin access point via the shared registry
+ * (with a fail-closed fallback when loaded without `ThreeLiveElement`).
+ */
+export function checkPluginCapability(
+  host: unknown,
+  capability: ThreeLiveCapabilityName,
+  feature: string,
+  options?: {readonly url?: string; readonly dedup?: boolean},
+): boolean {
+  const reg = getSharedRegistry();
+  if (reg.checkCapability) {
+    return reg.checkCapability(host, capability, feature, options);
+  }
+  const h = (host && typeof host === 'object' ? host : null) as {
+    checkCapability?: (
+      c: string,
+      f: string,
+      o?: {readonly url?: string; readonly dedup?: boolean},
+    ) => boolean;
+  } | null;
+  if (typeof h?.checkCapability === 'function') {
+    return h.checkCapability(capability, feature, options);
+  }
+  return false;
+}
+
+/**
+ * Evaluates whether `capability` is currently granted on `host` without
+ * logging a warning or dispatching `three-capability-denied`.
+ */
+export function hasPluginCapability(
+  host: unknown,
+  capability: ThreeLiveCapabilityName,
+  url?: string,
+): boolean {
+  const reg = getSharedRegistry();
+  if (reg.hasCapability) return reg.hasCapability(host, capability, url);
+  const h = (host && typeof host === 'object' ? host : null) as {
+    hasCapability?: (c: string, u?: string) => boolean;
+  } | null;
+  return typeof h?.hasCapability === 'function'
+    ? h.hasCapability(capability, url)
+    : false;
 }

@@ -77,3 +77,39 @@ within a week (depending on the severity of the report).
     `data-xr-webmcp-indicator="active"` and dispatches an `xr-webmcp-capture`
     `CustomEvent` on the `<xr-live>` element so the host page can surface a
     visible capture indicator.
+
+### 3. Capability-Based Security (`capabilities` & `ThreeLiveCapabilities`)
+
+All sensitive host side effects are gated by nine canonical capabilities across
+Web, Android, and iOS/visionOS, and default to **off** (fail-closed):
+
+-   `scripts`: Compiling or executing `<script type="text/three">` /
+    `executeScript()` (`allow-client-scripts` is supported as an alias on Web;
+    enabled by default in native `ThreeLiveCapabilities.DEFAULT` / `.default`,
+    disabled in `.NONE` / `.none`).
+-   `network`: Outbound `fetch`, `WebSocket`, and WebRTC signaling connections
+    (supports scheme and origin allowlists via
+    `network:https,wss@https://cdn.example.com`).
+-   `remote_content`: Loading remote `.glb`, `.usdz`, `script-src`, HDRI
+    environment/skybox textures, external `gltf.images[].uri` references,
+    `.splat`/`.spz` clouds, and remote spatial audio URLs (also requires
+    `network` for network schemes; local `blob:`/`data:`/`file:`/`asset:` URIs
+    remain local).
+-   `camera`: Immersive AR sessions, viewport frame capture
+    (`RendererFrameSource`, `ARViewFrameSource`, Gemini Live frame streaming),
+    and object detection loops.
+-   `microphone`: Speech recognition, realtime voice editing (`AIVoiceSession`),
+    Gemini Live PCM input, and `shared-room-voice` WebRTC signaling.
+-   `sensors`: Immersive VR sessions, WebXR/ARCore/ARKit plane, mesh, and depth
+    reads, and 25-joint hand pose/gesture polling.
+-   `storage`: Persistent anchor reads/writes (`localStorage`, `#xr-state` URL
+    hashes) and AI texture disk caches.
+-   `ai`: LLM scene editing (`editScene`), image-to-scene (`compileFromImage`),
+    AI texture generation, and Gemini Live / realtime voice sessions.
+-   `external_handoff`: Launching external OS AR viewers (Apple AR Quick Look
+    and Google ARCore Scene Viewer).
+
+Scene scripts and glTF `extras.xr` traits **cannot** escalate capabilities not
+granted by the host embedder. Refused operations emit a credential- and
+query-stripped `three-capability-denied` event (`CapabilityDeniedEvent` on
+Android/iOS) without crashing scene rendering.

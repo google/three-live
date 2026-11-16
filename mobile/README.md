@@ -80,21 +80,32 @@ Both Android and iOS include complete sample applications featuring an on-device
 
 ## AI Scene Editing: Tap & Speak
 
-The same bring-your-own-LLM editing as `el.editScene()` / `el.connectVoice()` on the web, with
-the prompt, reply parsing, edit validation, and voice protocols shared through the Rust core
-(`three_live_ai_call`), so every platform accepts and rejects the same edits. A text/code model
-writes each edit; the voice model only talks and calls the `edit_scene` / `undo_edit` /
-`select_meshes` tools.
-Keep API keys on your server: point endpoints at your own proxy or a local model.
+The same bring-your-own-LLM editing as `el.editScene()` / `el.connectVoice()` on
+the web, with the prompt, reply parsing, edit validation, and voice protocols
+shared through the Rust core (`three_live_ai_call`), so every platform accepts
+and rejects the same edits. A text/code model writes each edit; the voice model
+only talks and calls the `edit_scene` / `undo_edit` /
+`select_meshes` tools. Keep API keys on your
+server: point endpoints at your own proxy or a local model.
 
-| | Android (`com.google.threelive.ai`) | iOS / visionOS |
-|---|---|---|
-| Text edits + undo | `ThreeLiveAIEditor` | `AIEditor` |
-| Code model (`ai-chat`) | `AIChatProvider` | `AIChatProvider` |
+|                | Android                            | iOS / visionOS                        |
+:                : (`com.google.threelive.ai`)        :                                       :
+| -------------- | ---------------------------------- | ------------------------------------- |
+| Text edits +   | `ThreeLiveAIEditor`                | `AIEditor`                            |
+: undo           :                                    :                                       :
+| Code model     | `AIChatProvider`                   | `AIChatProvider`                      |
+: (`ai-chat`)    :                                    :                                       :
 | Tap to select | `editor.toggleSelection(name, additive)` from `ThreeLiveRendererListener.onPick` | `editor.toggleSelection(entity.name, additive:)` from your tap handler |
 | Talk-to-Select | `editor.selectByVoice("the red chairs", mode)`, `editor.selections`, `editor.camera` | `editor.selectByVoice("the red chairs", mode:)`, `editor.selections`, `editor.camera` |
-| Push-to-talk | `VoiceEditController` (`SpeechRecognizer` + `TextToSpeech`) | `VoiceEditController` (`SFSpeechRecognizer` + `AVSpeechSynthesizer`) |
-| Realtime voice (`ai-realtime` / `gemini-live`) | `AIVoiceSession` + `WebSocketLiveTransport` + `MicrophoneStreamer(rate)` + `AudioTrackPcmSink` | `AIVoiceSession` + `URLSessionLiveTransport` + `MicrophoneStreamer(sampleRate:)` + `AVAudioPcmSink` |
+:                : from                               : from your tap handler                 :
+:                : `ThreeLiveRendererListener.onPick` :                                       :
+| Push-to-talk   | `VoiceEditController`              | `VoiceEditController`                 |
+:                : (`SpeechRecognizer` +              : (`SFSpeechRecognizer` +               :
+:                : `TextToSpeech`)                    : `AVSpeechSynthesizer`)                :
+| Realtime voice | `AIVoiceSession` +                 | `AIVoiceSession` +                    |
+: (`ai-realtime` : `WebSocketLiveTransport` +         : `URLSessionLiveTransport` +           :
+: /              : `MicrophoneStreamer(rate)` +       : `MicrophoneStreamer(sampleRate\:)` +  :
+: `gemini-live`) : `AudioTrackPcmSink`                : `AVAudioPcmSink`                      :
 
 Talk-to-Select uses the same matcher as the web (`select`, `parse_command`, and the other
 `select_*` ops in the core). Push-to-talk understands "select … / also select … / deselect … /
@@ -104,21 +115,27 @@ camera's eye and target so "left" and "front" match what the user sees. Referenc
 can't resolve go to the editor's code model; set `selectWithModel = false` to turn that off.
 
 ```kotlin
-val editor = ThreeLiveAIEditor(script, AIChatProvider("https://your-backend.example/chat")) { code ->
-  renderer.loadGlb(ThreeCompiler.compileToBytes(code))
-}
-val session = AIVoiceSession(editor, WebSocketLiveTransport("wss://your-backend.example/realtime"), scope, sink = AudioTrackPcmSink())
+val caps = ThreeLiveCapabilities(scripts = true, ai = true, network = true, microphone = true)
+val editor =
+  ThreeLiveAIEditor(script, AIChatProvider("https://your-backend.example/chat")) { code ->
+    renderer.loadGlb(ThreeCompiler.compileToBytes(code))
+  }.apply {
+    capabilities = caps
+  }
+val session = AIVoiceSession(editor, WebSocketLiveTransport("wss://your-backend.example/realtime", capabilities = caps), scope, sink = AudioTrackPcmSink())
 val rate = session.start()  // 24000 for ai-realtime, 16000 for gemini-live
-MicrophoneStreamer(rate) { session.sendAudio(it) }.start(context)
+MicrophoneStreamer(rate) { session.sendAudio(it) }.apply { capabilities = caps }.start(context)
 ```
 
 ```swift
+let caps = ThreeLiveCapabilities(scripts: true, network: true, microphone: true, ai: true)
 let editor = AIEditor(source: script, provider: AIChatProvider(endpoint: "https://your-backend.example/chat")!) { code in
   try await reload(try await ThreeCompiler.compile(code))
 }
-let session = try AIVoiceSession(editor: editor, transport: URLSessionLiveTransport(url: realtimeURL)!, sink: AVAudioPcmSink())
+editor.capabilities = caps
+let session = try AIVoiceSession(editor: editor, transport: URLSessionLiveTransport(url: realtimeURL, capabilities: caps)!, sink: AVAudioPcmSink())
 let rate = try await session.start()
-try MicrophoneStreamer(sampleRate: rate) { session.sendAudio($0) }.start()
+try MicrophoneStreamer(sampleRate: rate, capabilities: caps) { session.sendAudio($0) }.start()
 ```
 
 ## Room Scans as Image-to-Scene Priors
@@ -135,8 +152,8 @@ priors.camera = AISpatialPriors.fromARFrame(frame).camera  // where the photo wa
 let result = await editor.compileFromImageData(jpeg, prompt: "this living room", priors: priors)
 ```
 
-`AISpatialPriors.fromRoomScan(surfaces:objects:)` does the same mapping from your
-own scan data (`AIRoomSurface` / `AIRoomObject`).
+`AISpatialPriors.fromRoomScan(surfaces:objects:)` does the same mapping from
+your own scan data (`AIRoomSurface` / `AIRoomObject`).
 
 Android has no RoomPlan equivalent, so `AISpatialPriors.fromRoomScan` (same
 mapping, column-major 4×4 transforms) takes surfaces and objects from whatever
@@ -172,7 +189,9 @@ pixels here.
 val textures = ThreeLiveAITextures(
   AIImagesProvider("https://your-backend.example/v1/images/generations"),
   cacheDir = File(context.cacheDir, "three-live-textures"),
-)
+).apply {
+  capabilities = ThreeLiveCapabilities(scripts = true, ai = true, network = true, storage = true)
+}
 textures.setPack(assets.open("scene.textures.json").reader().readText())  // optional
 val result = textures.generateTextures(script)   // pack → cache → provider
 renderer.loadGlb(ThreeCompiler.compileToBytes(script))  // recompile to show them
@@ -183,6 +202,7 @@ saveForLater(result.packJson)
 let textures = AITextures(
   provider: AIImagesProvider(endpoint: "https://your-backend.example/v1/images/generations"),
   cacheDirectory: cachesURL.appendingPathComponent("three-live-textures"))
+textures.capabilities = ThreeLiveCapabilities(scripts: true, network: true, storage: true, ai: true)
 let result = try await textures.generateTextures(script)
 try await reload(try await ThreeCompiler.compile(script))
 ```

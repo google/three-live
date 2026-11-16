@@ -27,17 +27,18 @@
  */
 
 import {mat4Create} from '../../../three-live/src/math';
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  checkPluginCapability,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {extractPosition, getMeshXRTraits, type XRPose6DoF} from '../xr-traits';
 import {
   buildBoxGeometry,
+  cacheXRFrame,
   clampNum,
   createDynamicMesh,
   emitPluginEvent,
   horizontalForward,
-  type PluginViewer,
-  type Quat,
-  cacheXRFrame,
   isXRFrameFresh,
   removeDynamicMesh,
   resolveHeadPose,
@@ -51,6 +52,8 @@ import {
   vNorm,
   vScale,
   vSub,
+  type PluginViewer,
+  type Quat,
   type Vec3,
 } from './common';
 
@@ -85,7 +88,12 @@ export const MAX_DETECTIONS_JSON_CHARS = 16 * 1024;
  * Malformed entries are skipped; malformed or oversized input yields `[]`.
  */
 export function parseDetections(json: unknown): Detection2D[] {
-  if (typeof json !== 'string' || !json || json.length > MAX_DETECTIONS_JSON_CHARS) return [];
+  if (
+    typeof json !== 'string' ||
+    !json ||
+    json.length > MAX_DETECTIONS_JSON_CHARS
+  )
+    return [];
   let raw: unknown;
   try {
     raw = JSON.parse(json);
@@ -135,7 +143,9 @@ export function snapshotDetectionCamera(element: any): DetectionCamera {
   const viewer: PluginViewer | undefined = element?._view ?? element?.viewer;
   return {
     world: Float32Array.from(resolveHeadPose(viewer).matrix),
-    projection: Float32Array.from(resolveProjection(viewer) ?? defaultProjection()),
+    projection: Float32Array.from(
+      resolveProjection(viewer) ?? defaultProjection(),
+    ),
   };
 }
 
@@ -163,8 +173,15 @@ export function normalizeBox(
   if (!Array.isArray(box) || box.length < 4) return null;
   if (!box.slice(0, 4).every((v) => Number.isFinite(v))) return null;
   const scale = box.slice(0, 4).some((v) => v > 1.0001) ? 1000 : 1;
-  const [y0, x0, y1, x1] = box.slice(0, 4).map((v) => clampNum(v / scale, 0, 1, 0));
-  return [Math.min(y0, y1), Math.min(x0, x1), Math.max(y0, y1), Math.max(x0, x1)];
+  const [y0, x0, y1, x1] = box
+    .slice(0, 4)
+    .map((v) => clampNum(v / scale, 0, 1, 0));
+  return [
+    Math.min(y0, y1),
+    Math.min(x0, x1),
+    Math.max(y0, y1),
+    Math.max(x0, x1),
+  ];
 }
 
 /**
@@ -181,7 +198,11 @@ export function viewportRay(
   const ndcY = 1 - v * 2;
   const p0 = proj[0] || 1;
   const p5 = proj[5] || 1;
-  const viewDir: Vec3 = [(ndcX + (proj[8] ?? 0)) / p0, (ndcY + (proj[9] ?? 0)) / p5, -1];
+  const viewDir: Vec3 = [
+    (ndcX + (proj[8] ?? 0)) / p0,
+    (ndcY + (proj[9] ?? 0)) / p5,
+    -1,
+  ];
   const origin = extractPosition(cameraWorld);
   const far = transformPoint(cameraWorld, viewDir);
   return {origin, dir: vNorm(vSub(far, origin)), viewDir};
@@ -193,7 +214,12 @@ export function hitTestPlanes(
   origin: readonly number[],
   dir: readonly number[],
 ): {point: Vec3; normal: Vec3; distance: number; plane: TrackedPlane} | null {
-  let best: {point: Vec3; normal: Vec3; distance: number; plane: TrackedPlane} | null = null;
+  let best: {
+    point: Vec3;
+    normal: Vec3;
+    distance: number;
+    plane: TrackedPlane;
+  } | null = null;
   for (const plane of planes) {
     const denom = vDot(plane.normal, dir);
     if (Math.abs(denom) < 1e-6) continue;
@@ -227,7 +253,11 @@ export function unprojectDetectionTo3D(
   let depth = 0;
   let source: Detection3D['depthSource'] = 'fallback';
   const sampled = sampleDepth?.(u, v);
-  if (typeof sampled === 'number' && Number.isFinite(sampled) && sampled > 0.05) {
+  if (
+    typeof sampled === 'number' &&
+    Number.isFinite(sampled) &&
+    sampled > 0.05
+  ) {
     depth = sampled;
     source = 'depth';
   } else {
@@ -330,7 +360,8 @@ export class XRWorldUnderstandingController {
       if (!m || m.length !== 16) continue;
       // The plane's local +Y axis is its normal in WebXR plane detection.
       next.push({
-        orientation: plane.orientation === 'vertical' ? 'vertical' : 'horizontal',
+        orientation:
+          plane.orientation === 'vertical' ? 'vertical' : 'horizontal',
         center: [m[12], m[13], m[14]],
         normal: vNorm([m[4], m[5], m[6]], [0, 1, 0]),
         radius: polygonRadius(plane.polygon),
@@ -351,10 +382,17 @@ export class XRWorldUnderstandingController {
     camera?: DetectionCamera,
   ): Detection3D[] {
     const world = camera?.world ?? resolveHeadPose(viewer).matrix;
-    const proj = camera?.projection ?? resolveProjection(viewer) ?? defaultProjection();
+    const proj =
+      camera?.projection ?? resolveProjection(viewer) ?? defaultProjection();
     const out: Detection3D[] = [];
     for (const d of detections.slice(0, MAX_DETECTIONS)) {
-      const located = unprojectDetectionTo3D(d, world, proj, this.planes, sampleDepth);
+      const located = unprojectDetectionTo3D(
+        d,
+        world,
+        proj,
+        this.planes,
+        sampleDepth,
+      );
       if (located) out.push(located);
     }
     return out;
@@ -364,19 +402,37 @@ export class XRWorldUnderstandingController {
    * Casts the gaze ray against tracked planes (then depth) and positions the
    * reticle mesh. Creates the reticle lazily and hides it on a miss.
    */
-  updateReticle(viewer: PluginViewer, head: XRPose6DoF, sampleDepth?: DepthSampler): void {
+  updateReticle(
+    viewer: PluginViewer,
+    head: XRPose6DoF,
+    sampleDepth?: DepthSampler,
+  ): void {
     const m = head.matrix;
-    const fwd = vNorm([-m[8], -m[9], -m[10]], horizontalForward(head.quaternion));
-    let hit: {point: Vec3; normal: Vec3} | null = hitTestPlanes(this.planes, head.position, fwd);
+    const fwd = vNorm(
+      [-m[8], -m[9], -m[10]],
+      horizontalForward(head.quaternion),
+    );
+    let hit: {point: Vec3; normal: Vec3} | null = hitTestPlanes(
+      this.planes,
+      head.position,
+      fwd,
+    );
     if (!hit) {
       const d = sampleDepth?.(0.5, 0.5);
       if (typeof d === 'number' && Number.isFinite(d) && d > 0.05) {
-        hit = {point: vAdd(head.position, vScale(fwd, d)), normal: vScale(fwd, -1)};
+        hit = {
+          point: vAdd(head.position, vScale(fwd, d)),
+          normal: vScale(fwd, -1),
+        };
       }
     }
     this.reticleHit = hit;
     // Re-create after a model reload replaced (and freed) `viewer.meshes`.
-    if (this.reticle && Array.isArray(viewer.meshes) && !viewer.meshes.includes(this.reticle)) {
+    if (
+      this.reticle &&
+      Array.isArray(viewer.meshes) &&
+      !viewer.meshes.includes(this.reticle)
+    ) {
       this.reticle = null;
     }
     if (!this.reticle) {
@@ -388,7 +444,13 @@ export class XRWorldUnderstandingController {
     }
     this.reticle.visible = Boolean(hit);
     if (hit) {
-      setWorldTRS(viewer, this.reticle, quatFromNormal(hit.normal), hit.point, [0.06, 0.06, 0.004]);
+      setWorldTRS(
+        viewer,
+        this.reticle,
+        quatFromNormal(hit.normal),
+        hit.point,
+        [0.06, 0.06, 0.004],
+      );
     }
   }
 
@@ -422,7 +484,9 @@ function defaultProjection(): Float32Array {
 const controllers = new WeakMap<object, XRWorldUnderstandingController>();
 
 /** Returns (creating on first use) the controller bound to `key`. */
-export function getWorldUnderstandingController(key: object): XRWorldUnderstandingController {
+export function getWorldUnderstandingController(
+  key: object,
+): XRWorldUnderstandingController {
   let c = controllers.get(key);
   if (!c) {
     c = new XRWorldUnderstandingController();
@@ -441,7 +505,10 @@ export interface WorldUnderstandingOptions {
 
 /** Reads opt-in flags from the host attribute and any mesh trait. */
 // tslint:disable-next-line:no-any Host element and GPU mesh structs.
-export function resolveWorldUnderstanding(element: any, meshes: readonly any[] = []): WorldUnderstandingOptions {
+export function resolveWorldUnderstanding(
+  element: any,
+  meshes: readonly any[] = [],
+): WorldUnderstandingOptions {
   const attr = element?.getAttribute?.('world-understanding');
   let planes = attr != null && attr !== 'false';
   let meshesOn = false;
@@ -453,11 +520,25 @@ export function resolveWorldUnderstanding(element: any, meshes: readonly any[] =
     meshesOn ||= wu.meshes === true;
     reticle ||= wu.reticle === true;
   }
-  return {enabled: planes || meshesOn || Boolean(reticle), planes, meshes: meshesOn, reticle: Boolean(reticle)};
+  return {
+    enabled: planes || meshesOn || Boolean(reticle),
+    planes,
+    meshes: meshesOn,
+    reticle: Boolean(reticle),
+  };
 }
 
 function depthSamplerFor(host: unknown): DepthSampler | undefined {
-  const dm = (host as {depthManager?: {sampleDepthAndNormal?: (u: number, v: number) => {depthMeters: number} | null}})?.depthManager;
+  const dm = (
+    host as {
+      depthManager?: {
+        sampleDepthAndNormal?: (
+          u: number,
+          v: number,
+        ) => {depthMeters: number} | null;
+      };
+    }
+  )?.depthManager;
   if (!dm || typeof dm.sampleDepthAndNormal !== 'function') return undefined;
   return (u, v) => {
     try {
@@ -505,22 +586,43 @@ export const worldUnderstandingPlugin: ThreeLivePlugin = {
   onConfigureXRSessionInit(element: any, sessionInit: any): void {
     const viewer = element?._view ?? element?.viewer;
     const opts = resolveWorldUnderstanding(element, viewer?.meshes ?? []);
-    if (!opts.enabled || !sessionInit) return;
+    if (
+      !opts.enabled ||
+      !sessionInit ||
+      !checkPluginCapability(element, 'sensors', 'worldUnderstanding', {
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     const optional = new Set<string>(sessionInit.optionalFeatures ?? []);
     if (opts.planes || opts.reticle) optional.add('plane-detection');
     if (opts.meshes) optional.add('mesh-detection');
     sessionInit.optionalFeatures = [...optional];
   },
-  onXRFrame(viewer: unknown, _session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    _session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     const host = v?.container;
     if (!host) return;
     const opts = resolveWorldUnderstanding(host, v.meshes ?? []);
-    if (!opts.enabled) return;
+    if (
+      !opts.enabled ||
+      !checkPluginCapability(host, 'sensors', 'worldUnderstanding', {
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     const ctrl = getWorldUnderstandingController(host);
     cacheXRFrame(v, frame, refSpace);
     ctrl.updateFromXRFrame(frame, refSpace);
-    if (opts.reticle) ctrl.updateReticle(v, resolveHeadPose(v), depthSamplerFor(host));
+    if (opts.reticle)
+      ctrl.updateReticle(v, resolveHeadPose(v), depthSamplerFor(host));
   },
   onUpdate(viewer: PluginViewer): void {
     // Outside an immersive session the reticle has no valid surface to sit on.

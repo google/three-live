@@ -17,6 +17,7 @@
 package com.google.threelive.ai
 
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveCapabilities
 import com.google.threelive.WorldUnderstanding
 import com.google.threelive.gemini.GeminiLiveTransport
 import com.google.threelive.gemini.PcmAudioSink
@@ -33,12 +34,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -48,6 +51,16 @@ import org.junit.Test
  * `ai_voice.rs`.
  */
 class ThreeLiveAIEditorTest {
+
+  @Before
+  fun setUp() {
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.ALL
+  }
+
+  @After
+  fun tearDown() {
+    ThreeLiveCapabilities.default = ThreeLiveCapabilities.DEFAULT
+  }
 
   private val base = "const roof = new THREE.Mesh(); roof.name = 'Roof'; scene.add(roof);"
   private val red = base.replace("Mesh()", "Mesh(red)")

@@ -16,7 +16,11 @@
 
 package com.google.threelive.gemini
 
+import com.google.threelive.CapabilityDeniedListener
+import com.google.threelive.CapabilityGuard
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveCapabilities
+import com.google.threelive.ThreeLiveCapability
 import com.google.threelive.ThreeLiveDetections
 import com.google.threelive.XRHoldToAskTrait
 import java.util.concurrent.Executor
@@ -32,7 +36,9 @@ enum class TranscriptSpeaker(val wireName: String) {
   MODEL("model"),
 }
 
-/** One transcript update: the same `{speaker, text, isFinal}` shape as the web `xr-transcription`. */
+/**
+ * One transcript update: the same `{speaker, text, isFinal}` shape as the web `xr-transcription`.
+ */
 data class TranscriptEvent(val speaker: TranscriptSpeaker, val text: String, val isFinal: Boolean)
 
 /** Accumulates streaming transcription fragments per speaker (port of the web manager). */
@@ -128,11 +134,42 @@ constructor(
 
   @Volatile var listener: Listener? = null
 
+  private val capabilityGuard = CapabilityGuard()
+
+  /** Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]). */
+  @Volatile
+  var capabilities: ThreeLiveCapabilities? = null
+    set(value) {
+      field = value
+      capabilityGuard.reset()
+    }
+
+  /** Optional listener notified whenever a Gemini Live capability check is denied. */
+  @Volatile var onCapabilityDenied: CapabilityDeniedListener? = null
+
+  private fun checkGeminiCapability(
+    capability: ThreeLiveCapability,
+    feature: String,
+    url: String? = null,
+    dedup: Boolean = false,
+  ): Boolean {
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    return capabilityGuard.check(
+      policy = policy,
+      capability = capability,
+      feature = feature,
+      url = url,
+      dedup = dedup,
+      listener = onCapabilityDenied,
+    )
+  }
+
   /** Transcript accumulator (exposed for tests and custom UIs). */
   val transcripts: TranscriptionManager = TranscriptionManager()
 
   private val lock = Any()
   private var transport: GeminiLiveTransport? = null
+  private var endpointUrl: String? = null
   private var playAudio = true
   private var detectObjects = false
   private var scheduler: ScheduledExecutorService? = null
@@ -140,15 +177,26 @@ constructor(
   private val captureInFlight = AtomicBoolean(false)
   @Volatile private var turnHasOutputTranscription = false
 
+  internal fun activeEndpointUrl(): String? = synchronized(lock) { endpointUrl }
+
   /** Whether a transport is attached. */
   val connected: Boolean
     get() = synchronized(lock) { transport != null }
 
   /** Attaches [liveTransport] (replacing any previous session) and starts frame streaming. */
-  fun connect(liveTransport: GeminiLiveTransport, options: GeminiLiveOptions = GeminiLiveOptions()) {
+  fun connect(
+    liveTransport: GeminiLiveTransport,
+    options: GeminiLiveOptions = GeminiLiveOptions(),
+  ) {
     disconnect()
+    val resolvedUrl = (liveTransport as? WebSocketLiveTransport)?.endpointUrl
+    if (!checkGeminiCapability(ThreeLiveCapability.AI, "geminiLive", url = resolvedUrl)) {
+      liveTransport.close()
+      return
+    }
     synchronized(lock) {
       transport = liveTransport
+      endpointUrl = resolvedUrl
       playAudio = options.playAudio
       detectObjects = options.detectObjects
       turnHasOutputTranscription = false
@@ -165,6 +213,7 @@ constructor(
               (transport === liveTransport).also {
                 if (it) {
                   transport = null
+                  endpointUrl = null
                   stopFramesLocked()
                 }
               }
@@ -174,12 +223,19 @@ constructor(
       }
     val setup = if (options.detectObjects) withDetectionTool(options.setup) else options.setup
     setup?.let { liveTransport.send(mapOf("setup" to it)) }
-    if (options.streamFrames && frameSource != null) {
+    if (
+      options.streamFrames &&
+        frameSource != null &&
+        checkGeminiCapability(ThreeLiveCapability.CAMERA, "geminiStreamFrames", dedup = true)
+    ) {
       val interval = options.frameIntervalMs.coerceIn(250, 10_000)
       synchronized(lock) {
-        val s = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "three-live-gemini-frames").apply { isDaemon = true } }
+        val s = Executors.newSingleThreadScheduledExecutor { r ->
+          Thread(r, "three-live-gemini-frames").apply { isDaemon = true }
+        }
         scheduler = s
-        frameTask = s.scheduleWithFixedDelay({ sendFrame() }, interval, interval, TimeUnit.MILLISECONDS)
+        frameTask =
+          s.scheduleWithFixedDelay({ sendFrame() }, interval, interval, TimeUnit.MILLISECONDS)
       }
     }
   }
@@ -189,6 +245,7 @@ constructor(
     val t =
       synchronized(lock) {
         stopFramesLocked()
+        endpointUrl = null
         transport.also { transport = null }
       }
     t?.close()
@@ -202,10 +259,16 @@ constructor(
     audioSink?.close()
   }
 
-  /** Captures and sends one frame; skipped while a capture is in flight. Returns `true` if started. */
+  /**
+   * Captures and sends one frame; skipped while a capture is in flight. Returns `true` if started.
+   */
   fun sendFrame(): Boolean {
     val source = frameSource ?: return false
-    if (!connected || !captureInFlight.compareAndSet(false, true)) return false
+    if (!connected) return false
+    if (!checkGeminiCapability(ThreeLiveCapability.CAMERA, "geminiStreamFrames", dedup = true)) {
+      return false
+    }
+    if (!captureInFlight.compareAndSet(false, true)) return false
     try {
       source.captureJpeg { jpeg ->
         try {
@@ -229,15 +292,22 @@ constructor(
   fun sendAudioChunk(pcm16le: ByteArray, sampleRate: Int = 16_000) {
     val t = synchronized(lock) { transport } ?: return
     if (pcm16le.isEmpty()) return
+    if (!checkGeminiCapability(ThreeLiveCapability.MICROPHONE, "geminiLiveAudio", dedup = true)) {
+      return
+    }
     val rate = sampleRate.coerceIn(8_000, 48_000)
     t.send(realtimeChunk("audio/pcm;rate=$rate", LiveBase64.encode(pcm16le)))
   }
 
   /** Sends a completed user text turn (clipped to 4000 chars). */
   fun sendText(text: String) {
-    val t = synchronized(lock) { transport } ?: return
+    val (t, url) = synchronized(lock) { transport to endpointUrl }
+    if (t == null) return
     val clipped = text.take(MAX_TEXT_CHARS)
     if (clipped.isEmpty()) return
+    if (!checkGeminiCapability(ThreeLiveCapability.AI, "geminiLive", url = url, dedup = true)) {
+      return
+    }
     t.send(
       mapOf(
         "clientContent" to
@@ -257,15 +327,19 @@ constructor(
       audioSink?.flush()
       emit { it.onInterrupted() }
     }
-    (MiniJson.asMap(content["inputTranscription"])?.get("text") as? String)?.takeIf { it.isNotEmpty() }?.let {
-      val ev = transcripts.append(TranscriptSpeaker.USER, it)
-      emit { l -> l.onTranscript(ev) }
-    }
-    (MiniJson.asMap(content["outputTranscription"])?.get("text") as? String)?.takeIf { it.isNotEmpty() }?.let {
-      turnHasOutputTranscription = true
-      val ev = transcripts.append(TranscriptSpeaker.MODEL, it)
-      emit { l -> l.onTranscript(ev) }
-    }
+    (MiniJson.asMap(content["inputTranscription"])?.get("text") as? String)
+      ?.takeIf { it.isNotEmpty() }
+      ?.let {
+        val ev = transcripts.append(TranscriptSpeaker.USER, it)
+        emit { l -> l.onTranscript(ev) }
+      }
+    (MiniJson.asMap(content["outputTranscription"])?.get("text") as? String)
+      ?.takeIf { it.isNotEmpty() }
+      ?.let {
+        turnHasOutputTranscription = true
+        val ev = transcripts.append(TranscriptSpeaker.MODEL, it)
+        emit { l -> l.onTranscript(ev) }
+      }
     val parts = MiniJson.asList(MiniJson.asMap(content["modelTurn"])?.get("parts"))
     if (parts != null) {
       for (part in parts) {
@@ -317,7 +391,8 @@ constructor(
       response["response"] = mapOf("ok" to true, "located" to boxes.size)
       responses.add(response)
     }
-    if (responses.isNotEmpty()) t.send(mapOf("toolResponse" to mapOf("functionResponses" to responses)))
+    if (responses.isNotEmpty())
+      t.send(mapOf("toolResponse" to mapOf("functionResponses" to responses)))
   }
 
   private fun stopFramesLocked() {
@@ -369,12 +444,17 @@ constructor(
                         "type" to "OBJECT",
                         "properties" to
                           mapOf(
-                            "label" to mapOf("type" to "STRING", "description" to "Short name of the object."),
+                            "label" to
+                              mapOf(
+                                "type" to "STRING",
+                                "description" to "Short name of the object.",
+                              ),
                             "box_2d" to
                               mapOf(
                                 "type" to "ARRAY",
                                 "items" to mapOf("type" to "NUMBER"),
-                                "description" to "Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.",
+                                "description" to
+                                  "Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.",
                               ),
                           ),
                         "required" to listOf("label", "box_2d"),
@@ -393,12 +473,11 @@ constructor(
     fun withDetectionTool(setup: Map<String, Any?>?): Map<String, Any?>? {
       if (setup == null) return null
       val tools = ArrayList<Any?>(MiniJson.asList(setup["tools"]) ?: emptyList())
-      val declared =
-        tools.any { tool ->
-          MiniJson.asList(MiniJson.asMap(tool)?.get("functionDeclarations"))?.any {
-            MiniJson.asMap(it)?.get("name") == REPORT_OBJECTS_TOOL
-          } == true
-        }
+      val declared = tools.any { tool ->
+        MiniJson.asList(MiniJson.asMap(tool)?.get("functionDeclarations"))?.any {
+          MiniJson.asMap(it)?.get("name") == REPORT_OBJECTS_TOOL
+        } == true
+      }
       if (!declared) tools.add(mapOf("functionDeclarations" to listOf(REPORT_OBJECTS_DECLARATION)))
       return LinkedHashMap(setup).apply { put("tools", tools) }
     }
@@ -417,13 +496,21 @@ constructor(
     /** The text prompt sent for a hold-to-ask query (port of `buildHoldToAskPrompt`). */
     @JvmStatic
     @JvmOverloads
-    fun buildHoldToAskPrompt(meshName: String?, options: XRHoldToAskTrait, transcript: String = ""): String {
+    fun buildHoldToAskPrompt(
+      meshName: String?,
+      options: XRHoldToAskTrait,
+      transcript: String = "",
+    ): String {
       val name = (meshName ?: "").take(256).ifEmpty { "object" }
       val spoken = transcript.trim()
-      return "The user is pointing at the 3D object \"$name\". ${spoken.ifEmpty { options.prompt }}".take(MAX_TEXT_CHARS)
+      return "The user is pointing at the 3D object \"$name\". ${spoken.ifEmpty { options.prompt }}"
+        .take(MAX_TEXT_CHARS)
     }
 
     private fun realtimeChunk(mime: String, base64: String): Map<String, Any?> =
-      mapOf("realtimeInput" to mapOf("mediaChunks" to listOf(mapOf("mimeType" to mime, "data" to base64))))
+      mapOf(
+        "realtimeInput" to
+          mapOf("mediaChunks" to listOf(mapOf("mimeType" to mime, "data" to base64)))
+      )
   }
 }

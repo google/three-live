@@ -21,7 +21,11 @@
  */
 
 import {mat4Multiply} from './math';
-import {registeredPlugins, XR_LIVE_AR_SURFACE_Y} from './plugin';
+import {
+  checkPluginCapability,
+  registeredPlugins,
+  XR_LIVE_AR_SURFACE_Y,
+} from './plugin';
 import {
   buildUSDZZip,
   calculateCRC32,
@@ -63,6 +67,7 @@ export interface QuickLookOptions {
   checkoutTitle?: string;
   checkoutSubtitle?: string;
   price?: string;
+  host?: unknown;
 }
 
 export interface SceneViewerOptions {
@@ -71,6 +76,7 @@ export interface SceneViewerOptions {
   resizable?: boolean;
   enableVerticalPlacement?: boolean;
   mode?: 'ar_preferred' | 'ar_only' | '3d_preferred' | '3d_only';
+  host?: unknown;
 }
 
 export interface WebXROptions {
@@ -218,6 +224,9 @@ export function launchQuickLook(
   if (typeof document === 'undefined') {
     throw new Error('launchQuickLook requires a browser DOM environment');
   }
+  if (!checkPluginCapability(options.host, 'external_handoff', 'quick-look')) {
+    throw new Error("Capability 'external_handoff' denied for AR Quick Look.");
+  }
 
   let url: string;
   let shouldRevoke = false;
@@ -229,6 +238,15 @@ export function launchQuickLook(
     url = sanitizeQuickLookUrl(usdzBlobOrUrl);
     if (!url) {
       throw new Error('[XR-Live Security] Quick Look URL is empty.');
+    }
+    if (
+      !checkPluginCapability(options.host, 'remote_content', 'quick-look', {
+        url,
+      })
+    ) {
+      throw new Error(
+        "Capability 'remote_content' or 'network' denied for AR Quick Look URL.",
+      );
     }
   } else {
     url = URL.createObjectURL(usdzBlobOrUrl);
@@ -373,7 +391,22 @@ export function launchSceneViewer(
   if (typeof window === 'undefined') {
     throw new Error('launchSceneViewer requires a browser environment');
   }
-  const intentUrl = createSceneViewerIntent(glbUrl, options);
+  if (
+    !checkPluginCapability(options.host, 'external_handoff', 'scene-viewer')
+  ) {
+    throw new Error("Capability 'external_handoff' denied for Scene Viewer.");
+  }
+  const safeGlbUrl = sanitizeSceneViewerUrl(glbUrl, true);
+  if (
+    !checkPluginCapability(options.host, 'remote_content', 'scene-viewer', {
+      url: safeGlbUrl,
+    })
+  ) {
+    throw new Error(
+      "Capability 'remote_content' or 'network' denied for Scene Viewer URL.",
+    );
+  }
+  const intentUrl = createSceneViewerIntent(safeGlbUrl, options);
   window.location.href = intentUrl;
 }
 
@@ -573,6 +606,13 @@ export class WebXRSessionManager {
     };
 
     if (mode === 'immersive-ar') {
+      if (!checkPluginCapability(el, 'camera', 'ar')) {
+        const err = new Error(
+          "Capability 'camera' denied for WebXR AR passthrough.",
+        );
+        opts.onError?.(err);
+        throw err;
+      }
       if (overlayRoot) {
         overlayRoot.addEventListener?.('beforexrselect', (e: Event) =>
           e.preventDefault(),
@@ -639,6 +679,15 @@ export class WebXRSessionManager {
       );
     }
 
+    if (mode === 'immersive-vr') {
+      if (!checkPluginCapability(el, 'sensors', 'vr')) {
+        const err = new Error(
+          "Capability 'sensors' denied for WebXR VR session.",
+        );
+        opts.onError?.(err);
+        throw err;
+      }
+    }
     const isFatalPerm = (e: any) => {
       const n = String(e?.name || '');
       return n === 'NotAllowedError' || n === 'SecurityError';
@@ -1051,6 +1100,7 @@ export async function activateAR(
   }
 
   const qlOptions: QuickLookOptions = {
+    host: options.element,
     ...options.quickLookOptions,
     allowScale:
       options.arScale === 'fixed'
@@ -1058,6 +1108,7 @@ export async function activateAR(
         : options.quickLookOptions?.allowScale,
   };
   const svOptions: SceneViewerOptions = {
+    host: options.element,
     ...options.sceneViewerOptions,
     resizable:
       options.arScale === 'fixed'
@@ -1076,6 +1127,16 @@ export async function activateAR(
 
   try {
     if (selectedMode === 'quick-look') {
+      if (options.iosSrc) {
+        if (
+          checkPluginCapability(options.element, 'remote_content', 'iosSrc', {
+            url: options.iosSrc,
+          })
+        ) {
+          launchQuickLook(options.iosSrc, qlOptions);
+          return {mode: 'quick-look', success: true};
+        }
+      }
       let usdzBlob: Blob;
       if (
         options.model instanceof Blob &&

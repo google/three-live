@@ -465,6 +465,7 @@ class ThreeLiveRendererTest {
     assertEquals(null, ThreeLiveObjectDetectors.current())
 
     val loop = ObjectDetectionLoop(r, detector, intervalMs = 500) { results.add(it) }
+    loop.capabilities = ThreeLiveCapabilities(camera = true)
     assertTrue(loop.tick())
     assertEquals(1, results.size)
     assertEquals("plant", results[0][0].label)
@@ -481,6 +482,7 @@ class ThreeLiveRendererTest {
   fun bindingPollsHandSourceWhenHandsEnabledAndReportsGestures() {
     val r = FakeRenderer()
     val b = ThreeLiveRuntimeBinding(r, glbOf(HIERARCHY))
+    b.capabilities = ThreeLiveCapabilities(sensors = true)
     val gestures = ArrayList<String>()
     b.callbacks =
       object : ThreeLiveRuntimeBinding.Callbacks {

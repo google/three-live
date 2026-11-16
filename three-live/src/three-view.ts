@@ -218,7 +218,9 @@ export function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
+import {ensureCapabilityChecker} from './capabilities';
 import {
+  checkPluginCapability,
   getRegisteredPlugins,
   getSharedRegistry,
   registerPlugin,
@@ -226,6 +228,7 @@ import {
   type ShadowMapsMode,
   type ThreeLivePlugin,
 } from './plugin';
+ensureCapabilityChecker();
 export {getRegisteredPlugins, registerPlugin, type ThreeLivePlugin};
 
 const decoders: Map<string, MeshDecoder> = getSharedRegistry().decoders;
@@ -1165,6 +1168,7 @@ function buildGpuScene(
   data: GLBData,
   limits: HostSceneLimits = UNBOUNDED_HOST_SCENE_LIMITS,
   onTextureLoad?: () => void,
+  host?: unknown,
 ): ReturnType<typeof buildGpuSceneUnchecked> {
   const track: GpuBuildTrack = {
     meshes: [],
@@ -1174,7 +1178,7 @@ function buildGpuScene(
     buffers: [],
   };
   try {
-    return buildGpuSceneUnchecked(gl, data, limits, onTextureLoad, track);
+    return buildGpuSceneUnchecked(gl, data, limits, onTextureLoad, track, host);
   } catch (e) {
     // Release everything created before the failure (textures, finished
     // meshes, and the in-progress mesh / primitive) so a bad GLB can't leak.
@@ -1195,6 +1199,7 @@ function buildGpuSceneUnchecked(
   limits: HostSceneLimits,
   onTextureLoad: (() => void) | undefined,
   track: GpuBuildTrack,
+  host?: unknown,
 ): {
   meshes: MeshGpu[];
   bounds: {
@@ -1367,17 +1372,21 @@ function buildGpuSceneUnchecked(
           }
         } else if (imgDef.uri) {
           const safeUri = sanitizeTextureUri(imgDef.uri);
-          if (safeUri) {
+          if (!safeUri) {
+            console.warn(
+              '[Three-Live Security] Blocked unsafe glTF image URI:',
+              imgDef.uri,
+            );
+          } else if (
+            checkPluginCapability(host, 'remote_content', 'gltfImageUri', {
+              url: safeUri,
+            })
+          ) {
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.referrerPolicy = 'no-referrer';
             img.onload = () => uploadTex(img);
             img.src = safeUri;
-          } else {
-            console.warn(
-              '[Three-Live Security] Blocked unsafe glTF image URI:',
-              imgDef.uri,
-            );
           }
         }
         gpuTextures.push(tex);
@@ -2226,7 +2235,13 @@ export class ThreeView {
       worldMatrices,
       gpuTextures,
       availableVariants,
-    } = buildGpuScene(this.gl, glbData, limits, () => this.render());
+    } = buildGpuScene(
+      this.gl,
+      glbData,
+      limits,
+      () => this.render(),
+      this.container,
+    );
     this.lastGlbData = glbData;
     this.lastLimits = limits;
     this.disposeMeshGpuResources();
@@ -2377,6 +2392,7 @@ export class ThreeView {
       glbData,
       UNBOUNDED_HOST_SCENE_LIMITS,
       () => this.render(),
+      this.container,
     );
     if (offset) {
       for (const m of meshes) {

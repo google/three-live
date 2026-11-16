@@ -317,10 +317,13 @@ export class XRLiveElement extends ThreeLiveElement {
     );
 
     // 4. Step analytical heightfield & sphere-to-sphere physics
+    const useDepth =
+      this.xrDepth !== 'none' &&
+      this.checkCapability('sensors', 'xrDepth', {dedup: true});
     this.physics.step(
       viewer.meshes || [],
       dt,
-      this.xrDepth !== 'none' ? this.depthManager : undefined,
+      useDepth ? this.depthManager : undefined,
       activeFloorY,
       activeTableY,
       (mesh, _speed) => {
@@ -374,11 +377,18 @@ export class XRLiveElement extends ThreeLiveElement {
     },
     customViewer?: any,
   ): Promise<XRCapturedFrame> {
+    const viewer = this._getViewer(customViewer);
+    if (!this.checkCapability('camera', 'captureViewFrame')) {
+      throw new Error("Capability 'camera' denied for XR frame capture.");
+    }
+    const includeDepth =
+      Boolean(options?.includeDepth) &&
+      this.checkCapability('sensors', 'captureViewFrameDepth');
     return getXRExtras().captureXRViewFrame(
-      this._getViewer(customViewer),
+      viewer,
       this.simulator.getHeadPose(),
       this.depthManager,
-      options,
+      options ? {...options, includeDepth} : undefined,
     );
   }
 
@@ -440,6 +450,7 @@ export class XRLiveElement extends ThreeLiveElement {
     }
 
     const report = await launchBestMobileOrHeadsetAR(source, {
+      element: this,
       forceFallback,
       glbUrl:
         typeof this.currentModel === 'string' ? this.currentModel : undefined,
@@ -516,8 +527,16 @@ export const xrLiveSpatialPlugin: ThreeLivePlugin = {
 
   onConfigureXRSessionInit(element: any, sessionInit: any): void {
     if (!element || !(element instanceof XRLiveElement)) return;
-    element.depthManager.configureSessionInit(sessionInit, element.xrDepth);
-    if (element.xrHands !== 'none') {
+    if (
+      element.xrDepth !== 'none' &&
+      element.checkCapability('sensors', 'xrDepth', {dedup: true})
+    ) {
+      element.depthManager.configureSessionInit(sessionInit, element.xrDepth);
+    }
+    if (
+      element.xrHands !== 'none' &&
+      element.checkCapability('sensors', 'xrHands', {dedup: true})
+    ) {
       const optional = new Set<string>(sessionInit.optionalFeatures || []);
       optional.add('hand-tracking');
       sessionInit.optionalFeatures = Array.from(optional);
@@ -537,26 +556,28 @@ export const xrLiveSpatialPlugin: ThreeLivePlugin = {
         ? Math.min(Math.max((now - prev) / 1000, 1 / 120), 0.05)
         : 1 / 72;
 
+    const allowDepth =
+      host.xrDepth !== 'none' &&
+      host.checkCapability('sensors', 'xrDepth', {dedup: true});
     const viewerPose = frame?.getViewerPose?.(refSpace);
     const firstView = viewerPose?.views?.[0];
     if (firstView) {
-      host.depthManager.updateFromXRFrame(
-        viewer,
-        frame,
-        firstView,
-        host.xrDepth !== 'none',
-      );
+      host.depthManager.updateFromXRFrame(viewer, frame, firstView, allowDepth);
     }
     viewer.onBeforeRenderXRView = (xrView: any) => {
-      host.depthManager.updateFromXRFrame(
-        viewer,
-        frame,
-        xrView,
-        host.xrDepth !== 'none',
-      );
+      host.depthManager.updateFromXRFrame(viewer, frame, xrView, allowDepth);
     };
-    host.inputManager.processXRFrame(viewer, session, frame, refSpace);
-    if (host.xrHands !== 'none') {
+    const allowHands =
+      host.xrHands !== 'none' &&
+      host.checkCapability('sensors', 'xrHands', {dedup: true});
+    host.inputManager.processXRFrame(
+      viewer,
+      session,
+      frame,
+      refSpace,
+      allowHands,
+    );
+    if (allowHands) {
       host.gestureClassifier.processXRFrame(host, session, frame, refSpace);
     }
 

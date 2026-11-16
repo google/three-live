@@ -16,6 +16,7 @@
  */
 
 import {strict as assert} from 'node:assert';
+import {ensureCapabilityChecker} from '../../three-live/src/capabilities';
 import {mat4Create, mat4Multiply} from '../../three-live/src/math';
 import {
   getSharedRegistry,
@@ -47,12 +48,12 @@ import {
   float32ToFloat16Bits,
   packSplatBaseBuffer,
   packSplatSHBuffer,
+  shWordsPerSplatForDegree,
   SPLAT_BASE_STRIDE_BYTES,
   SPLAT_PREP_COMPUTE_WGSL,
   SPLAT_RENDER_WGSL,
   SPLAT_SORT_COMPUTE_WGSL,
   SPLAT_UNIFORM_BYTES,
-  shWordsPerSplatForDegree,
   writeSplatUniforms,
 } from '../src/webgpu/shaders';
 import {
@@ -67,6 +68,7 @@ import {
   setWebGPUDeviceForTests,
   StandaloneWebGPUSplatLoader,
 } from '../src/webgpu/splat-accelerator';
+ensureCapabilityChecker();
 
 function seededRng(seed = 0x12345678): () => number {
   let s = seed >>> 0;
@@ -125,10 +127,22 @@ function perspectiveVP(camZ = 5): Float32Array {
   const f = 1.7320508;
   const nf = 1 / (near - far);
   const proj = new Float32Array([
-    f, 0, 0, 0,
-    0, f, 0, 0,
-    0, 0, (far + near) * nf, -1,
-    0, 0, 2 * far * near * nf, 0,
+    f,
+    0,
+    0,
+    0,
+    0,
+    f,
+    0,
+    0,
+    0,
+    0,
+    (far + near) * nf,
+    -1,
+    0,
+    0,
+    2 * far * near * nf,
+    0,
   ]);
   const view = mat4Create();
   view[14] = -camZ;
@@ -171,12 +185,9 @@ function evaluateWGSLFp16SHColors(
     const px = bf[i * 12];
     const py = bf[i * 12 + 1];
     const pz = bf[i * 12 + 2];
-    const wpx =
-      uf[32] * px + uf[36] * py + uf[40] * pz + uf[44] - uf[60];
-    const wpy =
-      uf[33] * px + uf[37] * py + uf[41] * pz + uf[45] - uf[61];
-    const wpz =
-      uf[34] * px + uf[38] * py + uf[42] * pz + uf[46] - uf[62];
+    const wpx = uf[32] * px + uf[36] * py + uf[40] * pz + uf[44] - uf[60];
+    const wpy = uf[33] * px + uf[37] * py + uf[41] * pz + uf[45] - uf[61];
+    const wpz = uf[34] * px + uf[38] * py + uf[42] * pz + uf[46] - uf[62];
     let lx = uf[48] * wpx + uf[49] * wpy + uf[50] * wpz;
     let ly = uf[52] * wpx + uf[53] * wpy + uf[54] * wpz;
     let lz = uf[56] * wpx + uf[57] * wpy + uf[58] * wpz;
@@ -358,7 +369,10 @@ function createMockWebGPUDevice(opts?: {autoResolveMaps?: boolean}) {
             },
             setBindGroup(_idx: number, bg: unknown) {
               const typed = bg as {
-                entries: Array<{binding: number; resource: {buffer: MockBuffer}}>;
+                entries: Array<{
+                  binding: number;
+                  resource: {buffer: MockBuffer};
+                }>;
               };
               if (typed.entries.length === 8) activePrepBG = typed;
             },
@@ -370,7 +384,8 @@ function createMockWebGPUDevice(opts?: {autoResolveMaps?: boolean}) {
                 computeSubmissions++;
                 assert.equal(dispatched.length, 13);
                 if (!activePrepBG) return;
-                const getB = (i: number) => activePrepBG!.entries[i].resource.buffer;
+                const getB = (i: number) =>
+                  activePrepBG!.entries[i].resource.buffer;
                 const uBuf = getB(0).bytes.buffer as ArrayBuffer;
                 const baseBuf = getB(1).bytes.buffer as ArrayBuffer;
                 const shWords = new Uint32Array(getB(2).bytes.buffer);
@@ -476,8 +491,12 @@ function createMockWebGPUDevice(opts?: {autoResolveMaps?: boolean}) {
 }
 
 function mockGL(withCanvasParent = true) {
-  type GLBuf = {order: Uint32Array | null};
-  type VAO = {element: GLBuf | null};
+  interface GLBuf {
+    order: Uint32Array | null;
+  }
+  interface VAO {
+    element: GLBuf | null;
+  }
   let vao: VAO | null = null;
   const uploads: number[][] = [];
   const colorUploads: number[][] = [];
@@ -493,7 +512,9 @@ function mockGL(withCanvasParent = true) {
       return idx >= 0 && idx + 1 < children.length ? children[idx + 1] : null;
     },
   };
-  const attrs = new Map<string, string>();
+  const attrs = new Map<string, string>([
+    ['capabilities', 'remote_content network'],
+  ]);
   const parent = {
     style: {position: 'relative'},
     children,
@@ -702,13 +723,17 @@ function packSplatBytes(data: SplatData): Uint8Array {
   return out;
 }
 
-const flushMicrotasks = () =>
-  new Promise<void>((resolve) => setTimeout(resolve, 0));
+function flushMicrotasks(): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
 
 let passed = 0;
 let failed = 0;
 
-async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
+async function test(
+  name: string,
+  fn: () => void | Promise<void>,
+): Promise<void> {
   try {
     await fn();
     passed++;
@@ -792,11 +817,7 @@ async function main() {
     );
 
     // Extreme finite range (-2e38 .. +2e38) must not overflow f32 in half-range quantization
-    const extremePos = new Float32Array([
-      0, 0, -2e38,
-      0, 0, 0,
-      0, 0, 2e38,
-    ]);
+    const extremePos = new Float32Array([0, 0, -2e38, 0, 0, 0, 0, 0, 2e38]);
     const orthoIdentity = mat4Create();
     const extremeOrder = simulateWebGPUSplatSort(
       {count: 3, positions: extremePos},
@@ -806,11 +827,21 @@ async function main() {
 
     // Non-finite positions (NaN -> key 0, +Inf -> key 0, -Inf -> key 65535)
     const nonFinitePos = new Float32Array([
-      0, 0, -1,
-      0, 0, NaN,
-      0, 0, -Infinity,
-      0, 0, Infinity,
-      0, 0, 5,
+      0,
+      0,
+      -1,
+      0,
+      0,
+      NaN,
+      0,
+      0,
+      -Infinity,
+      0,
+      0,
+      Infinity,
+      0,
+      0,
+      5,
     ]);
     const nfGpu = simulateWebGPUSplatSort(
       {count: 5, positions: nonFinitePos},
@@ -881,11 +912,7 @@ async function main() {
         antialiased: false,
       });
 
-      const gpuColors = evaluateWGSLFp16SHColors(
-        baseBuf,
-        packedSH.words,
-        uBuf,
-      );
+      const gpuColors = evaluateWGSLFp16SHColors(baseBuf, packedSH.words, uBuf);
       const cpuColors = computeSplatViewColors(
         data,
         model,
@@ -908,7 +935,11 @@ async function main() {
     assert.equal(buf.byteLength, 5 * SPLAT_BASE_STRIDE_BYTES);
     const f32 = new Float32Array(buf);
     const u32 = new Uint32Array(buf);
-    const expectedCov = computeSplatCovariance3D(data.scales, data.rotations, 2);
+    const expectedCov = computeSplatCovariance3D(
+      data.scales,
+      data.rotations,
+      2,
+    );
     for (let k = 0; k < 6; k++) {
       assert.ok(Math.abs(f32[2 * 12 + 4 + k] - expectedCov[k]) < 1e-6);
     }
@@ -929,7 +960,9 @@ async function main() {
       visible: true,
       primitives: [{vao: {}}],
     };
-    const attrs = new Map<string, string>();
+    const attrs = new Map<string, string>([
+      ['capabilities', 'remote_content network'],
+    ]);
     const container = {getAttribute: (k: string) => attrs.get(k) ?? null};
 
     // Pure-splat desktop scene defaults to Fast Path A ('vram-overlay')
@@ -1074,12 +1107,13 @@ async function main() {
     try {
       const c1 = makeCloud(8, 0, 1);
       const c2 = makeCloud(10, 0, 2);
-      const loader = new XRSplatLoader(async (url) =>
-        new Response(
-          (String(url).includes('one')
-            ? packSplatBytes(c1)
-            : packSplatBytes(c2)) as BodyInit,
-        ),
+      const loader = new XRSplatLoader(
+        async (url) =>
+          new Response(
+            (String(url).includes('one')
+              ? packSplatBytes(c1)
+              : packSplatBytes(c2)) as BodyInit,
+          ),
       );
       const {gl, parent} = mockGL();
       const viewer = {
@@ -1209,7 +1243,10 @@ async function main() {
         loader.draw(viewer, vpLeft, 'left', [0, 0, 800, 600], vpLeft);
       }
       assert.equal(colorUploads.length, beforeRestore + 1);
-      assert.deepEqual(colorUploads[colorUploads.length - 1], Array.from(data.colors));
+      assert.deepEqual(
+        colorUploads[colorUploads.length - 1],
+        Array.from(data.colors),
+      );
 
       loader.dispose();
     } finally {
@@ -1791,10 +1828,23 @@ async function main() {
       });
 
       const {gl, parent, glCanvas} = mockGL();
-      (glCanvas as unknown as {width: number; height: number; toDataURL: () => string}).width = 800;
-      (glCanvas as unknown as {width: number; height: number; toDataURL: () => string}).height = 600;
+      (
+        glCanvas as unknown as {
+          width: number;
+          height: number;
+          toDataURL: () => string;
+        }
+      ).width = 800;
+      (
+        glCanvas as unknown as {
+          width: number;
+          height: number;
+          toDataURL: () => string;
+        }
+      ).height = 600;
       const origToDataURL = () => 'data:image/png;base64,RAW_GL';
-      (glCanvas as unknown as {toDataURL: () => string}).toDataURL = origToDataURL;
+      (glCanvas as unknown as {toDataURL: () => string}).toDataURL =
+        origToDataURL;
 
       const data = makeCloud(6, 0, 606);
       const mesh = {

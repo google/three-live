@@ -929,7 +929,7 @@ limitations under the License.
 
   <!-- Hidden spans stamped by scripts/stamp_bundle_sizes.js so section headers read exact gzip sizes -->
   <div hidden aria-hidden="true">
-    <span data-bundle-size="three-live.min.js" id="sz-core">77.9 KB gz</span>
+    <span data-bundle-size="three-live.min.js" id="sz-core">80.9 KB gz</span>
     <span data-bundle-size="three-live-kit-mechanical.min.js" id="sz-mechanical">16.4 KB gz</span>
     <span data-bundle-size="three-live-kit-architecture.min.js" id="sz-architecture">15.2 KB gz</span>
     <span data-bundle-size="three-live-kit-industrial.min.js" id="sz-industrial">12.1 KB gz</span>
@@ -1298,7 +1298,7 @@ limitations under the License.
           viewerEl.setAttribute('shadow-intensity', '0.48');
           viewerEl.setAttribute('shadow-softness', '0.65');
           viewerEl.setAttribute('exposure', '1.06');
-          viewerEl.setAttribute('allow-client-scripts', '');
+          viewerEl.setAttribute('capabilities', 'scripts');
           mount.textContent = '';
           mount.appendChild(viewerEl);
         })();
@@ -1485,7 +1485,7 @@ limitations under the License.
           '<script src="three-live-studio.min.js"><\/script>',
           `<script src="${dom.bundle}"><\/script>`,
           '',
-          '<three-live camera-controls tone-mapping="aces" shadow-maps="pcf" allow-client-scripts style="width:100%;height:420px">',
+          '<three-live camera-controls tone-mapping="aces" shadow-maps="pcf" capabilities="scripts" style="width:100%;height:420px">',
           '  <script type="text/three">',
           modalCode.value
             .split('\n')

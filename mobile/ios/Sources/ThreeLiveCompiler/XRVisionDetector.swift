@@ -79,10 +79,72 @@ public final class XRObjectDetectionLoop: @unchecked Sendable {
   private let onDetected: ([WorldUnderstanding.Detection3D]) -> Void
 
   private let lock = NSLock()
+  private let capabilityGuard = CapabilityGuard()
   private var timer: DispatchSourceTimer?
   private var inFlight = false
   private var stopped = false
   private var isPaused = false
+  private var _capabilities: ThreeLiveCapabilities?
+  private var _requiresAI = false
+  private var _endpointURL: String?
+  private var _onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)?
+
+  /// Optional capability policy override (`nil` falls back to `ThreeLiveCapabilities.defaultPolicy`).
+  public var capabilities: ThreeLiveCapabilities? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _capabilities
+    }
+    set {
+      lock.lock()
+      _capabilities = newValue
+      lock.unlock()
+      capabilityGuard.reset()
+    }
+  }
+
+  /// Set to `true` when `detector` forwards frames to an AI model endpoint.
+  public var requiresAI: Bool {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _requiresAI
+    }
+    set {
+      lock.lock()
+      _requiresAI = newValue
+      lock.unlock()
+    }
+  }
+
+  /// Optional AI model endpoint URL checked against `network` scheme/origin policy when `requiresAI` is `true`.
+  public var endpointURL: String? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _endpointURL
+    }
+    set {
+      lock.lock()
+      _endpointURL = newValue
+      lock.unlock()
+    }
+  }
+
+  /// Optional callback notified whenever object detection is refused by capability policy.
+  public var onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return _onCapabilityDenied
+    }
+    set {
+      lock.lock()
+      _onCapabilityDenied = newValue
+      lock.unlock()
+    }
+  }
 
   /// When `true`, no frames are captured.
   public var paused: Bool {
@@ -141,6 +203,42 @@ public final class XRObjectDetectionLoop: @unchecked Sendable {
   /// Runs one capture → detect → locate cycle. Returns `false` when skipped.
   @discardableResult
   public func tick() -> Bool {
+    lock.lock()
+    if isPaused || inFlight {
+      lock.unlock()
+      return false
+    }
+    let customCaps = _capabilities
+    let reqAI = _requiresAI
+    let epURL = _endpointURL
+    let deniedCb = _onCapabilityDenied
+    lock.unlock()
+
+    let policy = customCaps ?? ThreeLiveCapabilities.defaultPolicy
+    guard
+      capabilityGuard.check(
+        policy: policy,
+        capability: .camera,
+        feature: "objectDetection",
+        dedup: true,
+        onDenied: deniedCb
+      )
+    else {
+      return false
+    }
+    if reqAI,
+      !capabilityGuard.check(
+        policy: policy,
+        capability: .ai,
+        feature: "objectDetection",
+        url: epURL,
+        dedup: true,
+        onDenied: deniedCb
+      )
+    {
+      return false
+    }
+
     lock.lock()
     if isPaused || inFlight {
       lock.unlock()

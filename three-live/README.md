@@ -20,7 +20,7 @@ Or load it from a CDN with a classic script tag:
 ## Usage
 
 ```html
-<three-live allow-client-scripts camera-controls ar>
+<three-live capabilities="scripts camera external_handoff" camera-controls ar>
   <script type="text/three">
     scene.add(new THREE.Mesh(
       new THREE.TorusKnotGeometry(0.4, 0.14, 64, 16),
@@ -30,13 +30,15 @@ Or load it from a CDN with a classic script tag:
 </three-live>
 ```
 
-Inline scripts run in a sandboxed worker and require the `allow-client-scripts`
-opt-in. Server-generated scripts can be loaded with `script-src` instead. To
-display existing models only, use the viewer-only build:
+All sensitive capabilities (`scripts`, `network`, `remote_content`, `camera`,
+`microphone`, `sensors`, `storage`, `ai`, `external_handoff`) default to off.
+Inline scripts run in a sandboxed worker and require `capabilities="scripts"`
+(or legacy `allow-client-scripts`). To display remote models only, use the
+viewer-only build with `capabilities="viewer"`:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/three-live/dist/three-live-viewer.min.js"></script>
-<three-live src="model.glb" camera-controls auto-rotate></three-live>
+<three-live capabilities="viewer" src="model.glb" camera-controls auto-rotate></three-live>
 ```
 
 ## Bundles

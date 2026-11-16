@@ -22,6 +22,7 @@
  *   provided), launches native Google ARCore Scene Viewer via `intent://`.
  */
 
+import {checkPluginCapability} from '../../three-live/src/plugin';
 import type {SceneOrGLBSource} from '../../three-live/src/three-convert';
 import {
   createSceneViewerIntent,
@@ -50,12 +51,15 @@ export const buildAndroidSceneViewerIntentUrl = createSceneViewerIntent;
 export async function launchBestMobileOrHeadsetAR(
   source: SceneOrGLBSource | string,
   options?: {
+    element?: unknown;
     glbUrl?: string;
     quickLook?: QuickLookOptions;
     sceneViewer?: SceneViewerOptions;
     forceFallback?: 'ios-quicklook' | 'android-scene-viewer';
   },
 ): Promise<MobileARLaunchReport> {
+  const host =
+    options?.element ?? options?.quickLook?.host ?? options?.sceneViewer?.host;
   const converter = getXRSceneConverter();
   const webxrSupported = options?.forceFallback
     ? false
@@ -65,9 +69,24 @@ export async function launchBestMobileOrHeadsetAR(
     options?.forceFallback === 'ios-quicklook' ||
     (!options?.forceFallback && !webxrSupported && isQuickLookSupported())
   ) {
+    if (!checkPluginCapability(host, 'external_handoff', 'quick-look')) {
+      throw new Error(
+        "Capability 'external_handoff' denied for AR Quick Look.",
+      );
+    }
+    const qlOpts: QuickLookOptions = {host, ...options?.quickLook};
     if (typeof source === 'string') {
+      if (
+        !checkPluginCapability(host, 'remote_content', 'quick-look', {
+          url: source,
+        })
+      ) {
+        throw new Error(
+          "Capability 'remote_content' or 'network' denied for AR Quick Look URL.",
+        );
+      }
       if (typeof document !== 'undefined') {
-        launchQuickLook(source, options?.quickLook);
+        launchQuickLook(source, qlOpts);
       }
       return {platform: 'ios-quicklook'};
     }
@@ -75,7 +94,7 @@ export async function launchBestMobileOrHeadsetAR(
       ? converter.createUSDZBlob(source)
       : createUSDZBlob(source);
     if (typeof document !== 'undefined') {
-      launchQuickLook(blob, options?.quickLook);
+      launchQuickLook(blob, qlOpts);
     }
     return {
       platform: 'ios-quicklook',
@@ -99,7 +118,19 @@ export async function launchBestMobileOrHeadsetAR(
       isSceneViewerSupported() &&
       Boolean(hostedGlbUrl))
   ) {
+    if (!checkPluginCapability(host, 'external_handoff', 'scene-viewer')) {
+      throw new Error("Capability 'external_handoff' denied for Scene Viewer.");
+    }
     if (hostedGlbUrl) {
+      if (
+        !checkPluginCapability(host, 'remote_content', 'scene-viewer', {
+          url: hostedGlbUrl,
+        })
+      ) {
+        throw new Error(
+          "Capability 'remote_content' or 'network' denied for Scene Viewer URL.",
+        );
+      }
       const intentUrl = buildAndroidSceneViewerIntentUrl(
         hostedGlbUrl,
         options?.sceneViewer,

@@ -20,6 +20,16 @@ import simd
 /// Native-event parity: orbit camera, hand gestures, detections and the Gemini Live client.
 final class NativeEventsTests: XCTestCase {
 
+  override func setUp() {
+    super.setUp()
+    ThreeLiveCapabilities.defaultPolicy = .all
+  }
+
+  override func tearDown() {
+    ThreeLiveCapabilities.defaultPolicy = .default
+    super.tearDown()
+  }
+
   // MARK: Orbit camera
 
   func testOrbitStringsParseLikeTheWebElement() {

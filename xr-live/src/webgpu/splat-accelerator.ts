@@ -13,13 +13,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
+ */
+
+/**
  * @fileoverview Opt-in WebGPU Gaussian Splatting compute & render accelerator
  * (`xr-live-webgpu.min.js`) for `<xr-live>` and `<three-live>`.
  */
 
 import {mat4Multiply} from '../../../three-live/src/math';
 import {
+  checkPluginCapability,
   getRegisteredPlugins,
   getSharedRegistry,
   type SplatGPUAccelerator,
@@ -57,7 +60,7 @@ const MAP_READ = 0x0001;
 const STAGE_VERTEX = 0x1;
 const STAGE_COMPUTE = 0x4;
 
-/** Minimal structural WebGPU interfaces (zero external `@webgpu/types` dep). */
+/** Minimal structural WebGPU buffer interface (zero external `@webgpu/types` dep). */
 export interface WebGPUBufferLike {
   getMappedRange(offset?: number, size?: number): ArrayBuffer;
   mapAsync(mode: number, offset?: number, size?: number): Promise<void>;
@@ -65,6 +68,7 @@ export interface WebGPUBufferLike {
   destroy(): void;
 }
 
+/** Minimal structural WebGPU compute pass encoder interface. */
 export interface WebGPUComputePassEncoderLike {
   setPipeline(pipeline: unknown): void;
   setBindGroup(index: number, bindGroup: unknown): void;
@@ -72,6 +76,7 @@ export interface WebGPUComputePassEncoderLike {
   end(): void;
 }
 
+/** Minimal structural WebGPU render pass encoder interface. */
 export interface WebGPURenderPassEncoderLike {
   setPipeline(pipeline: unknown): void;
   setBindGroup(index: number, bindGroup: unknown): void;
@@ -85,6 +90,7 @@ export interface WebGPURenderPassEncoderLike {
   end(): void;
 }
 
+/** Minimal structural WebGPU command encoder interface. */
 export interface WebGPUCommandEncoderLike {
   beginComputePass(descriptor?: unknown): WebGPUComputePassEncoderLike;
   beginRenderPass(descriptor: unknown): WebGPURenderPassEncoderLike;
@@ -98,6 +104,7 @@ export interface WebGPUCommandEncoderLike {
   finish(): unknown;
 }
 
+/** Minimal structural WebGPU device interface. */
 export interface WebGPUDeviceLike {
   readonly queue: {
     writeBuffer(
@@ -125,6 +132,7 @@ export interface WebGPUDeviceLike {
   destroy?(): void;
 }
 
+/** Minimal structural WebGPU canvas context interface. */
 export interface WebGPUCanvasContextLike {
   configure(config: {
     device: WebGPUDeviceLike;
@@ -265,8 +273,9 @@ export function resetWebGPUDevice(): void {
 }
 
 // tslint:disable-next-line:no-any
-const xrOf = (m: any): Record<string, unknown> | undefined =>
-  m?.extras?.xr ?? m?.userData?.xr;
+function xrOf(m: any): Record<string, unknown> | undefined {
+  return m?.extras?.xr ?? m?.userData?.xr;
+}
 
 /** Returns true if `viewer.meshes` contains any visible non-splat glTF geometry. */
 export function hasVisibleNonSplatMeshes(viewer: SplatViewerLike): boolean {
@@ -479,11 +488,11 @@ function sameSig(a: Float32Array, b: Float32Array): boolean {
   return true;
 }
 
-const safe = (fn: () => unknown): void => {
+function safe(fn: () => unknown): void {
   try {
     fn();
   } catch {}
-};
+}
 
 function hideViewerOverlay(st: ViewerState): void {
   if (st.cv && st.v) {
@@ -656,11 +665,14 @@ function ensureOverlay(
       st.er = true;
       return null;
     }
-    const glCanvas = (viewer.gl as {canvas?: HTMLCanvasElement | null} | undefined)
-      ?.canvas;
+    const glCanvas = (
+      viewer.gl as {canvas?: HTMLCanvasElement | null} | undefined
+    )?.canvas;
     const parent: HTMLElement | null =
       (glCanvas?.parentElement as HTMLElement | null) ??
-      (viewer.container?.appendChild ? (viewer.container as HTMLElement) : null);
+      (viewer.container?.appendChild
+        ? (viewer.container as HTMLElement)
+        : null);
     if (!parent) {
       st.er = true;
       return null;
@@ -674,7 +686,9 @@ function ensureOverlay(
     }
     const ctx =
       (
-        cv as unknown as {getContext?(id: string): WebGPUCanvasContextLike | null}
+        cv as unknown as {
+          getContext?(id: string): WebGPUCanvasContextLike | null;
+        }
       ).getContext?.('webgpu') ?? null;
     if (!ctx) {
       st.er = true;
@@ -929,9 +943,9 @@ export class WebGPUSplatAccelerator implements SplatGPUAccelerator {
         }
       }
 
-      const owner = (params.mesh && typeof params.mesh === 'object'
-        ? params.mesh
-        : viewer) as object;
+      const owner = (
+        params.mesh && typeof params.mesh === 'object' ? params.mesh : viewer
+      ) as object;
       const eye = getHybridEye(cRef, viewer, owner, params.eye);
       if (!eye) return null;
       let outOrder: Uint32Array | null = null;
@@ -1096,13 +1110,23 @@ export class StandaloneWebGPUSplatLoader {
         if (!raw) continue;
         const url = resolveSplatUrl(raw, undefined, allowRemote);
         if (!url || !mesh?.transform) continue;
+        if (
+          !checkPluginCapability(
+            viewer.container,
+            'remote_content',
+            'splatUrl',
+            {url, dedup: true},
+          )
+        ) {
+          continue;
+        }
         live.add(mesh);
         const existing = entries.get(mesh);
         if (existing?.url === url) continue;
         if (existing?.data) accel.disposeCloud(existing.data);
         const entry: StandaloneEntry = {url, data: null};
         entries.set(mesh, entry);
-        loadSplat(url, doFetch, allowRemote).then(
+        loadSplat(url, doFetch, allowRemote, viewer.container).then(
           (data) => {
             if (entries.get(mesh) === entry) entry.data = data;
           },
@@ -1230,7 +1254,9 @@ export const webgpuSplatPlugin: ThreeLivePlugin = {
     if (getNavigatorGPU()) void acquireWebGPUDevice();
   },
   onElementDisconnected(element: {viewer?: object | null}): void {
-    if (element?.viewer) getWebGPUSplatAccelerator().disposeViewer(element.viewer);
+    if (element?.viewer) {
+      getWebGPUSplatAccelerator().disposeViewer(element.viewer);
+    }
   },
   onClearScene(viewer: SplatViewerLike): void {
     if (viewer) {

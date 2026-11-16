@@ -367,6 +367,7 @@ export class XRInputManager {
     session: any,
     frame: any,
     refSpace: any,
+    allowHands = true,
   ): void {
     if (!viewer || !session || !frame || !refSpace) return;
     const sources = session.inputSources || [];
@@ -389,7 +390,11 @@ export class XRInputManager {
 
       // Check 25-joint XRHand pinch state (distance between index-finger-tip and thumb-tip)
       let handPinchState: boolean | null = null;
-      if (source.hand && typeof frame.getJointPose === 'function') {
+      if (
+        allowHands &&
+        source.hand &&
+        typeof frame.getJointPose === 'function'
+      ) {
         const indexTip = source.hand.get('index-finger-tip');
         const thumbTip = source.hand.get('thumb-tip');
         if (indexTip && thumbTip) {

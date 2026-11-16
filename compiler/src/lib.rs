@@ -448,11 +448,400 @@ fn extract_three_scripts_from_fragment(fragment: &str) -> Vec<String> {
     scripts
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct HtmlCapMask {
+    scripts: bool,
+    network: bool,
+    remote_content: bool,
+    camera: bool,
+    microphone: bool,
+    sensors: bool,
+    storage: bool,
+    ai: bool,
+    external_handoff: bool,
+}
+
+impl HtmlCapMask {
+    fn parse(raw_caps: Option<&str>, allow_client_scripts_attr: Option<Option<&str>>) -> Self {
+        let mut mask = Self::default();
+        if let Some(opt_val) = allow_client_scripts_attr {
+            if opt_val.map(|v| !v.trim().eq_ignore_ascii_case("false")).unwrap_or(true) {
+                mask.scripts = true;
+            }
+        }
+        if let Some(spec) = raw_caps {
+            for raw in spec.split_whitespace() {
+                if raw.is_empty() {
+                    continue;
+                }
+                let neg = raw.len() > 1 && raw.starts_with('-');
+                let tok = if neg { &raw[1..] } else { raw };
+                let val = !neg;
+                let head = tok.split('@').next().unwrap_or(tok);
+                let name =
+                    head.split(':').next().unwrap_or(head).to_ascii_lowercase().replace('-', "_");
+                match name.as_str() {
+                    "none" if val => mask = Self::default(),
+                    "all" | "*" => {
+                        mask = Self {
+                            scripts: val,
+                            network: val,
+                            remote_content: val,
+                            camera: val,
+                            microphone: val,
+                            sensors: val,
+                            storage: val,
+                            ai: val,
+                            external_handoff: val,
+                        };
+                    }
+                    "viewer" => {
+                        mask.network = val;
+                        mask.remote_content = val;
+                        mask.camera = val;
+                        mask.external_handoff = val;
+                    }
+                    "scripts" => mask.scripts = val,
+                    "network" => mask.network = val,
+                    "remote_content" => mask.remote_content = val,
+                    "camera" => mask.camera = val,
+                    "microphone" => mask.microphone = val,
+                    "sensors" => mask.sensors = val,
+                    "storage" => mask.storage = val,
+                    "ai" => mask.ai = val,
+                    "external_handoff" => mask.external_handoff = val,
+                    _ => {}
+                }
+            }
+        }
+        mask
+    }
+}
+
+fn is_non_network_html_url(raw: &str) -> bool {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    trimmed.is_empty()
+        || trimmed.starts_with("data:")
+        || trimmed.starts_with("blob:")
+        || trimmed.starts_with("asset:")
+        || trimmed.starts_with("file:")
+        || trimmed.starts_with("content:")
+        || trimmed.starts_with("android.resource:")
+}
+
+fn lint_html_element_capabilities(
+    tag_name: &str,
+    attrs: &[(String, Option<String>)],
+    caps: HtmlCapMask,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let find_attr = |name: &str| -> Option<Option<&str>> {
+        attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_deref())
+    };
+    let bool_enabled = |name: &str| -> bool {
+        find_attr(name)
+            .map(|v| v.map(|s| !s.trim().eq_ignore_ascii_case("false")).unwrap_or(true))
+            .unwrap_or(false)
+    };
+    let mode_enabled = |name: &str| -> bool {
+        find_attr(name)
+            .map(|v| {
+                v.map(|s| {
+                    let t = s.trim();
+                    !t.is_empty()
+                        && !t.eq_ignore_ascii_case("none")
+                        && !t.eq_ignore_ascii_case("false")
+                        && !t.eq_ignore_ascii_case("off")
+                })
+                .unwrap_or(true)
+            })
+            .unwrap_or(false)
+    };
+
+    let mut push_missing = |feature: &str, missing: &[&str]| {
+        if missing.is_empty() {
+            return;
+        }
+        let list = missing.join(" ");
+        diagnostics.push(Diagnostic {
+            code: "TL403".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "<{}> declares '{}' without granting required capability '{}' in capabilities.",
+                tag_name, feature, list
+            ),
+            node: None,
+            line: None,
+            column: None,
+            hint: Some(format!(
+                "Add '{}' to <{} capabilities=\"...\"> so '{}' is permitted at runtime.",
+                list, tag_name, feature
+            )),
+        });
+    };
+
+    if let Some(opt_val) = find_attr("script-src") {
+        let mut missing = Vec::new();
+        if !caps.scripts {
+            missing.push("scripts");
+        }
+        if let Some(url) = opt_val.filter(|u| !is_non_network_html_url(u)) {
+            let _ = url;
+            if !caps.remote_content {
+                missing.push("remote_content");
+            }
+            if !caps.network {
+                missing.push("network");
+            }
+        }
+        push_missing("script-src", &missing);
+    }
+
+    for url_attr in ["src", "ios-src", "poster", "texture-pack"] {
+        if let Some(Some(url)) = find_attr(url_attr) {
+            if !is_non_network_html_url(url) {
+                let mut missing = Vec::new();
+                if !caps.remote_content {
+                    missing.push("remote_content");
+                }
+                if !caps.network {
+                    missing.push("network");
+                }
+                push_missing(url_attr, &missing);
+            }
+        }
+    }
+
+    for env_attr in ["environment-image", "skybox-image"] {
+        if let Some(Some(url)) = find_attr(env_attr) {
+            let t = url.trim();
+            let builtin = t.eq_ignore_ascii_case("neutral")
+                || t.eq_ignore_ascii_case("legacy")
+                || t.eq_ignore_ascii_case("none");
+            if !builtin && !is_non_network_html_url(t) {
+                let mut missing = Vec::new();
+                if !caps.remote_content {
+                    missing.push("remote_content");
+                }
+                if !caps.network {
+                    missing.push("network");
+                }
+                push_missing(env_attr, &missing);
+            }
+        }
+    }
+
+    let xr_mode = find_attr("xr-mode").and_then(|v| v).map(|v| v.trim());
+    let explicit_ar_mode = xr_mode.map(|v| v.eq_ignore_ascii_case("ar")).unwrap_or(false);
+    let explicit_vr_mode = xr_mode.map(|v| v.eq_ignore_ascii_case("vr")).unwrap_or(false);
+    if (bool_enabled("ar") || explicit_ar_mode) && !caps.camera && !caps.external_handoff {
+        let feat = if bool_enabled("ar") { "ar" } else { "xr-mode=\"ar\"" };
+        push_missing(feat, &["camera"]);
+    }
+    if explicit_vr_mode && !caps.sensors {
+        push_missing("xr-mode=\"vr\"", &["sensors"]);
+    }
+
+    for sensor_attr in ["xr-depth", "xr-hands", "world-understanding", "depth-particles"] {
+        if mode_enabled(sensor_attr) && !caps.sensors {
+            push_missing(sensor_attr, &["sensors"]);
+        }
+    }
+    if bool_enabled("webmcp-allow-depth") && !caps.sensors {
+        push_missing("webmcp-allow-depth", &["sensors"]);
+    }
+
+    if bool_enabled("allow-remote-splats") {
+        let mut missing = Vec::new();
+        if !caps.remote_content {
+            missing.push("remote_content");
+        }
+        if !caps.network {
+            missing.push("network");
+        }
+        push_missing("allow-remote-splats", &missing);
+    }
+
+    if mode_enabled("shared-room") && !caps.network {
+        push_missing("shared-room", &["network"]);
+    }
+    if bool_enabled("shared-room-voice") {
+        let mut missing = Vec::new();
+        if !caps.network {
+            missing.push("network");
+        }
+        if !caps.microphone {
+            missing.push("microphone");
+        }
+        push_missing("shared-room-voice", &missing);
+    }
+
+    if mode_enabled("persistent-anchors") && !caps.storage {
+        push_missing("persistent-anchors", &["storage"]);
+    }
+    if bool_enabled("persist-url-hash") && !caps.storage {
+        push_missing("persist-url-hash", &["storage"]);
+    }
+
+    for ai_attr in ["ai-endpoint", "ai-image-endpoint"] {
+        if let Some(Some(v)) = find_attr(ai_attr) {
+            if !v.trim().is_empty() {
+                let mut missing = Vec::new();
+                if !caps.scripts {
+                    missing.push("scripts");
+                }
+                if !caps.ai {
+                    missing.push("ai");
+                }
+                if !caps.network {
+                    missing.push("network");
+                }
+                push_missing(ai_attr, &missing);
+            }
+        }
+    }
+
+    if bool_enabled("ai-voice-button") || mode_enabled("ai-voice-url") {
+        let feat = if bool_enabled("ai-voice-button") { "ai-voice-button" } else { "ai-voice-url" };
+        let mut missing = Vec::new();
+        if !caps.scripts {
+            missing.push("scripts");
+        }
+        if !caps.ai {
+            missing.push("ai");
+        }
+        if !caps.network {
+            missing.push("network");
+        }
+        if !caps.microphone {
+            missing.push("microphone");
+        }
+        push_missing(feat, &missing);
+    }
+}
+
+fn lint_scene_traits_against_html_capabilities(
+    scene: &SceneGraph,
+    caps: HtmlCapMask,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut push_trait_missing = |node_name: &str, trait_name: &str, missing: &[&str]| {
+        if missing.is_empty() {
+            return;
+        }
+        let list = missing.join(" ");
+        diagnostics.push(Diagnostic {
+            code: "TL403".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "Node '{}' uses 'userData.xr.{}' without host capability '{}'.",
+                node_name, trait_name, list
+            ),
+            node: if node_name.is_empty() { None } else { Some(node_name.to_string()) },
+            line: None,
+            column: None,
+            hint: Some(format!(
+                "Grant '{}' in the host element's capabilities attribute to enable 'userData.xr.{}'.",
+                list, trait_name
+            )),
+        });
+    };
+
+    for node in &scene.nodes {
+        let Some(xr) = node.xr_normalized.as_ref().or(node.xr_traits.as_ref()) else {
+            continue;
+        };
+        let Some(obj) = xr.as_object() else {
+            continue;
+        };
+        if let Some(splat_url) = obj.get("splatUrl").and_then(|v| v.as_str()) {
+            if !is_non_network_html_url(splat_url) {
+                let mut missing = Vec::new();
+                if !caps.remote_content {
+                    missing.push("remote_content");
+                }
+                if !caps.network {
+                    missing.push("network");
+                }
+                push_trait_missing(&node.name, "splatUrl", &missing);
+            }
+        }
+        for (audio_key, label) in [("audioEmitter", "audioEmitter.src"), ("audio", "audio.src")] {
+            if let Some(audio_obj) = obj.get(audio_key).and_then(|v| v.as_object()) {
+                let has_preset = audio_obj
+                    .get("preset")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+                if !has_preset {
+                    if let Some(src) = audio_obj.get("src").and_then(|v| v.as_str()) {
+                        if !is_non_network_html_url(src) {
+                            let mut missing = Vec::new();
+                            if !caps.remote_content {
+                                missing.push("remote_content");
+                            }
+                            if !caps.network {
+                                missing.push("network");
+                            }
+                            push_trait_missing(&node.name, label, &missing);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let persist_anchor = obj
+            .get("anchorPersist")
+            .and_then(|v| v.as_object())
+            .and_then(|a| a.get("persist"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || obj
+                .get("anchor")
+                .and_then(|v| v.as_object())
+                .and_then(|a| a.get("persist"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+        if persist_anchor && !caps.storage {
+            push_trait_missing(&node.name, "anchor.persist", &["storage"]);
+        }
+        if obj.get("holdToAsk").filter(|v| !v.is_null() && v.as_bool() != Some(false)).is_some() {
+            let mut missing = Vec::new();
+            if !caps.ai {
+                missing.push("ai");
+            }
+            if !caps.network {
+                missing.push("network");
+            }
+            if !caps.microphone {
+                missing.push("microphone");
+            }
+            push_trait_missing(&node.name, "holdToAsk", &missing);
+        }
+        if obj
+            .get("worldUnderstanding")
+            .filter(|v| !v.is_null() && v.as_bool() != Some(false))
+            .is_some()
+            && !caps.sensors
+        {
+            push_trait_missing(&node.name, "worldUnderstanding", &["sensors"]);
+        }
+    }
+}
+
 /// Extracts `<script type="text/three">` blocks from an HTML document and validates
-/// `<three-live>` / `<xr-live>` host attributes (`TL401`, `TL402`).
+/// `<three-live>` / `<xr-live>` host attributes (`TL401`, `TL402`, `TL403`).
 pub fn extract_and_lint_html(html: &str) -> (Vec<String>, Vec<Diagnostic>) {
+    let (scripts, diagnostics, _) = extract_and_lint_html_with_caps(html);
+    (scripts, diagnostics)
+}
+
+fn extract_and_lint_html_with_caps(
+    html: &str,
+) -> (Vec<String>, Vec<Diagnostic>, Vec<(String, HtmlCapMask)>) {
     let cleaned = strip_html_comments(html);
     let mut scripts = Vec::new();
+    let mut scoped_scripts: Vec<(String, HtmlCapMask)> = Vec::new();
     let mut diagnostics = Vec::new();
     let lower = cleaned.to_ascii_lowercase();
 
@@ -479,6 +868,9 @@ pub fn extract_and_lint_html(html: &str) -> (Vec<String>, Vec<Diagnostic>) {
             let get_attr = |name: &str| -> Option<&str> {
                 attrs.iter().find(|(k, _)| k == name).and_then(|(_, v)| v.as_deref())
             };
+            let allow_scripts_attr =
+                attrs.iter().find(|(k, _)| k == "allow-client-scripts").map(|(_, v)| v.as_deref());
+            let elem_caps = HtmlCapMask::parse(get_attr("capabilities"), allow_scripts_attr);
 
             let is_self_closing = open_tag.trim_end().ends_with("/>");
             let inner_start = open_end + 1;
@@ -497,24 +889,26 @@ pub fn extract_and_lint_html(html: &str) -> (Vec<String>, Vec<Diagnostic>) {
 
             let elem_scripts = extract_three_scripts_from_fragment(inner_html);
             let has_script_attr = has_attr("script");
-            if (!elem_scripts.is_empty() || has_script_attr) && !has_attr("allow-client-scripts") {
+            if (!elem_scripts.is_empty() || has_script_attr) && !elem_caps.scripts {
                 diagnostics.push(Diagnostic {
                     code: "TL401".to_string(),
                     severity: "error".to_string(),
                     message: format!(
-                        "<{}> contains an inline <script type=\"text/three\"> but is missing the mandatory 'allow-client-scripts' attribute.",
+                        "<{}> contains an inline <script type=\"text/three\"> without granting 'scripts' in capabilities (or 'allow-client-scripts').",
                         tag_name
                     ),
                     node: None,
                     line: None,
                     column: None,
                     hint: Some(format!(
-                        "Add 'allow-client-scripts' to <{} allow-client-scripts> so the sandboxed script runner is permitted to execute.",
+                        "Add 'capabilities=\"scripts\"' (or 'allow-client-scripts') to <{}> so the sandboxed script runner is permitted to execute.",
                         tag_name
                     )),
                 });
             }
+            lint_html_element_capabilities(tag_name, &attrs, elem_caps, &mut diagnostics);
             for s in elem_scripts {
+                scoped_scripts.push((s.clone(), elem_caps));
                 scripts.push(s);
             }
 
@@ -568,7 +962,7 @@ pub fn extract_and_lint_html(html: &str) -> (Vec<String>, Vec<Diagnostic>) {
         scripts = extract_three_scripts_from_fragment(&cleaned);
     }
 
-    (scripts, diagnostics)
+    (scripts, diagnostics, scoped_scripts)
 }
 
 /// Extracts either raw JS source or `<script type="text/three">` blocks from HTML source,
@@ -589,7 +983,7 @@ pub fn validate_scene_source(
     filename: &str,
 ) -> (Option<SceneGraph>, Vec<Diagnostic>) {
     if is_html_source(source, filename) {
-        let (scripts, mut html_diags) = extract_and_lint_html(source);
+        let (scripts, mut html_diags, scoped_scripts) = extract_and_lint_html_with_caps(source);
         if scripts.is_empty() {
             return (
                 Some(SceneGraph { diagnostics: html_diags.clone(), ..Default::default() }),
@@ -600,6 +994,26 @@ pub fn validate_scene_source(
         match validate_three_script(&combined) {
             Ok(mut scene) => {
                 push_texture_quota_diagnostic(&mut scene);
+                if let Some(&(_, first_caps)) = scoped_scripts.first() {
+                    let uniform = scoped_scripts.iter().all(|(_, c)| *c == first_caps);
+                    if uniform {
+                        lint_scene_traits_against_html_capabilities(
+                            &scene,
+                            first_caps,
+                            &mut html_diags,
+                        );
+                    } else {
+                        for (elem_script, elem_caps) in &scoped_scripts {
+                            if let Ok(elem_scene) = validate_three_script(elem_script) {
+                                lint_scene_traits_against_html_capabilities(
+                                    &elem_scene,
+                                    *elem_caps,
+                                    &mut html_diags,
+                                );
+                            }
+                        }
+                    }
+                }
                 let mut all_diags = html_diags;
                 all_diags.append(&mut scene.diagnostics);
                 scene.diagnostics = all_diags.clone();
@@ -774,5 +1188,100 @@ mod tests {
             .expect("InstancedMesh + variants should compile to USDZ");
         assert!(usdz.len() > 200);
         assert_eq!(&usdz[0..2], b"PK");
+    }
+
+    #[test]
+    fn test_html_capabilities_satisfy_tl401_and_lint_tl403() {
+        let ok_html = r#"
+            <xr-live capabilities="scripts network remote_content sensors storage">
+              <script type="text/three">
+                const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+                m.name = 'Crate';
+                m.userData.xr = {
+                  splatUrl: 'https://cdn.example.com/room.spz',
+                  anchor: { target: 'table', persist: true },
+                  worldUnderstanding: { planes: true }
+                };
+                scene.add(m);
+              </script>
+            </xr-live>
+        "#;
+        let (_, ok_diags) = validate_scene_source(ok_html, "ok.html");
+        assert!(
+            !ok_diags.iter().any(|d| d.code == "TL401" || d.code == "TL403"),
+            "Expected zero TL401/TL403 diagnostics when capabilities are granted, got: {:?}",
+            ok_diags
+        );
+
+        let missing_html = r#"
+            <xr-live capabilities="scripts" xr-hands="gestures" shared-room="lobby" persistent-anchors="room1">
+              <script type="text/three">
+                const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+                m.name = 'Speaker';
+                m.userData.xr = {
+                  splatUrl: 'https://cdn.example.com/room.spz',
+                  audio: { src: 'https://cdn.example.com/clip.mp3' },
+                  holdToAsk: { prompt: 'What is this?' }
+                };
+                scene.add(m);
+              </script>
+            </xr-live>
+        "#;
+        let (_, diags) = validate_scene_source(missing_html, "missing.html");
+        assert!(!diags.iter().any(|d| d.code == "TL401"));
+        let tl403: Vec<&str> =
+            diags.iter().filter(|d| d.code == "TL403").map(|d| d.message.as_str()).collect();
+        assert!(tl403.iter().any(|m| m.contains("xr-hands")));
+        assert!(tl403.iter().any(|m| m.contains("shared-room")));
+        assert!(tl403.iter().any(|m| m.contains("persistent-anchors")));
+        assert!(tl403.iter().any(|m| m.contains("userData.xr.splatUrl")));
+        assert!(tl403.iter().any(|m| m.contains("userData.xr.audio.src")));
+        assert!(tl403.iter().any(|m| m.contains("userData.xr.holdToAsk")));
+
+        // Audit regressions: `texture-pack`, `xr-mode="vr"`, `allow-client-scripts` + `-scripts`
+        // negation, and multi-element HTML capability isolation.
+        let lockdown_html = r#"
+            <xr-live allow-client-scripts capabilities="none" texture-pack="https://cdn.example.com/p.json" xr-mode="vr">
+              <script type="text/three">
+                scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()));
+              </script>
+            </xr-live>
+        "#;
+        let (_, lock_diags) = validate_scene_source(lockdown_html, "lockdown.html");
+        assert!(
+            lock_diags.iter().any(|d| d.code == "TL401"),
+            "capabilities=\"none\" must override allow-client-scripts and emit TL401"
+        );
+        assert!(lock_diags.iter().any(|d| d.code == "TL403" && d.message.contains("texture-pack")));
+        assert!(lock_diags
+            .iter()
+            .any(|d| d.code == "TL403" && d.message.contains("xr-mode=\"vr\"")));
+
+        let multi_html = r#"
+            <xr-live capabilities="all">
+              <script type="text/three">
+                const a = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+                a.name = 'AllowedBox';
+                a.userData.xr = { holdToAsk: { prompt: 'Hi' } };
+                scene.add(a);
+              </script>
+            </xr-live>
+            <xr-live capabilities="scripts">
+              <script type="text/three">
+                const b = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+                b.name = 'RestrictedSplat';
+                b.userData.xr = { splatUrl: 'https://cdn.example.com/room.spz' };
+                scene.add(b);
+              </script>
+            </xr-live>
+        "#;
+        let (_, multi_diags) = validate_scene_source(multi_html, "multi.html");
+        assert!(
+            multi_diags
+                .iter()
+                .any(|d| d.code == "TL403" && d.message.contains("RestrictedSplat")),
+            "Restricted sibling element must still receive TL403 even when another element has capabilities=\"all\""
+        );
+        assert!(!multi_diags.iter().any(|d| d.code == "TL403" && d.message.contains("AllowedBox")));
     }
 }

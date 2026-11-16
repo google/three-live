@@ -237,8 +237,13 @@ object ThreeCompiler {
    * @return A [GlbBuffer] that can be passed directly to native renderers like Google Filament.
    * @throws ThreeCompilerException if the native library is unavailable or compilation fails.
    */
-  suspend fun compile(script: String): GlbBuffer =
+  suspend fun compile(
+    script: String,
+    capabilities: ThreeLiveCapabilities? = null,
+    onCapabilityDenied: CapabilityDeniedListener? = null,
+  ): GlbBuffer =
     withContext(compilerDispatcher) {
+      requireScriptsCapability(capabilities, onCapabilityDenied)
       checkNativeLibraryLoaded()
       val buffer = compileToDirectBuffer(script)
       val capacity = buffer.capacity().toLong()
@@ -246,15 +251,30 @@ object ThreeCompiler {
     }
 
   /** Compiles a Three.js script on a background coroutine thread into a standard [ByteArray]. */
-  suspend fun compileToBytes(script: String): ByteArray =
+  suspend fun compileToBytes(
+    script: String,
+    capabilities: ThreeLiveCapabilities? = null,
+    onCapabilityDenied: CapabilityDeniedListener? = null,
+  ): ByteArray =
     withContext(compilerDispatcher) {
+      requireScriptsCapability(capabilities, onCapabilityDenied)
       checkNativeLibraryLoaded()
       compileToByteArray(script)
     }
 
+  private fun requireScriptsCapability(
+    capabilities: ThreeLiveCapabilities?,
+    onCapabilityDenied: CapabilityDeniedListener?,
+  ) {
+    val policy = capabilities ?: ThreeLiveCapabilities.default
+    if (!policy.check(ThreeLiveCapability.SCRIPTS, "compile", listener = onCapabilityDenied)) {
+      throw ThreeCompilerException("Capability 'scripts' is disabled in ThreeLiveCapabilities.")
+    }
+  }
+
   /**
-   * Runs an AI core request that compiles scripts (`validate`) on the compiler thread, so it
-   * reuses the warm JavaScript VM.
+   * Runs an AI core request that compiles scripts (`validate`) on the compiler thread, so it reuses
+   * the warm JavaScript VM.
    */
   suspend fun aiCall(request: String): String =
     withContext(compilerDispatcher) {

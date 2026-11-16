@@ -457,8 +457,8 @@ face local +Z.
 <!-- mdformat on -->
 
 To restart a scenario, call `XRSim.resetSimScenario(element)` (or import
-`resetSimScenario` from `xr-live/sim`). The Aether view restarts when its
-`scenarioResetKey` prop changes.
+`resetSimScenario` from `xr-live/sim`). Native host views can call
+`world.reset()` whenever their scenario reset state changes.
 
 ### Simulation events
 
@@ -532,9 +532,9 @@ feedback:
 On Android, `XRSimRenderBridge` draws both through the renderer; the Filament
 renderer shows spawned instances as gltfio instances that share the template's
 GPU buffers and textures. On iOS and visionOS, `XRSimRealityKitBridge` draws
-them with RealityKit and clones the template entity for spawned instances. The
-Aether `ThreeLive` view wires these up, together with an on-screen joystick,
-jump and fire buttons, and the score HUD.
+them with RealityKit and clones the template entity for spawned instances. Host
+apps can wire these bridges up alongside an on-screen joystick, jump and fire
+buttons, and a score HUD.
 
 --------------------------------------------------------------------------------
 

@@ -23,7 +23,10 @@
  * 3. WebXR `XRAnchor` / `restorePersistentAnchor` when supported by the headset
  */
 
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  checkPluginCapability,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {
   clampNum,
   parseAnchorPersist,
@@ -539,6 +542,14 @@ export class XRPersistentAnchorsController {
   ): string {
     const entries = this.collectPersistableMeshes(viewer, element);
     if (entries.length === 0) return '';
+    const capHost = element ?? viewer?.container;
+    if (
+      !checkPluginCapability(capHost, 'storage', 'persistentAnchors', {
+        dedup: true,
+      })
+    ) {
+      return '';
+    }
     const poses = this.snapshotPoses(viewer, element);
     if (poses.size === 0) return '';
     const cfg = this.resolveStorageKey(element);
@@ -599,6 +610,14 @@ export class XRPersistentAnchorsController {
   ): {count: number; source: AnchorRestoreSource | null} {
     const entries = this.collectPersistableMeshes(viewer, element);
     if (entries.length === 0) return {count: 0, source: null};
+    const capHost = element ?? viewer?.container;
+    if (
+      !checkPluginCapability(capHost, 'storage', 'persistentAnchors', {
+        dedup: true,
+      })
+    ) {
+      return {count: 0, source: null};
+    }
 
     // Tier 1: URL hash `#xr-state=...` takes precedence for shared layout links.
     const hashToken = extractHashAnchorToken(this.getUrl()?.getHash());
@@ -663,6 +682,13 @@ export class XRPersistentAnchorsController {
   /** Clears persisted state from `localStorage`, URL hash, and WebXR persistent handles. */
   // tslint:disable-next-line:no-any Host element + optional XR session.
   clearPersistedAnchors(element?: any, session?: any): void {
+    if (
+      !checkPluginCapability(element, 'storage', 'persistentAnchors', {
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     const cfg = this.resolveStorageKey(element);
     try {
       this.getStorage()?.removeItem(`${ANCHOR_STORAGE_PREFIX}${cfg.namespace}`);
@@ -756,7 +782,13 @@ export class XRPersistentAnchorsController {
     if (
       this.xrRestoredSession !== session &&
       typeof session.restorePersistentAnchor === 'function' &&
-      this.xrUuids.size > 0
+      this.xrUuids.size > 0 &&
+      checkPluginCapability(
+        element ?? viewer?.container,
+        'storage',
+        'persistentAnchors',
+        {dedup: true},
+      )
     ) {
       this.xrRestoredSession = session;
       let restoredCount = 0;
@@ -823,6 +855,16 @@ export class XRPersistentAnchorsController {
     session?: any,
   ): void {
     if (typeof frame?.createAnchor !== 'function') return;
+    if (
+      !checkPluginCapability(
+        element ?? viewer?.container,
+        'storage',
+        'persistentAnchors',
+        {dedup: true},
+      )
+    ) {
+      return;
+    }
     // tslint:disable-next-line:no-any Global XRRigidTransform constructor.
     const RigidTransformCtor = (globalThis as any).XRRigidTransform;
     if (typeof RigidTransformCtor !== 'function') return;
@@ -922,7 +964,15 @@ export const persistentAnchorsPlugin: ThreeLivePlugin = {
   // tslint:disable-next-line:no-any Host element and WebXR sessionInit.
   onConfigureXRSessionInit(element: any, sessionInit: any): void {
     const cfg = resolvePersistentAnchorsConfig(element);
-    if (!cfg.enabled || !sessionInit) return;
+    if (
+      !cfg.enabled ||
+      !sessionInit ||
+      !checkPluginCapability(element, 'storage', 'persistentAnchors', {
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     const optional = new Set<string>(sessionInit.optionalFeatures ?? []);
     optional.add('anchors');
     sessionInit.optionalFeatures = Array.from(optional);

@@ -315,12 +315,52 @@ object SpatialAudio {
    * Per-session 3D spatial audio controller tracking `XRLiveNodeTraits.audioEmitter` (and legacy
    * `XRLiveNodeTraits.audio`) across node world transforms and listener head poses.
    */
-  class EmitterController(
+  class EmitterController
+  @JvmOverloads
+  constructor(
     private val session: XRLiveRuntimeSession,
     private val playListener: PlayListener? = null,
   ) {
     private val emitters = LinkedHashMap<Int, EmitterState>()
     private var muted: Boolean = false
+    private val capabilityGuard = CapabilityGuard()
+
+    /** Optional listener notified when a remote audio emitter is blocked by capability policy. */
+    var onCapabilityDenied: CapabilityDeniedListener? = null
+
+    /**
+     * Optional capability policy override (`null` falls back to [ThreeLiveCapabilities.default]).
+     */
+    var capabilities: ThreeLiveCapabilities? = null
+      set(value) {
+        field = value
+        capabilityGuard.reset()
+        emitters.clear()
+        syncFromSession()
+      }
+
+    constructor(
+      session: XRLiveRuntimeSession,
+      capabilities: ThreeLiveCapabilities?,
+      onCapabilityDenied: CapabilityDeniedListener? = null,
+      playListener: PlayListener? = null,
+    ) : this(session, playListener) {
+      this.onCapabilityDenied = onCapabilityDenied
+      this.capabilities = capabilities
+    }
+
+    private fun canPlayOptions(opts: XRAudioEmitterTrait): Boolean {
+      val src = opts.src
+      if (opts.preset != null || src.isNullOrBlank()) return true
+      return capabilityGuard.check(
+        policy = capabilities ?: ThreeLiveCapabilities.default,
+        capability = ThreeLiveCapability.REMOTE_CONTENT,
+        feature = "spatialAudio",
+        url = src,
+        dedup = true,
+        listener = onCapabilityDenied,
+      )
+    }
 
     init {
       syncFromSession()
@@ -364,13 +404,14 @@ object SpatialAudio {
               eFwd,
               opts,
             )
+          val canAutoplay = opts.autoplay && canPlayOptions(opts)
           emitters[t.nodeIndex] =
             EmitterState(
               nodeIndex = t.nodeIndex,
               nodeName = t.name,
               options = opts,
-              playing = opts.autoplay,
-              triggerCount = if (opts.autoplay) 1 else 0,
+              playing = canAutoplay,
+              triggerCount = if (canAutoplay) 1 else 0,
               lastMix = initialMix,
             )
         }
@@ -445,13 +486,14 @@ object SpatialAudio {
     /** Unconditionally triggers or retriggers `nodeIndex` and notifies [playListener]. */
     fun trigger(nodeIndex: Int): Mix? {
       val state = emitters[nodeIndex] ?: return null
+      if (!canPlayOptions(state.options)) return null
       state.playing = true
       state.triggerCount++
       playListener?.onAudioPlay(
         state.nodeIndex,
         state.nodeName,
         state.options.preset,
-        state.options.src,
+        if (state.options.preset == null) state.options.src else null,
         state.lastMix.gain,
         state.lastMix.pan,
         state.triggerCount,

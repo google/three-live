@@ -20,12 +20,30 @@
  */
 
 export {
+  CAPABILITIES_ALL,
+  CAPABILITIES_NONE,
+  CAPABILITIES_VIEWER,
   ThreeLiveElement,
+  checkHostCapability,
+  hasCapabilityInPolicy,
+  isNetworkUrlPermitted,
+  isNonNetworkUrl,
+  normalizeCapabilityOrigin,
+  parseCapabilities,
+  resetCapabilityDenials,
+  resolveHostCapabilities,
+  sanitizeDiagnosticUrl,
   type ARLaunchOptions,
   type ARLaunchResult,
   type ARMode,
   type ARProvider,
   type CameraState,
+  type CapabilityDeniedDetail,
+  type ThreeLiveCapabilities,
+  type ThreeLiveCapabilitiesInit,
+  type ThreeLiveCapabilitiesInput,
+  type ThreeLiveCapabilityName,
+  type ThreeLiveNetworkPolicy,
 } from './three-live-element';
 
 export {

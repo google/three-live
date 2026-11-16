@@ -55,6 +55,51 @@ fun SceneViewerHelper.isArCoreInstalled(context: Context): Boolean {
  *   Services for AR is not installed / unavailable (so the caller can activate an in-app AR surface
  *   preview fallback via [ThreeLiveSceneRenderer.setArSurfacePreviewEnabled]).
  */
+internal fun checkSceneViewerCapabilities(
+  rawUri: String,
+  soundUri: String? = null,
+  capabilities: ThreeLiveCapabilities? = null,
+  onCapabilityDenied: CapabilityDeniedListener? = null,
+): String? {
+  val trimmed = rawUri.trim()
+  val policy = capabilities ?: ThreeLiveCapabilities.default
+  if (
+    !policy.check(
+      ThreeLiveCapability.EXTERNAL_HANDOFF,
+      "sceneViewer",
+      url = trimmed.ifEmpty { null },
+      listener = onCapabilityDenied,
+    )
+  ) {
+    return null
+  }
+  val uriString = SceneViewerHelper.validateSceneViewerUri(trimmed, "fileUri")
+  if (
+    uriString.lowercase().startsWith("https://") &&
+      !policy.check(
+        ThreeLiveCapability.REMOTE_CONTENT,
+        "sceneViewer",
+        url = uriString,
+        listener = onCapabilityDenied,
+      )
+  ) {
+    return null
+  }
+  if (
+    !soundUri.isNullOrBlank() &&
+      soundUri.trim().lowercase().startsWith("https://") &&
+      !policy.check(
+        ThreeLiveCapability.REMOTE_CONTENT,
+        "sceneViewerSound",
+        url = soundUri.trim(),
+        listener = onCapabilityDenied,
+      )
+  ) {
+    return null
+  }
+  return uriString
+}
+
 @JvmOverloads
 fun SceneViewerHelper.launchSceneViewer(
   context: Context,
@@ -63,12 +108,20 @@ fun SceneViewerHelper.launchSceneViewer(
   mode: String = "ar_preferred",
   resizable: Boolean = true,
   soundUri: String? = null,
+  capabilities: ThreeLiveCapabilities? = null,
+  onCapabilityDenied: CapabilityDeniedListener? = null,
 ): Boolean {
+  val uriString =
+    checkSceneViewerCapabilities(
+      rawUri = contentUri.toString(),
+      soundUri = soundUri,
+      capabilities = capabilities,
+      onCapabilityDenied = onCapabilityDenied,
+    ) ?: return false
   if (!isArCoreInstalled(context)) {
     return false
   }
 
-  val uriString = validateSceneViewerUri(contentUri.toString(), "fileUri")
   val safeMode = if (mode in ALLOWED_MODES) mode else "ar_preferred"
 
   if (uriString.lowercase().startsWith("content://")) {

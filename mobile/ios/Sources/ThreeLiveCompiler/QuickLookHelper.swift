@@ -24,15 +24,19 @@
   #endif
 
   /// Errors thrown while presenting AR Quick Look.
-  public enum QuickLookHelperError: Error, LocalizedError {
+  public enum QuickLookHelperError: Error, LocalizedError, Equatable {
     /// The presenting view controller is already showing another view controller.
     case alreadyPresenting
+    /// Presenting AR Quick Look was refused by `ThreeLiveCapabilities`.
+    case capabilityDenied(String)
 
     public var errorDescription: String? {
       switch self {
       case .alreadyPresenting:
         return
           "The view controller is already presenting; dismiss it before presenting AR Quick Look"
+      case .capabilityDenied(let message):
+        return message
       }
     }
   }
@@ -95,10 +99,24 @@
     ///   - script: The Three.js script to compile to USDZ.
     public static func presentAR(
       from viewController: UIViewController,
-      script: String
+      script: String,
+      capabilities: ThreeLiveCapabilities? = nil,
+      onCapabilityDenied: (@Sendable (CapabilityDeniedEvent) -> Void)? = nil
     ) async throws {
-      let usdzData = try await ThreeCompiler.compileUSDZ(script)
-      try await presentAR(from: viewController, usdzData: usdzData)
+      let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      guard policy.check(.externalHandoff, feature: "quickLook", onDenied: onCapabilityDenied)
+      else {
+        throw QuickLookHelperError.capabilityDenied(
+          "Capability 'external_handoff' is disabled in ThreeLiveCapabilities.")
+      }
+      let usdzData = try await ThreeCompiler.compileUSDZ(
+        script, capabilities: policy, onCapabilityDenied: onCapabilityDenied)
+      try await presentAR(
+        from: viewController,
+        usdzData: usdzData,
+        capabilities: policy,
+        onCapabilityDenied: onCapabilityDenied
+      )
     }
 
     /// Presents Apple AR Quick Look directly from binary USDZ Data.
@@ -108,8 +126,16 @@
     ///   - usdzData: The binary USDZ archive data.
     public static func presentAR(
       from viewController: UIViewController,
-      usdzData: Data
+      usdzData: Data,
+      capabilities: ThreeLiveCapabilities? = nil,
+      onCapabilityDenied: ((CapabilityDeniedEvent) -> Void)? = nil
     ) async throws {
+      let policy = capabilities ?? ThreeLiveCapabilities.defaultPolicy
+      guard policy.check(.externalHandoff, feature: "quickLook", onDenied: onCapabilityDenied)
+      else {
+        throw QuickLookHelperError.capabilityDenied(
+          "Capability 'external_handoff' is disabled in ThreeLiveCapabilities.")
+      }
       guard
         viewController.presentedViewController == nil,
         viewController.viewIfLoaded?.window != nil

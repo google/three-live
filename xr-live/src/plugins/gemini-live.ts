@@ -31,8 +31,15 @@
  * use a short-lived ephemeral token in the `wss://` URL your server mints.
  */
 
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
-import {type HoldToAskOptions, parseHoldToAsk} from '../../../three-live/src/xr-trait-schema';
+import {
+  checkPluginCapability,
+  hasPluginCapability,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
+import {
+  type HoldToAskOptions,
+  parseHoldToAsk,
+} from '../../../three-live/src/xr-trait-schema';
 import {getMeshXRTraits} from '../xr-traits';
 import {clampNum, emitPluginEvent, isEventClaimed} from './common';
 import {
@@ -75,7 +82,9 @@ export function isAllowedLiveUrl(raw: string): boolean {
     if (url.protocol === 'wss:') return true;
     return (
       url.protocol === 'ws:' &&
-      (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
+      (url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1' ||
+        url.hostname === '[::1]')
     );
   } catch {
     return false;
@@ -85,7 +94,9 @@ export function isAllowedLiveUrl(raw: string): boolean {
 /** Creates a JSON-over-WebSocket transport for a validated `wss:` URL. */
 export function createWebSocketTransport(url: string): GeminiLiveTransport {
   if (!isAllowedLiveUrl(url)) {
-    throw new Error('gemini-live: only wss:// (or loopback ws://) endpoints are allowed');
+    throw new Error(
+      'gemini-live: only wss:// (or loopback ws://) endpoints are allowed',
+    );
   }
   const ws = new WebSocket(url);
   const queue: string[] = [];
@@ -108,7 +119,8 @@ export function createWebSocketTransport(url: string): GeminiLiveTransport {
     // Decoding a Blob can outlive the controller session that received it.
     const onMessage = transport.onMessage;
     try {
-      const text = typeof e.data === 'string' ? e.data : await (e.data as Blob).text();
+      const text =
+        typeof e.data === 'string' ? e.data : await (e.data as Blob).text();
       const parsed: unknown = ws.onmessage && JSON.parse(text);
       if (parsed && typeof parsed === 'object') {
         onMessage?.(parsed as Record<string, unknown>);
@@ -132,7 +144,10 @@ export function bytesToBase64(bytes: Uint8Array): string {
 
 /** Accumulates streaming transcription fragments per speaker. */
 export class TranscriptionManager {
-  private readonly partial: Record<TranscriptSpeaker, string> = {user: '', model: ''};
+  private readonly partial: Record<TranscriptSpeaker, string> = {
+    user: '',
+    model: '',
+  };
 
   /** Appends a fragment and returns the updated (non-final) segment. */
   append(speaker: TranscriptSpeaker, fragment: string): TranscriptEvent {
@@ -185,7 +200,8 @@ export class PcmPlayer {
   /** Schedules one PCM chunk after any queued audio. */
   enqueue(samples: Float32Array, sampleRate: number): void {
     if (samples.length === 0) return;
-    const Ctor = (globalThis as {AudioContext?: typeof AudioContext}).AudioContext;
+    const Ctor = (globalThis as {AudioContext?: typeof AudioContext})
+      .AudioContext;
     if (!this.ctx && typeof Ctor === 'function') {
       try {
         this.ctx = new Ctor();
@@ -257,7 +273,8 @@ export const REPORT_OBJECTS_DECLARATION: Readonly<Record<string, unknown>> = {
             box_2d: {
               type: 'ARRAY',
               items: {type: 'NUMBER'},
-              description: 'Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.',
+              description:
+                'Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.',
             },
           },
           required: ['label', 'box_2d'],
@@ -277,12 +294,18 @@ export function withDetectionTool(
   setup: Readonly<Record<string, unknown>> | undefined,
 ): Record<string, unknown> | undefined {
   if (!setup || typeof setup !== 'object') return undefined;
-  const tools = Array.isArray(setup['tools']) ? [...(setup['tools'] as unknown[])] : [];
+  const tools = Array.isArray(setup['tools'])
+    ? [...(setup['tools'] as unknown[])]
+    : [];
   const declared = tools.some((t) => {
     const decls = (t as {functionDeclarations?: unknown})?.functionDeclarations;
-    return Array.isArray(decls) && decls.some((d) => (d as {name?: unknown})?.name === REPORT_OBJECTS_TOOL);
+    return (
+      Array.isArray(decls) &&
+      decls.some((d) => (d as {name?: unknown})?.name === REPORT_OBJECTS_TOOL)
+    );
   });
-  if (!declared) tools.push({functionDeclarations: [REPORT_OBJECTS_DECLARATION]});
+  if (!declared)
+    tools.push({functionDeclarations: [REPORT_OBJECTS_DECLARATION]});
   return {...setup, tools};
 }
 
@@ -311,7 +334,9 @@ export interface GeminiLiveOptions {
 }
 
 interface CaptureHost {
-  captureViewFrame?: (opts: Record<string, unknown>) => Promise<{base64: string; mimeType: string}>;
+  captureViewFrame?: (
+    opts: Record<string, unknown>,
+  ) => Promise<{base64: string; mimeType: string}>;
 }
 
 /**
@@ -321,6 +346,7 @@ interface CaptureHost {
 export class XRGeminiLiveController {
   readonly transcripts = new TranscriptionManager();
   private transport: GeminiLiveTransport | null = null;
+  private activeUrl: string | null = null;
   /** Invalidates asynchronous work even when a transport object is reused. */
   private sessionId = 0;
   private frameTimer: ReturnType<typeof setInterval> | null = null;
@@ -346,6 +372,10 @@ export class XRGeminiLiveController {
     return this.transport !== null;
   }
 
+  getActiveUrl(): string | null {
+    return this.activeUrl;
+  }
+
   /** Connects (replacing any previous session) and starts frame streaming. */
   connect(options: GeminiLiveOptions): void {
     const element = this.element as object;
@@ -359,15 +389,28 @@ export class XRGeminiLiveController {
     const activeCtrl = controllers.get(element) ?? this;
     // A close callback or transcript listener may have connected a newer session.
     if (this.sessionId !== sessionId || activeCtrl !== this) {
-      if (options.transport !== activeCtrl.transport && options.transport !== prevTransport) {
+      if (
+        options.transport !== activeCtrl.transport &&
+        options.transport !== prevTransport
+      ) {
         options.transport?.close();
       }
       return;
     }
+    if (
+      !checkPluginCapability(this.element, 'ai', 'geminiLive', {
+        url: options.url,
+      })
+    ) {
+      options.transport?.close();
+      throw new Error("gemini-live: capability 'ai' or 'network' denied.");
+    }
     const transport =
-      options.transport ?? (options.url ? createWebSocketTransport(options.url) : null);
+      options.transport ??
+      (options.url ? createWebSocketTransport(options.url) : null);
     if (!transport) throw new Error('gemini-live: provide a transport or url');
     this.transport = transport;
+    this.activeUrl = options.url ?? null;
     const isCurrentSession = this.sessionGuard();
     this.speakReplies = options.speakReplies === true;
     this.playAudio = options.playAudio !== false;
@@ -379,14 +422,22 @@ export class XRGeminiLiveController {
     transport.onClose = () => {
       if (isCurrentSession()) this.resetSession(false);
     };
-    const setup = this.detectObjects ? withDetectionTool(options.setup) : options.setup;
+    const setup = this.detectObjects
+      ? withDetectionTool(options.setup)
+      : options.setup;
     try {
       if (setup) transport.send({setup});
     } catch (err) {
       if (isCurrentSession()) this.resetSession(true);
       throw err;
     }
-    if (options.streamFrames !== false && isCurrentSession()) {
+    if (
+      options.streamFrames !== false &&
+      isCurrentSession() &&
+      checkPluginCapability(this.element, 'camera', 'geminiStreamFrames', {
+        dedup: true,
+      })
+    ) {
       const interval = clampNum(options.frameIntervalMs, 250, 10000, 1000);
       this.frameTimer = setInterval(() => {
         if (isCurrentSession()) void this.sendFrame();
@@ -402,14 +453,21 @@ export class XRGeminiLiveController {
 
   /** Stops streaming and closes the transport. */
   disconnect(): void {
-    if (this.transport || holdState.has(this.element as object)) this.resetSession(true);
+    if (this.transport || holdState.has(this.element as object))
+      this.resetSession(true);
   }
 
   private resetSession(closeTransport: boolean): number {
     const id = ++this.sessionId;
     if (this.frameTimer !== null) clearInterval(this.frameTimer);
     const transport = this.transport;
-    this.frameTimer = this.pendingFrame = this.lastFrame = this.frameCamera = this.transport = null;
+    this.frameTimer =
+      this.pendingFrame =
+      this.lastFrame =
+      this.frameCamera =
+      this.transport =
+      this.activeUrl =
+        null;
     this.turnHasOutputTranscription = false;
     const finalized = this.transcripts.finalize();
     const element = this.element as object;
@@ -432,23 +490,44 @@ export class XRGeminiLiveController {
     const host = this.element as CaptureHost;
     const transport = this.transport;
     const current = this.sessionGuard();
-    if (!transport || this.pendingFrame || typeof host?.captureViewFrame !== 'function') return Promise.resolve(false);
+    if (
+      !transport ||
+      this.pendingFrame ||
+      typeof host?.captureViewFrame !== 'function' ||
+      !checkPluginCapability(this.element, 'camera', 'geminiStreamFrames', {
+        dedup: true,
+      })
+    ) {
+      return Promise.resolve(false);
+    }
     let finish!: (sent: boolean) => void;
-    const pending = new Promise<boolean>(resolve => { finish = resolve; });
+    const pending = new Promise<boolean>((resolve) => {
+      finish = resolve;
+    });
     this.pendingFrame = pending;
     void (async () => {
       let sent = false;
       try {
-        const camera = this.detectObjects ? snapshotDetectionCamera(this.element) : null;
-        const frame = await host.captureViewFrame!({format: 'image/jpeg', quality: 0.6});
+        const camera = this.detectObjects
+          ? snapshotDetectionCamera(this.element)
+          : null;
+        const frame = await host.captureViewFrame!({
+          format: 'image/jpeg',
+          quality: 0.6,
+        });
         if (frame?.base64 && current()) {
           this.frameCamera = camera;
           this.lastFrame = {base64: frame.base64, mimeType: frame.mimeType};
-          transport.send({realtimeInput: {mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}]}});
+          transport.send({
+            realtimeInput: {
+              mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}],
+            },
+          });
           sent = true;
         }
-      } catch { /* Failed capture cannot admit a dependent visual question. */ }
-      finally {
+      } catch {
+        /* Failed capture cannot admit a dependent visual question. */
+      } finally {
         if (this.pendingFrame === pending) this.pendingFrame = null;
         finish(sent);
       }
@@ -458,11 +537,27 @@ export class XRGeminiLiveController {
 
   /** Sends a chunk of 16-bit little-endian mono PCM microphone audio. */
   sendAudioChunk(pcm16: Int16Array, sampleRate = 16000): void {
-    if (!this.transport || !(pcm16 instanceof Int16Array)) return;
+    if (
+      !this.transport ||
+      !(pcm16 instanceof Int16Array) ||
+      !checkPluginCapability(this.element, 'microphone', 'geminiLiveAudio', {
+        dedup: true,
+      })
+    ) {
+      return;
+    }
     const rate = Math.round(clampNum(sampleRate, 8000, 48000, 16000));
-    const bytes = new Uint8Array(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength);
+    const bytes = new Uint8Array(
+      pcm16.buffer,
+      pcm16.byteOffset,
+      pcm16.byteLength,
+    );
     this.transport.send({
-      realtimeInput: {mediaChunks: [{mimeType: `audio/pcm;rate=${rate}`, data: bytesToBase64(bytes)}]},
+      realtimeInput: {
+        mediaChunks: [
+          {mimeType: `audio/pcm;rate=${rate}`, data: bytesToBase64(bytes)},
+        ],
+      },
     });
   }
 
@@ -472,23 +567,42 @@ export class XRGeminiLiveController {
     const current = this.sessionGuard();
     const clipped = String(text ?? '').slice(0, MAX_TEXT_CHARS);
     if (!transport || !clipped) return;
-    const canCapture = typeof (this.element as CaptureHost)?.captureViewFrame === 'function';
+    if (
+      !checkPluginCapability(this.element, 'ai', 'geminiLive', {
+        url: this.activeUrl ?? undefined,
+        dedup: true,
+      })
+    ) {
+      return;
+    }
+    const canCapture =
+      typeof (this.element as CaptureHost)?.captureViewFrame === 'function';
     if (options?.captureFrame && !canCapture) return;
     const pending =
-      this.pendingFrame ?? (options?.captureFrame && canCapture ? this.sendFrame() : null);
+      this.pendingFrame ??
+      (options?.captureFrame && canCapture ? this.sendFrame() : null);
     const send = (captured = true) => {
       if (!captured || !current()) return;
       const frame = pending ? this.lastFrame : null;
       // Bind the image and question in one conversation turn. Realtime streams
       // alone provide no cross-modality ordering guarantee at the service.
       const parts: Array<Record<string, unknown>> = frame
-        ? [{inlineData: {mimeType: frame.mimeType, data: frame.base64}}, {text: clipped}]
+        ? [
+            {inlineData: {mimeType: frame.mimeType, data: frame.base64}},
+            {text: clipped},
+          ]
         : [{text: clipped}];
-      transport.send({clientContent: {turns: [{role: 'user', parts}], turnComplete: true}});
+      transport.send({
+        clientContent: {turns: [{role: 'user', parts}], turnComplete: true},
+      });
     };
-    if (pending) void pending.then(send).catch((error) => {
-      if (current()) emitPluginEvent(this.element, 'xr-gemini-error', {message: String(error)});
-    });
+    if (pending)
+      void pending.then(send).catch((error) => {
+        if (current())
+          emitPluginEvent(this.element, 'xr-gemini-error', {
+            message: String(error),
+          });
+      });
     else send();
   }
 
@@ -499,10 +613,15 @@ export class XRGeminiLiveController {
     const isCurrentSession = this.sessionGuard();
     const toolCall = message?.['toolCall'];
     if (toolCall && typeof toolCall === 'object') {
-      this.handleToolCall(toolCall as Record<string, unknown>, isCurrentSession);
+      this.handleToolCall(
+        toolCall as Record<string, unknown>,
+        isCurrentSession,
+      );
     }
     if (!isCurrentSession()) return;
-    const content = message?.['serverContent'] as Record<string, unknown> | undefined;
+    const content = message?.['serverContent'] as
+      | Record<string, unknown>
+      | undefined;
     if (!content || typeof content !== 'object') return;
     if (content['interrupted'] === true) {
       cancelSpeech();
@@ -511,7 +630,8 @@ export class XRGeminiLiveController {
       if (!isCurrentSession()) return;
     }
     const input = (content['inputTranscription'] as {text?: unknown})?.text;
-    if (typeof input === 'string' && input) this.emitTranscript(this.transcripts.append('user', input));
+    if (typeof input === 'string' && input)
+      this.emitTranscript(this.transcripts.append('user', input));
     if (!isCurrentSession()) return;
     const output = (content['outputTranscription'] as {text?: unknown})?.text;
     if (typeof output === 'string' && output) {
@@ -526,11 +646,17 @@ export class XRGeminiLiveController {
         const text = (part as {text?: unknown})?.text;
         // In AUDIO mode the transcript comes from outputTranscription; avoid
         // double-appending any accompanying text parts.
-        if (typeof text === 'string' && text && !this.turnHasOutputTranscription) {
+        if (
+          typeof text === 'string' &&
+          text &&
+          !this.turnHasOutputTranscription
+        ) {
           this.emitTranscript(this.transcripts.append('model', text));
           if (!isCurrentSession()) return;
         }
-        const inline = (part as {inlineData?: {mimeType?: unknown; data?: unknown}})?.inlineData;
+        const inline = (
+          part as {inlineData?: {mimeType?: unknown; data?: unknown}}
+        )?.inlineData;
         if (
           this.playAudio &&
           typeof inline?.data === 'string' &&
@@ -539,7 +665,10 @@ export class XRGeminiLiveController {
           inline.data.length <= 8 * 1024 * 1024
         ) {
           try {
-            this.audio.enqueue(decodePcm16Base64(inline.data), pcmRateFromMime(inline.mimeType));
+            this.audio.enqueue(
+              decodePcm16Base64(inline.data),
+              pcmRateFromMime(inline.mimeType),
+            );
           } catch {
             // Ignore malformed audio chunks.
           }
@@ -551,7 +680,8 @@ export class XRGeminiLiveController {
       for (const ev of this.transcripts.finalize()) {
         if (!isCurrentSession()) return;
         this.emitTranscript(ev);
-        if (isCurrentSession() && ev.speaker === 'model' && this.speakReplies) speak(ev.text);
+        if (isCurrentSession() && ev.speaker === 'model' && this.speakReplies)
+          speak(ev.text);
       }
     }
   }
@@ -562,7 +692,10 @@ export class XRGeminiLiveController {
    * through the same validation as the `detections` prop. Other functions
    * are left to the host.
    */
-  private handleToolCall(toolCall: Record<string, unknown>, isCurrentSession: () => boolean): void {
+  private handleToolCall(
+    toolCall: Record<string, unknown>,
+    isCurrentSession: () => boolean,
+  ): void {
     const calls = toolCall['functionCalls'];
     const transport = this.transport;
     if (!this.detectObjects || !transport || !Array.isArray(calls)) return;
@@ -572,14 +705,21 @@ export class XRGeminiLiveController {
       if (c?.name !== REPORT_OBJECTS_TOOL) continue;
       const objects = (c.args as {objects?: unknown} | null)?.objects;
       const located = detectObjects(
-        this.element, detectionsFromList(objects), this.frameCamera ?? undefined, isCurrentSession,
+        this.element,
+        detectionsFromList(objects),
+        this.frameCamera ?? undefined,
+        isCurrentSession,
       );
       if (!isCurrentSession()) return;
-      const response: Record<string, unknown> = {name: REPORT_OBJECTS_TOOL, response: {ok: true, located: located.length}};
+      const response: Record<string, unknown> = {
+        name: REPORT_OBJECTS_TOOL,
+        response: {ok: true, located: located.length},
+      };
       if (typeof c.id === 'string') response['id'] = c.id.slice(0, 256);
       functionResponses.push(response);
     }
-    if (functionResponses.length) transport.send({toolResponse: {functionResponses}});
+    if (functionResponses.length)
+      transport.send({toolResponse: {functionResponses}});
   }
 
   private emitTranscript(ev: TranscriptEvent): void {
@@ -588,15 +728,19 @@ export class XRGeminiLiveController {
 }
 
 function speak(text: string): void {
-  const synth = (globalThis as {speechSynthesis?: SpeechSynthesis}).speechSynthesis;
-  const Utterance = (globalThis as {SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance})
-    .SpeechSynthesisUtterance;
+  const synth = (globalThis as {speechSynthesis?: SpeechSynthesis})
+    .speechSynthesis;
+  const Utterance = (
+    globalThis as {SpeechSynthesisUtterance?: typeof SpeechSynthesisUtterance}
+  ).SpeechSynthesisUtterance;
   if (!synth || typeof Utterance !== 'function') return;
   synth.speak(new Utterance(text.slice(0, MAX_TEXT_CHARS)));
 }
 
 function cancelSpeech(): void {
-  (globalThis as {speechSynthesis?: SpeechSynthesis}).speechSynthesis?.cancel?.();
+  (
+    globalThis as {speechSynthesis?: SpeechSynthesis}
+  ).speechSynthesis?.cancel?.();
 }
 
 export {parseHoldToAsk};
@@ -642,12 +786,17 @@ function cancelHold(state: HoldState | undefined): void {
 const listeners = new WeakMap<object, Array<[string, EventListener]>>();
 
 /** Returns (creating on first use) the Gemini Live controller for `element`. */
-export function getGeminiLiveController(element: object): XRGeminiLiveController {
+export function getGeminiLiveController(
+  element: object,
+): XRGeminiLiveController {
   return controllers.get(element) ?? new XRGeminiLiveController(element);
 }
 
 /** Convenience: connects `element` to Gemini Live and returns its controller. */
-export function connectGeminiLive(element: object, options: GeminiLiveOptions): XRGeminiLiveController {
+export function connectGeminiLive(
+  element: object,
+  options: GeminiLiveOptions,
+): XRGeminiLiveController {
   const c = getGeminiLiveController(element);
   c.connect(options);
   return c;
@@ -662,14 +811,23 @@ interface Recognition {
 function startRecognition(onText: (text: string) => void): Recognition | null {
   const g = globalThis as Record<string, unknown>;
   const Ctor = (g['SpeechRecognition'] ?? g['webkitSpeechRecognition']) as
-    | (new () => {lang: string; interimResults: boolean; onresult: ((e: unknown) => void) | null; start(): void; stop(): void; abort?(): void})
+    | (new () => {
+        lang: string;
+        interimResults: boolean;
+        onresult: ((e: unknown) => void) | null;
+        start(): void;
+        stop(): void;
+        abort?(): void;
+      })
     | undefined;
   if (typeof Ctor !== 'function') return null;
   try {
     const rec = new Ctor();
     rec.interimResults = false;
     rec.onresult = (e: unknown) => {
-      const results = (e as {results?: ArrayLike<ArrayLike<{transcript?: string}>>})?.results;
+      const results = (
+        e as {results?: ArrayLike<ArrayLike<{transcript?: string}>>}
+      )?.results;
       const text = results?.[0]?.[0]?.transcript;
       if (typeof text === 'string') onText(text);
     };
@@ -685,11 +843,22 @@ interface SelectDetail {
   readonly hit?: {mesh?: {name?: string}} | null;
 }
 
-function finishHold(element: object, meshName: string, options: HoldToAskOptions, transcript: string, current: () => boolean): void {
+function finishHold(
+  element: object,
+  meshName: string,
+  options: HoldToAskOptions,
+  transcript: string,
+  current: () => boolean,
+): void {
   if (!current()) return;
   const prompt = buildHoldToAskPrompt(meshName, options, transcript);
-  emitPluginEvent(element, 'xr-hold-to-ask', {mesh: meshName, transcript, prompt});
-  if (current()) controllers.get(element)?.sendText(prompt, {captureFrame: true});
+  emitPluginEvent(element, 'xr-hold-to-ask', {
+    mesh: meshName,
+    transcript,
+    prompt,
+  });
+  if (current())
+    controllers.get(element)?.sendText(prompt, {captureFrame: true});
 }
 
 /** `ThreeLivePlugin` wiring press-and-hold object queries to Gemini Live. */
@@ -697,17 +866,33 @@ export const geminiLivePlugin: ThreeLivePlugin = {
   name: 'xr-live-gemini-live',
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
   onElementConnected(element: any): void {
-    if (!element || typeof element.addEventListener !== 'function' || listeners.has(element)) return;
+    if (
+      !element ||
+      typeof element.addEventListener !== 'function' ||
+      listeners.has(element)
+    )
+      return;
     const onStart = (e: Event): void => {
       if (isEventClaimed(e)) return;
       const detail = (e as CustomEvent<SelectDetail>).detail;
       const mesh = detail?.hit?.mesh;
-      const options = parseHoldToAsk(mesh ? getMeshXRTraits(mesh)?.holdToAsk : null);
+      const options = parseHoldToAsk(
+        mesh ? getMeshXRTraits(mesh)?.holdToAsk : null,
+      );
       if (!mesh || !options) return;
+      if (!checkPluginCapability(element, 'ai', 'holdToAsk', {dedup: true})) {
+        return;
+      }
       const name = mesh.name ?? '';
       const session = getGeminiLiveController(element).sessionGuard();
-      const state: HoldState = {timer: null, recognizer: null, active: true, hand: detail?.hand ?? 'screen'};
-      const current = () => state.active && holdState.get(element) === state && session();
+      const state: HoldState = {
+        timer: null,
+        recognizer: null,
+        active: true,
+        hand: detail?.hand ?? 'screen',
+      };
+      const current = () =>
+        state.active && holdState.get(element) === state && session();
       cancelHold(holdState.get(element));
       holdState.set(element, state);
       state.timer = setTimeout(() => {
@@ -722,7 +907,14 @@ export const geminiLivePlugin: ThreeLivePlugin = {
             cancelHold(state);
           }
         };
-        state.recognizer = startRecognition(complete);
+        state.recognizer = checkPluginCapability(
+          element,
+          'microphone',
+          'holdToAsk',
+          {dedup: true},
+        )
+          ? startRecognition(complete)
+          : null;
         if (!current()) cancelHold(state);
         else if (!state.recognizer) complete('');
       }, options.holdMs);
@@ -747,8 +939,20 @@ export const geminiLivePlugin: ThreeLivePlugin = {
     listeners.set(element, bound);
   },
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
+  onAttributeChanged(element: any, name: string): void {
+    if (name !== 'capabilities' || !element) return;
+    const ctrl = controllers.get(element);
+    if (
+      ctrl?.connected &&
+      !hasPluginCapability(element, 'ai', ctrl.getActiveUrl() ?? undefined)
+    ) {
+      ctrl.disconnect();
+    }
+  },
+  // tslint:disable-next-line:no-any Host element is `<xr-live>`.
   onElementDisconnected(element: any): void {
-    for (const [name, fn] of listeners.get(element) ?? []) element.removeEventListener?.(name, fn);
+    for (const [name, fn] of listeners.get(element) ?? [])
+      element.removeEventListener?.(name, fn);
     listeners.delete(element);
     cancelHold(holdState.get(element));
     holdState.delete(element);

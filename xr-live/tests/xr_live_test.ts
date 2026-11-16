@@ -804,7 +804,9 @@ async function runXRLiveTests() {
   }
 
   const privacyTools: MockWebMCPTool[] = [];
-  const privacyAttrs = new Map<string, string>();
+  const privacyAttrs = new Map<string, string>([
+    ['capabilities', 'camera sensors'],
+  ]);
   const privacyEvents: string[] = [];
   const privacyElement = {
     hasAttribute: (name: string) => privacyAttrs.has(name),
@@ -872,8 +874,9 @@ async function runXRLiveTests() {
   //                and avoids cross-process blob: Scene Viewer intents
   // =========================================================================
   const arElement = new XRLiveElement();
-  (arElement as any).getAttribute = () => null;
-  (arElement as any).hasAttribute = () => false;
+  (arElement as any).getAttribute = (n: string) =>
+    n === 'capabilities' ? 'viewer' : null;
+  (arElement as any).hasAttribute = (n: string) => n === 'capabilities';
   (arElement as any).currentModel = glbBytes;
   const iosReport = await arElement.enterSpatialAR(undefined, 'ios-quicklook');
   assert(
@@ -886,6 +889,7 @@ async function runXRLiveTests() {
   const gAny = globalThis as Record<string, unknown>;
   const prevNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   try {
+    ThreeLiveElement.defaultCapabilities = 'viewer';
     Object.defineProperty(globalThis, 'navigator', {
       value: {
         userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile',
@@ -907,6 +911,7 @@ async function runXRLiveTests() {
       'Regression X2: Android without WebXR launches Scene Viewer when given an https:// GLB URL',
     );
   } finally {
+    ThreeLiveElement.defaultCapabilities = null;
     if (prevNavDesc) {
       Object.defineProperty(globalThis, 'navigator', prevNavDesc);
     } else {

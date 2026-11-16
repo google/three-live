@@ -42,7 +42,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ### 2. Procedural `<script type="text/three">` Rules
 - Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
-- ALWAYS add the `allow-client-scripts` attribute to any `<three-live>` or `<xr-live>` element that contains an inline `<script type="text/three">`; without it the script is refused and nothing renders.
+- ALWAYS declare the required `capabilities="..."` attribute on `<three-live>` or `<xr-live>`: use `capabilities="scripts"` (or legacy `allow-client-scripts`) for pure inline `<script type="text/three">`, `capabilities="viewer"` for remote `.glb`/`.usdz` + 1-tap AR, `capabilities="all"` for full playgrounds, or fine-grained tokens (`scripts`, `network`, `remote_content`, `camera`, `microphone`, `sensors`, `storage`, `ai`, `external_handoff`, plus `-<cap>` negation and `network:https,wss@https://cdn.example.com` origin scoping). All capabilities default to off on the web (`TL401`/`TL403`).
 - Add all meshes, groups, and lights directly to `scene.add(...)`, and give interactive meshes a unique `mesh.name = '...'`.
 - Attach canonical spatial traits via `mesh.userData.xr = { ... }`:
   - `grab`: `'1-hand' | '2-hand' | true`
@@ -551,19 +551,14 @@ For scripts and RL harnesses, `three-live-cli gym play level.js` prints the
 :         :          : `plugins`, `slot="spatial"`) placed  :
 :         :          : on `<three-live>`.                   :
 | `TL601` | A11y     | Foreground mesh luminance contrast   |
-:         :          : `< 3.0:1` (WCAG 2.1 SC 1.4.11)       :
-:         :          : against dark studio viewport.        :
-| `TL602` | A11y     | 3D text / label contrast `< 4.5:1`   |
-:         :          : (WCAG 2.1 SC 1.4.3).                 :
-| `TL603` | A11y     | Interactive target covers `< 0.4%`   |
-:         :          : of viewport (`< 2.5°` XR visual      :
-:         :          : angle, WCAG 2.2 SC 2.5.8).           :
-| `TL604` | A11y     | Interactive node missing descriptive |
-:         :          : `mesh.name` or `userData.xr.label`   :
-:         :          : (`info` suggestion).                 :
-| `TL605` | A11y     | Continuous `orbit.speed > 2.5 rad/s` |
-:         :          : or `follow.stiffness > 25` (`info`   :
-:         :          : vestibular comfort suggestion).      :
-| `TL606` | A11y     | Interactive siblings of identical    |
-:         :          : size rely on red-green hue alone     :
-:         :          : (`info` CVD suggestion).             :
+
+\: : : `< 3.0:1` (WCAG 2.1 SC 1.4.11) : : : : against dark studio viewport. : |
+`TL602` | A11y | 3D text / label contrast `< 4.5:1` | : : : (WCAG 2.1 SC
+1.4.3). : | `TL603` | A11y | Interactive target covers `< 0.4%` | : : : of
+viewport (`< 2.5°` XR visual : : : : angle, WCAG 2.2 SC 2.5.8). : | `TL604` |
+A11y | Interactive node missing descriptive | : : : `mesh.name` or
+`userData.xr.label` : : : : (`info` suggestion). : | `TL605` | A11y | Continuous
+`orbit.speed > 2.5 rad/s` | : : : or `follow.stiffness > 25` (`info` : : : :
+vestibular comfort suggestion). : | `TL606` | A11y | Interactive siblings of
+identical | : : : size rely on red-green hue alone : : : : (`info` CVD
+suggestion). :

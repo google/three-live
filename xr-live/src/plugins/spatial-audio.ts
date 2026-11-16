@@ -32,16 +32,18 @@
  */
 
 import {
+  checkPluginCapability,
+  hasPluginCapability,
   ThreeLivePlugin,
   ThreeLiveViewer,
   type MeshHit,
 } from '../../../three-live/src/plugin';
 import {
   AMBIENT_SOUND_PRESETS,
-  ONE_SHOT_AUDIO_PRESETS,
   asRecord,
   clampNum,
   computeSpatialAudioMix,
+  ONE_SHOT_AUDIO_PRESETS,
   parseAudioEmitter,
   safeMediaUrl,
   type AmbientSoundPreset,
@@ -62,8 +64,8 @@ function userXR(mesh: unknown): Record<string, unknown> | null {
 
 export {
   AMBIENT_SOUND_PRESETS,
-  ONE_SHOT_AUDIO_PRESETS,
   computeSpatialAudioMix,
+  ONE_SHOT_AUDIO_PRESETS,
   parseAudioEmitter,
   type AmbientSoundPreset,
   type AudioDistanceModel,
@@ -448,7 +450,7 @@ export class XRSpatialAudioEmitterController {
               rightGain: 0,
             };
 
-      this.syncWebAudioNode(idx, state);
+      this.syncWebAudioNode(idx, state, viewer.container);
     }
   }
 
@@ -463,10 +465,25 @@ export class XRSpatialAudioEmitterController {
     this.syncFromViewer(viewer);
     const state = this.resolveState(meshIndexOrName);
     if (!state) return null;
+    if (
+      !state.options.preset &&
+      state.options.src &&
+      !checkPluginCapability(
+        viewer.container,
+        'remote_content',
+        'spatialAudio',
+        {
+          url: state.options.src,
+          dedup: true,
+        },
+      )
+    ) {
+      return null;
+    }
     state.playing = true;
     state.triggerCount++;
     this.update(viewer, 0);
-    this.restartWebAudioSource(state.meshIndex, state);
+    this.restartWebAudioSource(state.meshIndex, state, viewer.container);
 
     const container = viewer.container;
     if (
@@ -482,7 +499,7 @@ export class XRSpatialAudioEmitterController {
             node: state.nodeName,
             meshIndex: state.meshIndex,
             preset: state.options.preset ?? null,
-            src: state.options.src ?? null,
+            src: state.options.preset ? null : (state.options.src ?? null),
             gain: state.lastMix.gain,
             pan: state.lastMix.pan,
             triggerCount: state.triggerCount,
@@ -526,7 +543,9 @@ export class XRSpatialAudioEmitterController {
     viewer: ThreeLiveViewer,
   ): Map<number, AudioEmitterOptions> {
     const result = new Map<number, AudioEmitterOptions>();
-    const gltf = asRecord(viewer.lastGltf);
+    const gltf = asRecord(
+      (viewer as unknown as {gltf?: unknown}).gltf ?? viewer.lastGltf,
+    );
     if (!gltf) return result;
     const extRoot = asRecord(
       asRecord(gltf['extensions'])?.['KHR_audio_emitter'],
@@ -611,6 +630,7 @@ export class XRSpatialAudioEmitterController {
   private syncWebAudioNode(
     idx: number,
     state: XRSpatialAudioEmitterState,
+    host?: unknown,
   ): void {
     if (!state.playing) {
       this.stopGraph(idx);
@@ -618,8 +638,17 @@ export class XRSpatialAudioEmitterController {
     }
     if (!this.ensureAudioContext() || !this.ctx) return;
     let graph = this.audioGraphs.get(idx);
+    if (
+      graph?.mediaEl &&
+      state.options.src &&
+      !hasPluginCapability(host, 'remote_content', state.options.src)
+    ) {
+      state.playing = false;
+      this.stopGraph(idx);
+      return;
+    }
     if (!graph) {
-      graph = this.createGraph(state);
+      graph = this.createGraph(state, host);
       if (graph) {
         this.audioGraphs.set(idx, graph);
       }
@@ -645,13 +674,15 @@ export class XRSpatialAudioEmitterController {
   private restartWebAudioSource(
     idx: number,
     state: XRSpatialAudioEmitterState,
+    host?: unknown,
   ): void {
     this.stopGraph(idx);
-    this.syncWebAudioNode(idx, state);
+    this.syncWebAudioNode(idx, state, host);
   }
 
   private createGraph(
     state: XRSpatialAudioEmitterState,
+    host?: unknown,
   ): WebAudioEmitterGraph | null {
     if (!this.ctx || !this.masterGain) return null;
     try {
@@ -696,6 +727,17 @@ export class XRSpatialAudioEmitterController {
         typeof Audio === 'function' &&
         typeof this.ctx.createMediaElementSource === 'function'
       ) {
+        if (
+          !checkPluginCapability(host, 'remote_content', 'spatialAudio', {
+            url: state.options.src,
+            dedup: true,
+          })
+        ) {
+          state.playing = false;
+          gainNode.disconnect?.();
+          panNode?.disconnect?.();
+          return null;
+        }
         const mediaEl = new Audio(state.options.src);
         mediaEl.crossOrigin = 'anonymous';
         mediaEl.loop = state.options.loop;
@@ -750,6 +792,10 @@ export function getSpatialAudioController(
  */
 export const spatialAudioPlugin: ThreeLivePlugin = {
   name: 'xr-live-spatial-audio',
+  onLoadModel(viewer: ThreeLiveViewer): void {
+    const ctrl = getSpatialAudioController(viewer);
+    ctrl.update(viewer, 0);
+  },
   onSceneLoaded(viewer: ThreeLiveViewer): void {
     const ctrl = getSpatialAudioController(viewer);
     ctrl.update(viewer, 0);
@@ -764,6 +810,16 @@ export const spatialAudioPlugin: ThreeLivePlugin = {
     const state = ctrl.getState(hit.meshIndex);
     if (state && (state.options.playOnSelect || !state.options.autoplay)) {
       ctrl.trigger(viewer, hit.meshIndex);
+    }
+  },
+  onClearScene(viewer: ThreeLiveViewer): void {
+    controllers.get(viewer)?.dispose();
+  },
+  onDestroy(_gl: WebGL2RenderingContext, viewer: ThreeLiveViewer): void {
+    const ctrl = controllers.get(viewer);
+    if (ctrl) {
+      ctrl.dispose();
+      controllers.delete(viewer);
     }
   },
   onDispose(viewer: ThreeLiveViewer): void {
