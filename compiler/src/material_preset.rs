@@ -19,7 +19,9 @@
 //! operation order, so their RGBA output is byte-identical across Web workers (V8), the Rust
 //! CLI / MCP server, Android, and iOS (Boa). Keep the two in lockstep.
 
+#[cfg(feature = "boa")]
 use boa_engine::object::builtins::JsArray;
+#[cfg(feature = "boa")]
 use boa_engine::{js_string, Context, JsResult, JsValue, NativeFunction};
 
 /// Preset names in kernel-index order (shared with the JS side).
@@ -414,6 +416,7 @@ pub(crate) fn unit_to_byte(v: f64) -> u8 {
     to_byte(v)
 }
 
+#[cfg(feature = "boa")]
 fn arg_f64(args: &[JsValue], i: usize, ctx: &mut Context) -> JsResult<f64> {
     Ok(args.get(i).map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0))
 }
@@ -421,6 +424,7 @@ fn arg_f64(args: &[JsValue], i: usize, ctx: &mut Context) -> JsResult<f64> {
 /// `__three_live_native_material_preset__(kind, size, scale, seed, r, g, b, r2, g2, b2,
 /// roughness, normalStrength)` -> `[albedo, normal, orm]` RGBA8 `Uint8Array`s, or `null` when
 /// the parameters are out of range (the JS caller then uses its own kernels).
+#[cfg(feature = "boa")]
 pub fn native_material_preset(
     _this: &JsValue,
     args: &[JsValue],
@@ -465,6 +469,7 @@ pub fn native_material_preset(
 }
 
 /// Registers `__three_live_native_material_preset__` on the global object.
+#[cfg(feature = "boa")]
 pub fn register_native_material_callables(context: &mut Context) -> JsResult<()> {
     context.register_global_builtin_callable(
         js_string!("__three_live_native_material_preset__"),

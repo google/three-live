@@ -28,15 +28,15 @@
  */
 
 import {compileInteractivityGraph} from './interactivity-compiler';
-import {
-  CLIENT_SCRIPTS_DISABLED_ERROR,
-  CLIENT_SCRIPTS_DISABLED_TOAST,
-} from './messages';
 import {installArchitectureKit} from './kits/architecture';
 import {installElectronicsKit} from './kits/electronics';
 import {installIndustrialKit} from './kits/industrial';
 import {installMechanicalKit} from './kits/mechanical';
 import {installScienceKit} from './kits/science';
+import {
+  CLIENT_SCRIPTS_DISABLED_ERROR,
+  CLIENT_SCRIPTS_DISABLED_TOAST,
+} from './messages';
 import {getSharedRegistry} from './plugin';
 import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
@@ -678,7 +678,10 @@ export class Color {
     } else if (s in CSS_COLORS) {
       this.setHex(CSS_COLORS[s]);
     } else if (s.startsWith('hsl')) {
-      const p = /^hsla?\(([^)]+)\)$/.exec(s)?.[1].trim().split(/[\s,/]+/);
+      const p = /^hsla?\(([^)]+)\)$/
+        .exec(s)?.[1]
+        .trim()
+        .split(/[\s,/]+/);
       if (p && p.length >= 3) {
         this.setHSL(
           (parseFloat(p[0]) || 0) / 360,
@@ -687,7 +690,10 @@ export class Color {
         );
       }
     } else {
-      const p = /^rgba?\(([^)]+)\)$/.exec(s)?.[1].trim().split(/[\s,/]+/);
+      const p = /^rgba?\(([^)]+)\)$/
+        .exec(s)?.[1]
+        .trim()
+        .split(/[\s,/]+/);
       if (p && p.length >= 3) {
         const ch = (x: string) =>
           srgbToLinear(
@@ -1219,12 +1225,78 @@ export class BoxGeometry extends BufferGeometry {
       h2 = height / 2,
       d2 = depth / 2;
     const positions = [
-      -w2, -h2, d2, w2, -h2, d2, w2, h2, d2, -w2, h2, d2,
-      w2, -h2, -d2, -w2, -h2, -d2, -w2, h2, -d2, w2, h2, -d2,
-      -w2, h2, d2, w2, h2, d2, w2, h2, -d2, -w2, h2, -d2,
-      -w2, -h2, -d2, w2, -h2, -d2, w2, -h2, d2, -w2, -h2, d2,
-      w2, -h2, d2, w2, -h2, -d2, w2, h2, -d2, w2, h2, d2,
-      -w2, -h2, -d2, -w2, -h2, d2, -w2, h2, d2, -w2, h2, -d2,
+      -w2,
+      -h2,
+      d2,
+      w2,
+      -h2,
+      d2,
+      w2,
+      h2,
+      d2,
+      -w2,
+      h2,
+      d2,
+      w2,
+      -h2,
+      -d2,
+      -w2,
+      -h2,
+      -d2,
+      -w2,
+      h2,
+      -d2,
+      w2,
+      h2,
+      -d2,
+      -w2,
+      h2,
+      d2,
+      w2,
+      h2,
+      d2,
+      w2,
+      h2,
+      -d2,
+      -w2,
+      h2,
+      -d2,
+      -w2,
+      -h2,
+      -d2,
+      w2,
+      -h2,
+      -d2,
+      w2,
+      -h2,
+      d2,
+      -w2,
+      -h2,
+      d2,
+      w2,
+      -h2,
+      d2,
+      w2,
+      -h2,
+      -d2,
+      w2,
+      h2,
+      -d2,
+      w2,
+      h2,
+      d2,
+      -w2,
+      -h2,
+      -d2,
+      -w2,
+      -h2,
+      d2,
+      -w2,
+      h2,
+      d2,
+      -w2,
+      h2,
+      -d2,
     ];
     const normals: number[] = [];
     const uvs: number[] = [];
@@ -1521,7 +1593,11 @@ export class TorusGeometry extends BufferGeometry {
         const u = (i / tubularSegments) * arc;
         const cu = Math.cos(u),
           su = Math.sin(u);
-        positions.push((radius + tube * cv) * cu, (radius + tube * cv) * su, tube * sv);
+        positions.push(
+          (radius + tube * cv) * cu,
+          (radius + tube * cv) * su,
+          tube * sv,
+        );
         normals.push(cv * cu, cv * su, sv);
         uvs.push(i / tubularSegments, j / radialSegments);
         if (j > 0 && i > 0) {
@@ -1543,8 +1619,14 @@ function buildSweptTube(
   tube: number,
   samplePt: (u: number, out: Vector3) => void,
 ): void {
-  const tSegs = Math.max(2, Math.min(256, Math.floor(Number(tubularSegments) || 64)));
-  const rSegs = Math.max(3, Math.min(64, Math.floor(Number(radialSegments) || 8)));
+  const tSegs = Math.max(
+    2,
+    Math.min(256, Math.floor(Number(tubularSegments) || 64)),
+  );
+  const rSegs = Math.max(
+    3,
+    Math.min(64, Math.floor(Number(radialSegments) || 8)),
+  );
   const rad = Number(tube) || 0.1;
   const positions: number[] = [];
   const normals: number[] = [];
@@ -1563,8 +1645,12 @@ function buildSweptTube(
   for (let i = 0; i <= tSegs; i++) {
     const u = i / tSegs,
       p1 = pts[i];
-    T.subVectors(pts[Math.min(tSegs, i + 1)], pts[Math.max(0, i - 1)]).normalize();
-    if (i === 0) N.set(Math.abs(T.y) > 0.9 ? 1 : 0, Math.abs(T.y) > 0.9 ? 0 : 1, 0);
+    T.subVectors(
+      pts[Math.min(tSegs, i + 1)],
+      pts[Math.max(0, i - 1)],
+    ).normalize();
+    if (i === 0)
+      N.set(Math.abs(T.y) > 0.9 ? 1 : 0, Math.abs(T.y) > 0.9 ? 0 : 1, 0);
     B.crossVectors(T, N).normalize();
     N.crossVectors(B, T).normalize();
     for (let j = 0; j <= rSegs; j++) {
@@ -1619,12 +1705,22 @@ export class TorusKnotGeometry extends BufferGeometry {
         return;
       }
     }
-    buildSweptTube(this, tubularSegments, radialSegments, tube, (uRatio, target) => {
-      const u = uRatio * p * Math.PI * 2,
-        quOverP = (q / p) * u,
-        r0 = radius * (2 + Math.cos(quOverP)) * 0.5;
-      target.set(r0 * Math.cos(u), r0 * Math.sin(u), radius * Math.sin(quOverP) * 0.5);
-    });
+    buildSweptTube(
+      this,
+      tubularSegments,
+      radialSegments,
+      tube,
+      (uRatio, target) => {
+        const u = uRatio * p * Math.PI * 2,
+          quOverP = (q / p) * u,
+          r0 = radius * (2 + Math.cos(quOverP)) * 0.5;
+        target.set(
+          r0 * Math.cos(u),
+          r0 * Math.sin(u),
+          radius * Math.sin(quOverP) * 0.5,
+        );
+      },
+    );
   }
 }
 
@@ -1637,7 +1733,10 @@ export class Curve3 {
   }
   public getTangent(t: number, out: Vector3 = new Vector3()): Vector3 {
     return out
-      .subVectors(this.getPoint(Math.min(1, t + 0.001)), this.getPoint(Math.max(0, t - 0.001)))
+      .subVectors(
+        this.getPoint(Math.min(1, t + 0.001)),
+        this.getPoint(Math.max(0, t - 0.001)),
+      )
       .normalize();
   }
   public getPoints(divisions: number = 5): Vector3[] {
@@ -1708,7 +1807,8 @@ export class CatmullRomCurve3 extends Curve3 {
       n = pts.length;
     if (!n) return out.set(0, 0, 0);
     if (n === 1) return out.copy(pts[0]);
-    const p = (this.closed ? n : n - 1) * Math.max(0, Math.min(1, Number(t) || 0));
+    const p =
+      (this.closed ? n : n - 1) * Math.max(0, Math.min(1, Number(t) || 0));
     let k = Math.floor(p),
       w = p - k;
     if (!this.closed && k >= n - 1) {
@@ -2279,6 +2379,9 @@ export class Object3D {
   }
 
   public updateMatrix(): void {
+    if (!this.matrix || !this.position || !this.quaternion || !this.scale) {
+      return;
+    }
     this.matrix.compose(this.position, this.quaternion, this.scale);
   }
 
@@ -4508,7 +4611,11 @@ export class PolyhedronGeometry extends BufferGeometry {
       vB = new Vector3(),
       vC = new Vector3();
     const getV = (i: number, out: Vector3) =>
-      out.set(vertices[i * 3] || 0, vertices[i * 3 + 1] || 0, vertices[i * 3 + 2] || 0);
+      out.set(
+        vertices[i * 3] || 0,
+        vertices[i * 3 + 1] || 0,
+        vertices[i * 3 + 2] || 0,
+      );
     const pushV = (v: Vector3, n: Vector3) => {
       const p = v.clone().normalize();
       pos.push(p.x * r, p.y * r, p.z * r);
@@ -4522,7 +4629,10 @@ export class PolyhedronGeometry extends BufferGeometry {
       const base = pos.length / 3;
       const fn =
         d === 0
-          ? new Vector3().subVectors(c, b).cross(new Vector3().subVectors(a, b)).normalize()
+          ? new Vector3()
+              .subVectors(c, b)
+              .cross(new Vector3().subVectors(a, b))
+              .normalize()
           : null;
       pushV(a, fn || a.clone().normalize());
       pushV(b, fn || b.clone().normalize());
@@ -4583,9 +4693,42 @@ export class IcosahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
     super(
       [
-        -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T, 0,
-        0, -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T,
-        ICO_T, 0, -1, ICO_T, 0, 1, -ICO_T, 0, -1, -ICO_T, 0, 1,
+        -1,
+        ICO_T,
+        0,
+        1,
+        ICO_T,
+        0,
+        -1,
+        -ICO_T,
+        0,
+        1,
+        -ICO_T,
+        0,
+        0,
+        -1,
+        ICO_T,
+        0,
+        1,
+        ICO_T,
+        0,
+        -1,
+        -ICO_T,
+        0,
+        1,
+        -ICO_T,
+        ICO_T,
+        0,
+        -1,
+        ICO_T,
+        0,
+        1,
+        -ICO_T,
+        0,
+        -1,
+        -ICO_T,
+        0,
+        1,
       ],
       b36Idx('0b505101707a0ab1595b4ba2a7671839434232636838949524b62a867981'),
       radius,
@@ -4599,11 +4742,66 @@ export class DodecahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
     super(
       [
-        -1, -1, -1, -1, -1, 1, -1, 1, -1, -1, 1, 1,
-        1, -1, -1, 1, -1, 1, 1, 1, -1, 1, 1, 1,
-        0, -DOD_R, -ICO_T, 0, -DOD_R, ICO_T, 0, DOD_R, -ICO_T, 0, DOD_R, ICO_T,
-        -DOD_R, -ICO_T, 0, -DOD_R, ICO_T, 0, DOD_R, -ICO_T, 0, DOD_R, ICO_T, 0,
-        -ICO_T, 0, -DOD_R, ICO_T, 0, -DOD_R, -ICO_T, 0, DOD_R, ICO_T, 0, DOD_R,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        1,
+        -1,
+        1,
+        -1,
+        -1,
+        1,
+        1,
+        1,
+        -1,
+        -1,
+        1,
+        -1,
+        1,
+        1,
+        1,
+        -1,
+        1,
+        1,
+        1,
+        0,
+        -DOD_R,
+        -ICO_T,
+        0,
+        -DOD_R,
+        ICO_T,
+        0,
+        DOD_R,
+        -ICO_T,
+        0,
+        DOD_R,
+        ICO_T,
+        -DOD_R,
+        -ICO_T,
+        0,
+        -DOD_R,
+        ICO_T,
+        0,
+        DOD_R,
+        -ICO_T,
+        0,
+        DOD_R,
+        ICO_T,
+        0,
+        -ICO_T,
+        0,
+        -DOD_R,
+        ICO_T,
+        0,
+        -DOD_R,
+        -ICO_T,
+        0,
+        DOD_R,
+        ICO_T,
+        0,
+        DOD_R,
       ],
       b36Idx(
         '3b737f3fd7jh7h676fh48h8aha680g8g282a0c101i0ig6a262d6df2gi2i323di19i9bib34ec4c0408b95b5jbj7j5eje4j4h1ce1e5159',
@@ -4617,17 +4815,23 @@ export class DodecahedronGeometry extends PolyhedronGeometry {
 export class CapsuleGeometry extends LatheGeometry {
   constructor(radius = 1, length = 1, capSegments = 4, radialSegments = 8) {
     const r = Math.max(1e-4, Number(radius) || 1),
-      hl = Math.max(0, Number.isFinite(Number(length)) ? Number(length) : 1) * 0.5,
+      hl =
+        Math.max(0, Number.isFinite(Number(length)) ? Number(length) : 1) * 0.5,
       cs = Math.max(2, Math.min(64, Math.floor(Number(capSegments) || 4))),
       pts: Vector2[] = [];
     for (let s = -1; s <= 1; s += 2) {
       for (let i = 0; i <= cs; i++) {
         if (s > 0 && i === 0 && hl === 0) continue;
         const a = (s < 0 ? i / cs - 1 : i / cs) * (Math.PI / 2);
-        pts.push(new Vector2(Math.max(0, Math.cos(a) * r), s * hl + Math.sin(a) * r));
+        pts.push(
+          new Vector2(Math.max(0, Math.cos(a) * r), s * hl + Math.sin(a) * r),
+        );
       }
     }
-    super(pts, Math.max(4, Math.min(128, Math.floor(Number(radialSegments) || 8))));
+    super(
+      pts,
+      Math.max(4, Math.min(128, Math.floor(Number(radialSegments) || 8))),
+    );
   }
 }
 
@@ -4646,10 +4850,15 @@ export class RingGeometry extends BufferGeometry {
       rB = Number.isFinite(rawIn) ? Math.max(0, rawIn) : rA * 0.5,
       outerR = Math.max(rA, rB),
       innerR = Math.min(outerR * 0.999, Math.min(rA, rB)),
-      tSegs = Math.max(3, Math.min(256, Math.floor(Number(thetaSegments) || 32))),
+      tSegs = Math.max(
+        3,
+        Math.min(256, Math.floor(Number(thetaSegments) || 32)),
+      ),
       pSegs = Math.max(1, Math.min(64, Math.floor(Number(phiSegments) || 1))),
       t0 = Number.isFinite(Number(thetaStart)) ? Number(thetaStart) : 0,
-      tL = Number.isFinite(Number(thetaLength)) ? Number(thetaLength) : Math.PI * 2,
+      tL = Number.isFinite(Number(thetaLength))
+        ? Number(thetaLength)
+        : Math.PI * 2,
       pos: number[] = [],
       norm: number[] = [],
       uvs: number[] = [],
@@ -4676,7 +4885,12 @@ export class RingGeometry extends BufferGeometry {
 }
 
 export class CircleGeometry extends RingGeometry {
-  constructor(radius = 1, segments = 32, thetaStart = 0, thetaLength = Math.PI * 2) {
+  constructor(
+    radius = 1,
+    segments = 32,
+    thetaStart = 0,
+    thetaLength = Math.PI * 2,
+  ) {
     super(0, radius, segments, 1, thetaStart, thetaLength);
   }
 }
@@ -4729,12 +4943,18 @@ function extractGeometryEdges(
   if (!posAttr?.array || posAttr.count < 3) return new Float32Array(0);
   const pos = posAttr.array as Float32Array,
     idx = geometry?.index?.array,
-    triCount = Math.min(8192, Math.floor((idx ? idx.length : posAttr.count) / 3)),
+    triCount = Math.min(
+      8192,
+      Math.floor((idx ? idx.length : posAttr.count) / 3),
+    ),
     vKey = (vi: number) =>
       `${Math.round((pos[vi * 3] || 0) * 1e4)},${Math.round((pos[vi * 3 + 1] || 0) * 1e4)},${Math.round((pos[vi * 3 + 2] || 0) * 1e4)}`,
     isWire = thresholdAngleDeg === undefined,
     threshCos = isWire ? 1 : Math.cos((thresholdAngleDeg * Math.PI) / 180),
-    edgeMap: Record<string, {va: number; vb: number; nx: number; ny: number; nz: number; m: number}> = {},
+    edgeMap: Record<
+      string,
+      {va: number; vb: number; nx: number; ny: number; nz: number; m: number}
+    > = {},
     out: number[] = [],
     pushEdge = (a: number, b: number) =>
       out.push(
@@ -4799,7 +5019,10 @@ function extractGeometryEdges(
 export class WireframeGeometry extends BufferGeometry {
   constructor(geometry?: BufferGeometry) {
     super();
-    this.setAttribute('position', new BufferAttribute(extractGeometryEdges(geometry), 3));
+    this.setAttribute(
+      'position',
+      new BufferAttribute(extractGeometryEdges(geometry), 3),
+    );
     (this as any).__isSegmentPairs = true;
   }
 }
@@ -4807,8 +5030,13 @@ export class WireframeGeometry extends BufferGeometry {
 export class EdgesGeometry extends BufferGeometry {
   constructor(geometry?: BufferGeometry, thresholdAngle = 1) {
     super();
-    const deg = Number.isFinite(Number(thresholdAngle)) ? Number(thresholdAngle) : 1;
-    this.setAttribute('position', new BufferAttribute(extractGeometryEdges(geometry, deg), 3));
+    const deg = Number.isFinite(Number(thresholdAngle))
+      ? Number(thresholdAngle)
+      : 1;
+    this.setAttribute(
+      'position',
+      new BufferAttribute(extractGeometryEdges(geometry, deg), 3),
+    );
     (this as any).__isSegmentPairs = true;
   }
 }
@@ -4865,7 +5093,8 @@ function buildLinePrismGeometry(
     const tx = dx / len,
       ty = dy / len,
       tz = dz / len,
-      uLen = (Math.abs(ty) < 0.9 ? Math.hypot(tz, tx) : Math.hypot(tz, ty)) || 1,
+      uLen =
+        (Math.abs(ty) < 0.9 ? Math.hypot(tz, tx) : Math.hypot(tz, ty)) || 1,
       ux = Math.abs(ty) < 0.9 ? tz / uLen : 0,
       uy = Math.abs(ty) < 0.9 ? 0 : -tz / uLen,
       uz = Math.abs(ty) < 0.9 ? -tx / uLen : ty / uLen,
@@ -4892,10 +5121,18 @@ function buildLinePrismGeometry(
     }
     for (let d = 0; d < 4; d++) {
       const d1 = (d + 1) % 4;
-      indices.push(base + d, base + d1, base + 4 + d1, base + d, base + 4 + d1, base + 4 + d);
+      indices.push(
+        base + d,
+        base + d1,
+        base + 4 + d1,
+        base + d,
+        base + 4 + d1,
+        base + 4 + d,
+      );
     }
   }
-  if (positions.length > 0) outGeo.setFromBuffers(positions, normals, uvs, indices);
+  if (positions.length > 0)
+    outGeo.setFromBuffers(positions, normals, uvs, indices);
   return outGeo;
 }
 
@@ -4952,7 +5189,8 @@ export class Line extends Mesh {
         : mode === 'points'
           ? new PointsMaterial(rawOpts)
           : new LineBasicMaterial(rawOpts);
-    const srcGeo = geometry instanceof BufferGeometry ? geometry : new BufferGeometry();
+    const srcGeo =
+      geometry instanceof BufferGeometry ? geometry : new BufferGeometry();
     super(srcGeo, mat);
     this._lineMode = mode;
     this._sourceGeo = srcGeo;
@@ -4994,7 +5232,10 @@ export class Line extends Mesh {
       this._sourceGeo?.attributes?.position?.count >= (isPts ? 1 : 2)
     ) {
       this.geometry = isPts
-        ? buildPointsOctahedraGeometry(this._sourceGeo, (this.material as any)?.size ?? 0.05)
+        ? buildPointsOctahedraGeometry(
+            this._sourceGeo,
+            (this.material as any)?.size ?? 0.05,
+          )
         : buildLinePrismGeometry(
             this._sourceGeo,
             this._lineMode as 'strip' | 'loop' | 'segments',
@@ -5353,6 +5594,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     delete globalRoot.__three_live_raf_cb__;
     delete globalRoot.__three_live_in_step__;
     delete globalRoot.__three_live_interactivity_fired__;
+    delete globalRoot.animate;
+    delete globalRoot.__three_live_animate_takes_dt__;
     defaultScene = new Scene();
     defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
     defaultCamera.position.set(0, 2, 5);
@@ -5368,7 +5611,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     globalRoot.__three_live_sim_time_ms__ = elapsedSec * 1000;
     globalRoot.__three_live_in_step__ = true;
     try {
-      const fireSelect = !globalRoot.__three_live_interactivity_fired__ && elapsedSec >= 0.15;
+      const fireSelect =
+        !globalRoot.__three_live_interactivity_fired__ && elapsedSec >= 0.15;
       if (fireSelect) globalRoot.__three_live_interactivity_fired__ = true;
       const seenInter = new Set<object>();
       globalRoot.scene?.traverse?.((n: any) => {
@@ -5376,7 +5620,12 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         if (!inter || typeof inter !== 'object' || seenInter.has(inter)) return;
         seenInter.add(inter);
         if (fireSelect) {
-          for (const fn of [inter.onSelect, inter.onClick, inter.toggle, inter.onActivate]) {
+          for (const fn of [
+            inter.onSelect,
+            inter.onClick,
+            inter.toggle,
+            inter.onActivate,
+          ]) {
             if (typeof fn === 'function') {
               try {
                 fn.call(inter, n);
@@ -5395,9 +5644,15 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         let takesDt = Boolean(globalRoot.__three_live_animate_takes_dt__);
         if (!takesDt) {
           const src = String(globalRoot.animate);
-          const m = src.match(/^(?:function\s*\w*\s*\(\s*([^,)=]*)|\(\s*([^,)=]*)|([a-zA-Z_$][\w$]*)\s*=>)/);
+          const m = src.match(
+            /^(?:function\s*\w*\s*\(\s*([^,)=]*)|\(\s*([^,)=]*)|([a-zA-Z_$][\w$]*)\s*=>)/,
+          );
           const p0 = ((m?.[1] || m?.[2] || m?.[3]) ?? '').trim().toLowerCase();
-          takesDt = p0 === 'dt' || p0 === 'delta' || p0 === 'deltatime' || p0 === 'step';
+          takesDt =
+            p0 === 'dt' ||
+            p0 === 'delta' ||
+            p0 === 'deltatime' ||
+            p0 === 'step';
         }
         if (takesDt) {
           globalRoot.animate(dtSec, elapsedSec);
@@ -5572,7 +5827,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           metallic: mat.metalness !== undefined ? mat.metalness : 0.0,
           roughness: mat.roughness !== undefined ? mat.roughness : 0.5,
           double_sided:
-            mat.side !== undefined ? mat.side === 2 : Boolean(mat.doubleSided ?? true),
+            mat.side !== undefined
+              ? mat.side === 2
+              : Boolean(mat.doubleSided ?? true),
           alpha_blend: Boolean(mat.transparent || (mat.opacity ?? 1) < 1),
           base_color_texture: mapUrl || null,
           metallic_roughness_texture: mrUri || null,
@@ -6043,8 +6300,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                   : 'Ensure TSL expressions use valid types and swizzle masks on THREE.MeshStandardNodeMaterial.',
           ]
         : message.includes('ShaderMaterial') ||
-        message.includes('RawShaderMaterial') ||
-        message.includes('unsupported material')
+            message.includes('RawShaderMaterial') ||
+            message.includes('unsupported material')
           ? [
               'TL101',
               'Use THREE.MeshStandardMaterial({ color, metalness, roughness }) or THREE.MeshStandardNodeMaterial with THREE.TSL instead of custom GLSL shaders.',
@@ -6182,10 +6439,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         ) {
           const jt =
             rawJoint.target ?? rawJoint.connectedBody ?? rawJoint.parent;
-          if (
-            typeof jt === 'string' &&
-            jt.trim().toLowerCase() !== 'world'
-          ) {
+          if (typeof jt === 'string' && jt.trim().toLowerCase() !== 'world') {
             checkTargetNode('joint.target', jt);
           }
         }

@@ -144,17 +144,17 @@ ios: engine-asset
 		exit 1; \
 	fi
 	bash scripts/build_ios_xcframework.sh
-	cd mobile/ios && swift test
+	swift test
 
 ios-demo: engine-asset
 	@if [ "$(UNAME_S)" != "Darwin" ]; then \
 		echo "Error: 'make ios-demo' requires macOS with Xcode installed (current OS: $(UNAME_S))." >&2; \
 		exit 1; \
 	fi
-	if [ ! -d mobile/ios/ThreeLiveCompiler.xcframework ] || [ "$${THREE_LIVE_REBUILD_XCFRAMEWORK:-0}" = "1" ]; then \
+	if [ ! -d mobile/ios/ThreeLiveCompiler.xcframework ] || [ ! -d mobile/ios/ThreeLiveKernels.xcframework ] || [ "$${THREE_LIVE_REBUILD_XCFRAMEWORK:-0}" = "1" ]; then \
 		bash scripts/build_ios_xcframework.sh; \
 	else \
-		echo "--> Reusing existing mobile/ios/ThreeLiveCompiler.xcframework (run 'make ios' to rebuild Rust slices)"; \
+		echo "--> Reusing existing mobile/ios/*.xcframework (run 'make ios' to rebuild Rust slices)"; \
 	fi
 	@XCODEGEN_BIN=$$(command -v xcodegen || true); \
 	if [ -z "$$XCODEGEN_BIN" ] && [ -x "$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen" ]; then \
@@ -249,7 +249,8 @@ clean:
 	rm -rf dist three-live/dist xr-live/dist target .gradle
 	rm -f $(ENGINE_ASSET) examples/three/three-live.js examples/three/three-live-sandbox.html examples/xr/xr-live.min.js examples/xr/xr-live-sensors.min.js examples/xr/three-live-sandbox.html three-live/examples/three-live.js three-live/examples/three-live-sandbox.html
 	rm -rf mobile/android/build mobile/android/src/main/jniLibs
+	rm -rf mobile/android-runtime/build mobile/android-kernels/build mobile/android-kernels/src/main/jniLibs
 	rm -rf mobile/examples/android_compose/build
-	rm -rf mobile/ios/ThreeLiveCompiler.xcframework mobile/ios/.build
+	rm -rf mobile/ios/ThreeLiveCompiler.xcframework mobile/ios/ThreeLiveKernels.xcframework mobile/ios/.build
 	rm -rf mobile/examples/ios_swiftui/ThreeLiveDemo.xcodeproj
 	@echo "=== Cleaned build artifacts ==="

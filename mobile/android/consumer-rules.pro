@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Proguard consumer rules for Three-Live Android Library
--keep class com.google.threelive.ThreeCompiler {
+# Proguard consumer rules for Three-Live Android Compiler (JNI + Reflective Discovery)
+-keep class com.google.threelive.NativeThreeCompilerBackend {
     native <methods>;
+    *;
+}
+-keep class com.google.threelive.ThreeCompiler {
     *;
 }
 -keep class com.google.threelive.GlbBuffer {

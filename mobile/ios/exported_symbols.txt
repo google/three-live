@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# The symbols ThreeLiveCompiler.xcframework exports (ld -exported_symbols_list): the C ABI in
-# mobile/ios/Sources/ThreeLiveCompilerC/include/ThreeLiveCompiler.h.
-_three_live_*
+# The symbols ThreeLiveCompiler.xcframework exports (ld -exported_symbols_list): the exact C ABI
+# in mobile/ios/Sources/ThreeLiveCompilerC/include/ThreeLiveCompiler.h (disjoint from
+# ThreeLiveKernels.xcframework).
+_three_live_compile
+_three_live_compile_usdz
+_three_live_glb_to_usdz
+_three_live_free_buffer
+_three_live_free_error
+_three_live_ai_call
+_three_live_free_string

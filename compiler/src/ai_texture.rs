@@ -33,7 +33,12 @@ use boa_engine::object::builtins::JsArray;
 use boa_engine::{js_string, Context, JsResult, JsValue, NativeFunction};
 use serde_json::{json, Map, Value};
 
-use crate::material_preset::{height_to_normal, unit_to_byte};
+pub use crate::kernels::{
+    box_downsample_2x, derive_texture_maps, derived_map_size, fnv1a64, seam_blend,
+    MAX_DERIVED_MAP_SIZE,
+};
+#[cfg(test)]
+use crate::material_preset::unit_to_byte;
 
 /// `format` field of a serialized texture pack.
 pub const TEXTURE_PACK_FORMAT: &str = "three-live-texture-pack";
@@ -45,9 +50,6 @@ pub const MAX_TEXTURE_PROMPT_CHARS: usize = 500;
 pub const TEXTURE_SIZES: [u32; 3] = [256, 512, 1024];
 /// Default texture edge length.
 pub const DEFAULT_TEXTURE_SIZE: u32 = 512;
-/// Largest derived normal / ORM map edge: a 1024 albedo derives its maps from a 2×2 box
-/// downsample, since lighting detail at 1024 costs 4× the memory for little visible gain.
-pub const MAX_DERIVED_MAP_SIZE: usize = 512;
 /// Most entries a pack may hold.
 pub const MAX_PACK_ENTRIES: usize = 64;
 /// Largest decoded albedo PNG accepted per entry (a stored 1024² RGBA PNG is ~4.2 MB).
@@ -98,36 +100,6 @@ pub fn canonical_texture_size(raw: f64) -> u32 {
     }
 }
 
-/// Edge length of the normal / ORM maps derived from an `n × n` albedo.
-pub fn derived_map_size(n: usize) -> usize {
-    if n > MAX_DERIVED_MAP_SIZE && n % 2 == 0 {
-        n / 2
-    } else {
-        n
-    }
-}
-
-/// Exact 2×2 box downsample of an even `n × n` RGBA8 image (`(a + b + c + d + 2) >> 2`).
-pub fn box_downsample_2x(rgba: &[u8], n: usize) -> Vec<u8> {
-    let m = n / 2;
-    let mut out = vec![0u8; m * m * 4];
-    for y in 0..m {
-        for x in 0..m {
-            let i0 = (2 * y * n + 2 * x) * 4;
-            let i1 = i0 + n * 4;
-            let o = (y * m + x) * 4;
-            for c in 0..4 {
-                let s = rgba[i0 + c] as u32
-                    + rgba[i0 + 4 + c] as u32
-                    + rgba[i1 + c] as u32
-                    + rgba[i1 + 4 + c] as u32;
-                out[o + c] = ((s + 2) >> 2) as u8;
-            }
-        }
-    }
-    out
-}
-
 /// `Math.round(Math.abs(seed)) >>> 0` (non-finite → 1).
 pub fn canonical_texture_seed(raw: f64) -> u32 {
     let v = if raw.is_finite() { raw.abs() } else { 1.0 };
@@ -168,94 +140,6 @@ impl TextureSpec {
     pub fn to_json(&self) -> Value {
         json!({"prompt": self.prompt, "size": self.size, "seed": self.seed})
     }
-}
-
-/// FNV-1a 64-bit hash.
-pub fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for &b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
-/// Clamps derivation parameters exactly like the JS side.
-fn clamp_unit(v: f64) -> f64 {
-    if v.is_finite() {
-        v.clamp(0.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
-/// Derives `[normal, orm]` RGBA8 maps from a seamless `n × n` sRGB albedo. The maps are
-/// [`derived_map_size`]`(n)` square: albedos above [`MAX_DERIVED_MAP_SIZE`] are first reduced
-/// with [`box_downsample_2x`].
-///
-/// Height is the high-passed Rec. 709 luminance (`81·Y − Σ₉ₓ₉ Y`, wrap-around), normalized to
-/// `[0, 1]`; normals use [`height_to_normal`]; ORM is `R = 255`,
-/// `G = roughness + 0.35·(0.5 − h)`, `B = metalness`.
-pub fn derive_texture_maps(
-    albedo: &[u8],
-    n: usize,
-    normal_strength: f64,
-    roughness: f64,
-    metalness: f64,
-) -> (Vec<u8>, Vec<u8>) {
-    assert_eq!(albedo.len(), n * n * 4, "albedo must be n*n*4 bytes");
-    if derived_map_size(n) != n {
-        let half = box_downsample_2x(albedo, n);
-        return derive_texture_maps(&half, n / 2, normal_strength, roughness, metalness);
-    }
-    let mut lum = vec![0i64; n * n];
-    for (i, l) in lum.iter_mut().enumerate() {
-        let o = i * 4;
-        *l = 2126 * albedo[o] as i64 + 7152 * albedo[o + 1] as i64 + 722 * albedo[o + 2] as i64;
-    }
-    // Separable 9×9 wrap-around box sums (exact integers).
-    let r = 4usize.min(n.saturating_sub(1) / 2);
-    let mut hsum = vec![0i64; n * n];
-    for y in 0..n {
-        for x in 0..n {
-            let mut s = 0i64;
-            for d in 0..=2 * r {
-                s += lum[y * n + (x + n + d - r) % n];
-            }
-            hsum[y * n + x] = s;
-        }
-    }
-    let taps = ((2 * r + 1) * (2 * r + 1)) as i64;
-    let mut hp = vec![0i64; n * n];
-    let (mut lo, mut hi) = (i64::MAX, i64::MIN);
-    for y in 0..n {
-        for x in 0..n {
-            let mut s = 0i64;
-            for d in 0..=2 * r {
-                s += hsum[((y + n + d - r) % n) * n + x];
-            }
-            let v = taps * lum[y * n + x] - s;
-            hp[y * n + x] = v;
-            lo = lo.min(v);
-            hi = hi.max(v);
-        }
-    }
-    let range = hi - lo;
-    let height: Vec<f64> =
-        hp.iter().map(|&v| if range == 0 { 0.5 } else { (v - lo) as f64 / range as f64 }).collect();
-    let ns = if normal_strength.is_finite() { normal_strength.clamp(0.0, 8.0) } else { 1.0 };
-    let normal = height_to_normal(&height, n, ns);
-    let rough = clamp_unit(roughness);
-    let metal = unit_to_byte(clamp_unit(metalness));
-    let mut orm = vec![0u8; n * n * 4];
-    for (i, h) in height.iter().enumerate() {
-        let o = i * 4;
-        orm[o] = 255;
-        orm[o + 1] = unit_to_byte(rough + 0.35 * (0.5 - h));
-        orm[o + 2] = metal;
-        orm[o + 3] = 255;
-    }
-    (normal, orm)
 }
 
 /// One pack entry: canonical spec, opaque seamless albedo, and provenance metadata.
@@ -373,35 +257,6 @@ impl TexturePack {
     }
 }
 
-/// Seam blend: crossfades each edge band (`n / 8`) with the image shifted by `n / 2` so the
-/// texture wraps without a visible seam. Deterministic, but not part of the parity contract
-/// (only stored pack albedos are).
-pub fn seam_blend(rgba: &[u8], n: usize) -> Vec<u8> {
-    let band = (n / 8).max(1) as f64;
-    let half = n / 2;
-    let smooth = |t: f64| {
-        let t = t.clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
-    let mut out = vec![0u8; n * n * 4];
-    for y in 0..n {
-        let dy = (y.min(n - 1 - y) as f64 + 0.5) / band;
-        for x in 0..n {
-            let dx = (x.min(n - 1 - x) as f64 + 0.5) / band;
-            let w = 1.0 - smooth(dx.min(dy));
-            let o = (y * n + x) * 4;
-            let s = (((y + half) % n) * n + (x + half) % n) * 4;
-            for c in 0..3 {
-                let a = rgba[o + c] as f64;
-                let b = rgba[s + c] as f64;
-                out[o + c] = (a + (b - a) * w + 0.5).floor().clamp(0.0, 255.0) as u8;
-            }
-            out[o + 3] = 255;
-        }
-    }
-    out
-}
-
 /// Turns provider image bytes (PNG or JPEG) into a pack albedo: center-crop to square,
 /// area-resample to `size`, force opaque, and seam-blend.
 pub fn prepare_albedo(image: &[u8], size: u32) -> Result<Vec<u8>, String> {
@@ -508,18 +363,39 @@ pub fn with_texture_pack<R>(
     pack: Option<Arc<TexturePack>>,
     f: impl FnOnce() -> R,
 ) -> (R, Vec<TextureLookup>) {
+    struct TexturePackGuard {
+        prev_token: u64,
+        prev_pack: Option<Option<Arc<TexturePack>>>,
+        prev_lookups: Option<Vec<TextureLookup>>,
+    }
+    impl Drop for TexturePackGuard {
+        fn drop(&mut self) {
+            let prev_lookups = self.prev_lookups.take();
+            let prev_pack = self.prev_pack.take();
+            let prev_token = self.prev_token;
+            LOOKUPS.with(|l| {
+                let _ = l.replace(prev_lookups);
+            });
+            ACTIVE_PACK.with(|p| {
+                let _ = p.replace(prev_pack);
+            });
+            ACTIVE_TOKEN.with(|t| t.set(prev_token));
+        }
+    }
+
     let token = if pack.is_some() {
         NEXT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     } else {
         0
     };
-    let prev_token = ACTIVE_TOKEN.with(|t| t.replace(token));
-    let prev_pack = ACTIVE_PACK.with(|p| p.replace(Some(pack)));
-    let prev_lookups = LOOKUPS.with(|l| l.replace(Some(Vec::new())));
+    let guard = TexturePackGuard {
+        prev_token: ACTIVE_TOKEN.with(|t| t.replace(token)),
+        prev_pack: ACTIVE_PACK.with(|p| p.replace(Some(pack))),
+        prev_lookups: LOOKUPS.with(|l| l.replace(Some(Vec::new()))),
+    };
     let out = f();
-    let lookups = LOOKUPS.with(|l| l.replace(prev_lookups)).unwrap_or_default();
-    ACTIVE_PACK.with(|p| p.replace(prev_pack));
-    ACTIVE_TOKEN.with(|t| t.set(prev_token));
+    let lookups = LOOKUPS.with(|l| l.borrow_mut().take()).unwrap_or_default();
+    drop(guard);
     (out, lookups)
 }
 
@@ -1239,7 +1115,7 @@ mod tests {
         let png =
             crate::render::encode_png_rgba_compressed(64, 64, &synthetic_albedo(2, 64)).unwrap();
         let mut calls = Vec::new();
-        let mut gen = |s: &TextureSpec| {
+        let mut gen_fn = |s: &TextureSpec| {
             calls.push(s.prompt.clone());
             if s.prompt == "fails" {
                 Err("provider refused".to_string())
@@ -1249,15 +1125,15 @@ mod tests {
         };
         let mut pack = TexturePack::default();
         let only = BakeOptions { force: false, only: vec!["Wall".into()] };
-        let r = bake_textures(script, &mut pack, &only, &mut gen).unwrap();
+        let r = bake_textures(script, &mut pack, &only, &mut gen_fn).unwrap();
         assert_eq!(r.generated.len(), 1);
         assert_eq!(r.generated[0].meshes, vec!["Wall".to_string()]);
-        let r = bake_textures(script, &mut pack, &BakeOptions::default(), &mut gen).unwrap();
+        let r = bake_textures(script, &mut pack, &BakeOptions::default(), &mut gen_fn).unwrap();
         assert_eq!((r.generated.len(), r.reused.len(), r.failed.len()), (1, 1, 1));
         assert_eq!(r.failed[0].error.as_deref(), Some("provider refused"));
         assert_eq!(pack.entries.len(), 2);
         let force = BakeOptions { force: true, only: vec!["Floor".into()] };
-        let r = bake_textures(script, &mut pack, &force, &mut gen).unwrap();
+        let r = bake_textures(script, &mut pack, &force, &mut gen_fn).unwrap();
         assert_eq!(r.generated.len(), 1);
         assert_eq!(calls, vec!["mossy stone", "terrazzo", "fails", "terrazzo"]);
     }

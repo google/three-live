@@ -201,6 +201,7 @@ export interface LightGpu {
   range?: number;
   innerConeAngle?: number;
   outerConeAngle?: number;
+  nodeIndex?: number;
   shadow?: LightShadowGpu;
 }
 
@@ -214,7 +215,14 @@ export interface GLBData {
   environmentIntensity?: number;
 }
 
+declare const ENABLE_NATIVE_HOOKS: boolean;
+
 export function decodeUtf8(bytes: Uint8Array): string {
+  if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+    // tslint:disable-next-line:no-any
+    const fn = (globalThis as any).__three_live_native_utf8_decode__;
+    if (typeof fn === 'function') return fn(bytes);
+  }
   return new TextDecoder().decode(bytes);
 }
 

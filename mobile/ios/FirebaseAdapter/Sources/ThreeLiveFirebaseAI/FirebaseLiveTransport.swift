@@ -14,7 +14,11 @@
 
 import FirebaseAILogic
 import Foundation
-import ThreeLiveCompiler
+#if canImport(ThreeLiveRuntime)
+  import ThreeLiveRuntime
+#else
+  import ThreeLiveCompiler
+#endif
 
 /// `GeminiLiveTransport` backed by a Firebase AI Logic `LiveSession`, so apps that already use
 /// Firebase (App Check, Auth, Vertex AI backend) can drive the same `XRGeminiLiveController` as

@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+<!-- disableFinding(LINK_RELATIVE_G3DOC) -->
+
 # Three-Live Android Library
 
 Android Kotlin and Java bindings for `three-live-compiler`.
@@ -24,11 +26,21 @@ Android Kotlin and Java bindings for `three-live-compiler`.
 
 ```kotlin
 dependencies {
-    implementation("com.google.threelive:compiler:1.0.0")
+    // Turnkey compiler (bundles Rust + Boa JS engine + runtime):
+    implementation("com.google.threelive:compiler:1.4.0")
     // Optional: the Filament renderer (adds Filament + gltfio).
-    implementation("com.google.threelive:filament:1.0.0")
+    implementation("com.google.threelive:filament:1.4.0")
 }
 ```
+
+> **Apps that already embed a JavaScript engine (Boa, QuickJS, V8):** Depend on
+> `com.google.threelive:runtime` + `com.google.threelive:kernels` instead of
+> `:compiler` to avoid shipping a second JS VM, evaluate
+> `three-live-compiler-bundle.min.js` (binding `globalThis.__three_live_host__`
+> to `ThreeLiveKernels` / `three_live_kernels.h`), and register your backend via
+> `ThreeCompiler.setBackend(hostBackend)`. Optional adapter modules
+> (`:filament`, `:firebase-ai`, `:detect-mlkit`, `:hands-androidxr`,
+> `:hands-mediapipe`) depend only on `:runtime`.
 
 The core library has no rendering dependency. Rendering goes through the small
 `ThreeLiveRenderer` interface; add the optional `filament` module (source:
@@ -171,9 +183,18 @@ pinned version directly via `gradle/actions/setup-gradle`.
 
 ### Build
 
-To cross-compile the native `.so` libraries and build the `.aar`:
+To cross-compile the native `.so` libraries and build the `.aar` artifacts:
 
 ```bash
 ./scripts/build_android_aar.sh
 ```
-Output: `mobile/android/build/outputs/aar/three-live-compiler-release.aar`
+
+Outputs:
+
+-   `mobile/android-runtime/build/outputs/aar/three-live-runtime-release.aar`
+    (pure Kotlin/Java runtime + `ThreeCompilerBackend` SPI, zero native `.so`
+    libraries)
+-   `mobile/android-kernels/build/outputs/aar/three-live-kernels-release.aar`
+    (`libthree_live_kernels.so` C-ABI v1 accelerators, zero Boa symbols)
+-   `mobile/android/build/outputs/aar/three-live-compiler-release.aar`
+    (`libthree_live_compiler.so` + `NativeThreeCompilerBackend`)

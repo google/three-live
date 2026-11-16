@@ -50,6 +50,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -70,24 +72,30 @@ jobs:
       - name: Build with Cargo
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
-        run: cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target ${{ matrix.target }}
+          TARGET: ${{ matrix.target }}
+        run: cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target "${TARGET}"
 
       - name: Verify Linux binary is statically linked (zero GLIBC version dependency)
         if: runner.os == 'Linux'
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          file "target/${{ matrix.target }}/release/three-live-cli"
-          if objdump -T "target/${{ matrix.target }}/release/three-live-cli" 2>/dev/null | grep -q "GLIBC_"; then
+          file "target/${TARGET}/release/three-live-cli"
+          if objdump -T "target/${TARGET}/release/three-live-cli" 2>/dev/null | grep -q "GLIBC_"; then
             echo "::error::Linux CLI binary contains dynamic GLIBC symbol references; expected static musl binary"
             exit 1
           fi
 
       - name: Rename binary to target artifact name
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
         run: |
-          if [ -f "target/${{ matrix.target }}/release/three-live-cli.exe" ]; then
-            cp "target/${{ matrix.target }}/release/three-live-cli.exe" "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
+          if [ -f "target/${TARGET}/release/three-live-cli.exe" ]; then
+            cp "target/${TARGET}/release/three-live-cli.exe" "target/${TARGET}/release/${ARTIFACT_NAME}"
           else
-            cp "target/${{ matrix.target }}/release/three-live-cli" "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
+            cp "target/${TARGET}/release/three-live-cli" "target/${TARGET}/release/${ARTIFACT_NAME}"
           fi
 
       - name: Upload Binary Artifact
@@ -107,6 +115,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -150,17 +160,50 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
-      # Guard against shipping a Java-only AAR: without the cross-compiled .so files every
-      # ThreeCompiler call throws UnsatisfiedLinkError at runtime.
-      - name: Verify AAR contains native libraries
+      # Guard against shipping broken AARs: compiler and kernels AARs must carry all 3 ABI .so
+      # slices, kernels must carry zero boa_engine symbols, and runtime must carry zero .so files.
+      - name: Verify AARs contain expected native libraries and symbol isolation
         run: |
+          if cargo tree --manifest-path compiler/Cargo.toml -e normal --no-default-features --features kernels,jni | grep -q "boa_engine"; then
+            echo "::error::Boa-free kernels dependency graph includes boa_engine!"
+            exit 1
+          fi
+          runtime_aar=$(ls mobile/android-runtime/build/outputs/aar/*-release.aar)
+          kernels_aar=$(ls mobile/android-kernels/build/outputs/aar/*-release.aar)
           aar=$(ls mobile/android/build/outputs/aar/*-release.aar)
-          echo "Inspecting ${aar}"
+          echo "Inspecting ${runtime_aar}, ${kernels_aar}, and ${aar}"
+          if unzip -l "${runtime_aar}" | grep -q "\.so$"; then
+            echo "::error::Runtime AAR (${runtime_aar}) must not bundle native .so libraries"
+            exit 1
+          fi
+          tmp_check="$(mktemp -d)"
+          unzip -qo "${kernels_aar}" "jni/*" -d "${tmp_check}"
           for abi in arm64-v8a armeabi-v7a x86_64; do
             unzip -l "${aar}" | grep -q "jni/${abi}/libthree_live_compiler.so" \
-              || { echo "::error::AAR is missing jni/${abi}/libthree_live_compiler.so"; exit 1; }
+              || { echo "::error::Compiler AAR is missing jni/${abi}/libthree_live_compiler.so"; exit 1; }
+            unzip -l "${kernels_aar}" | grep -q "jni/${abi}/libthree_live_kernels.so" \
+              || { echo "::error::Kernels AAR is missing jni/${abi}/libthree_live_kernels.so"; exit 1; }
+            if nm -D "${tmp_check}/jni/${abi}/libthree_live_kernels.so" | grep -i "boa_engine"; then
+              echo "::error::Kernels AAR (${abi}) leaked boa_engine symbols!"
+              exit 1
+            fi
           done
-          echo "All three ABIs present."
+          rm -rf "${tmp_check}"
+          echo "All three ABIs and Boa-free kernels symbol isolation verified."
+
+      - name: Upload Android Runtime AAR Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: three-live-runtime-release-aar
+          path: mobile/android-runtime/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
+      - name: Upload Android Kernels AAR Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: three-live-kernels-release-aar
+          path: mobile/android-kernels/build/outputs/aar/*-release.aar
+          if-no-files-found: error
 
       # if-no-files-found defaults to 'warn', which previously let this job go green while
       # uploading nothing at all.
@@ -222,6 +265,8 @@ jobs:
       - name: Publish Android AARs to Maven Local
         run: >
           gradle
+          :mobile:android-runtime:publishReleasePublicationToMavenLocal
+          :mobile:android-kernels:publishReleasePublicationToMavenLocal
           :mobile:android:publishReleasePublicationToMavenLocal
           :mobile:android-filament:publishReleasePublicationToMavenLocal
           :mobile:android-firebase-ai:publishReleasePublicationToMavenLocal
@@ -237,6 +282,8 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           gradle \
+            :mobile:android-runtime:publishReleasePublicationToGitHubPackagesRepository \
+            :mobile:android-kernels:publishReleasePublicationToGitHubPackagesRepository \
             :mobile:android:publishReleasePublicationToGitHubPackagesRepository \
             :mobile:android-filament:publishReleasePublicationToGitHubPackagesRepository \
             :mobile:android-firebase-ai:publishReleasePublicationToGitHubPackagesRepository \
@@ -258,6 +305,8 @@ jobs:
             exit 0
           fi
           gradle \
+            :mobile:android-runtime:publishReleasePublicationToMavenCentralRepository \
+            :mobile:android-kernels:publishReleasePublicationToMavenCentralRepository \
             :mobile:android:publishReleasePublicationToMavenCentralRepository \
             :mobile:android-filament:publishReleasePublicationToMavenCentralRepository \
             :mobile:android-firebase-ai:publishReleasePublicationToMavenCentralRepository \
@@ -267,14 +316,17 @@ jobs:
             --stacktrace
 
   build-ios:
-    name: Build Apple XCFramework
+    name: Build Apple XCFrameworks
     if: github.event_name == 'push'
     runs-on: macos-latest
     outputs:
       checksum: ${{ steps.package_xcframework.outputs.checksum }}
+      kernels_checksum: ${{ steps.package_xcframework.outputs.kernels_checksum }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -292,26 +344,39 @@ jobs:
           toolchain: stable
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
 
-      - name: Build XCFramework
+      - name: Build XCFrameworks (ThreeLiveKernels & ThreeLiveCompiler)
         run: bash scripts/build_ios_xcframework.sh
 
-      - name: Verify XCFramework completeness
-        run: bash scripts/verify_xcframework.sh mobile/ios/ThreeLiveCompiler.xcframework
+      - name: Verify XCFrameworks completeness & Boa symbol isolation
+        run: |
+          bash scripts/verify_xcframework.sh --kernels mobile/ios/ThreeLiveKernels.xcframework
+          bash scripts/verify_xcframework.sh mobile/ios/ThreeLiveCompiler.xcframework
 
-      - name: Zip XCFramework & Compute Checksum
+      - name: Zip XCFrameworks & Compute Checksums
         id: package_xcframework
         run: |
           cd mobile/ios
           zip -r -y ThreeLiveCompiler.xcframework.zip ThreeLiveCompiler.xcframework
+          zip -r -y ThreeLiveKernels.xcframework.zip ThreeLiveKernels.xcframework
           CHECKSUM=$(swift package compute-checksum ThreeLiveCompiler.xcframework.zip)
-          echo "XCFramework SHA-256 Checksum: ${CHECKSUM}"
+          KERNELS_CHECKSUM=$(swift package compute-checksum ThreeLiveKernels.xcframework.zip)
+          echo "ThreeLiveCompiler.xcframework SHA-256 Checksum: ${CHECKSUM}"
+          echo "ThreeLiveKernels.xcframework SHA-256 Checksum: ${KERNELS_CHECKSUM}"
           echo "checksum=${CHECKSUM}" >> "$GITHUB_OUTPUT"
+          echo "kernels_checksum=${KERNELS_CHECKSUM}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload iOS XCFramework Artifact
+      - name: Upload ThreeLiveCompiler XCFramework Artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ThreeLiveCompiler.xcframework.zip
           path: mobile/ios/ThreeLiveCompiler.xcframework.zip
+          if-no-files-found: error
+
+      - name: Upload ThreeLiveKernels XCFramework Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ThreeLiveKernels.xcframework.zip
+          path: mobile/ios/ThreeLiveKernels.xcframework.zip
           if-no-files-found: error
 
 
@@ -324,6 +389,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -344,11 +411,11 @@ jobs:
         run: |
           mkdir -p dist-release web-bundle/three-live web-bundle/xr-live
           find release-artifacts -type f -exec cp {} dist-release/ \;
-          cp dist/*.js dist/*.min.js dist/three-live-sandbox.html web-bundle/
-          cp three-live/dist/*.js three-live/dist/*.min.js three-live/dist/*.cjs three-live/dist/*.d.ts web-bundle/three-live/
+          cp dist/*.js dist/*.min.js dist/engine-requirements.json dist/three-live-sandbox.html web-bundle/
+          cp three-live/dist/*.js three-live/dist/*.min.js three-live/dist/*.cjs three-live/dist/*.d.ts three-live/dist/engine-requirements.json web-bundle/three-live/
           cp xr-live/dist/*.js xr-live/dist/*.min.js xr-live/dist/*.cjs xr-live/dist/*.d.ts web-bundle/xr-live/
           (cd web-bundle && zip -r ../dist-release/three-live-web-dist.zip .)
-          cp dist/three-live.min.js dist/three-live-viewer.min.js dist/three-live-studio.min.js dist/three-live-cad.min.js dist/three-live-animation.min.js dist/three-live-sandbox.html dist-release/
+          cp dist/three-live.min.js dist/three-live-viewer.min.js dist/three-live-studio.min.js dist/three-live-cad.min.js dist/three-live-animation.min.js dist/three-live-compiler-bundle.min.js dist/engine-requirements.json dist/three-live-sandbox.html dist-release/
           cp three-live/dist/three-live-full.min.js dist-release/
           cp xr-live/dist/xr-live.min.js xr-live/dist/xr-live-viewer.min.js xr-live/dist/xr-live-sensors.min.js xr-live/dist/xr-live-spatial.min.js xr-live/dist/xr-live-sim.min.js xr-live/dist/xr-live-webgpu.min.js xr-live/dist/xr-live-full.min.js dist-release/
           ls -la dist-release
@@ -363,6 +430,7 @@ jobs:
 
   publish-npm:
     name: Publish NPM Packages
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -370,6 +438,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -416,6 +486,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install mcp-publisher and publish server.json via GitHub OIDC
         run: |
@@ -426,10 +498,13 @@ jobs:
 
   publish-crates:
     name: Publish Crates.io
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -476,16 +551,18 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Pin release tag and checksum into Package.swift
+      - name: Pin release tag and checksums into Package.swift
         env:
           TAG: ${{ github.ref_name }}
           CHECKSUM: ${{ needs.build-ios.outputs.checksum }}
-        run: bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}"
+          KERNELS_CHECKSUM: ${{ needs.build-ios.outputs.kernels_checksum }}
+        run: bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}" "${KERNELS_CHECKSUM}"
 
       - name: Commit, move tag, and update main
         env:
           TAG: ${{ github.ref_name }}
           CHECKSUM: ${{ needs.build-ios.outputs.checksum }}
+          KERNELS_CHECKSUM: ${{ needs.build-ios.outputs.kernels_checksum }}
         run: |
           set -euo pipefail
           if git diff --quiet -- Package.swift; then
@@ -495,17 +572,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Package.swift
-          git commit -m "chore: pin ThreeLiveCompiler.xcframework checksum for ${TAG}"
+          git commit -m "chore: pin ThreeLiveCompiler and ThreeLiveKernels XCFramework checksums for ${TAG}"
           git tag -f "${TAG}"
           git push --force origin "refs/tags/${TAG}"
 
-          # Also update Package.swift on main so main carries the latest release checksum
+          # Also update Package.swift on main so main carries the latest release checksums
           git fetch origin main
           git checkout -B main origin/main
-          bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}"
+          bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}" "${KERNELS_CHECKSUM}"
           if ! git diff --quiet -- Package.swift; then
             git add Package.swift
-            git commit -m "chore: pin ThreeLiveCompiler.xcframework checksum for ${TAG} [skip ci]"
+            git commit -m "chore: pin ThreeLiveCompiler and ThreeLiveKernels XCFramework checksums for ${TAG} [skip ci]"
             git push origin HEAD:refs/heads/main || echo "::warning::Could not push Package.swift update to main"
           fi
 
@@ -536,6 +613,11 @@ jobs:
           cat > Sources/ConsumerProbe/main.swift <<'SWIFT'
           import Foundation
           import ThreeLiveCompiler
+          import ThreeLiveKernels
+
+          guard ThreeLiveKernels.abiVersion == 1, ThreeLiveKernels.kernelCount == 24 else {
+              fatalError("Resolved ThreeLiveKernels did not expose expected ABI v1 descriptor table")
+          }
 
           let script = """
           const mesh = new THREE.Mesh(
@@ -549,7 +631,7 @@ jobs:
           guard Array(glb.prefix(4)) == [0x67, 0x6C, 0x54, 0x46] else {
               fatalError("Resolved package did not produce a valid GLB container")
           }
-          print("Consumed ThreeLiveCompiler successfully: \(glb.count) bytes of GLB")
+          print("Consumed ThreeLiveCompiler + ThreeLiveKernels successfully: \(glb.count) bytes of GLB")
           SWIFT
 
           cat > Package.swift <<MANIFEST
@@ -565,7 +647,10 @@ jobs:
               targets: [
                   .executableTarget(
                       name: "ConsumerProbe",
-                      dependencies: [.product(name: "ThreeLiveCompiler", package: "three-live")]
+                      dependencies: [
+                          .product(name: "ThreeLiveCompiler", package: "three-live"),
+                          .product(name: "ThreeLiveKernels", package: "three-live"),
+                      ]
                   )
               ]
           )

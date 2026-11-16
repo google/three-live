@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+<!-- disableFinding(LINK_RELATIVE_G3DOC) -->
+
 # `<xr-live>` spatial computing and plugins guide
 
 `<xr-live>` extends `<three-live>` into a full spatial computing runtime for
@@ -61,10 +63,10 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 
 `<xr-live>` addresses both web and native apps from a single scene definition:
 
-*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 52 KB gz`
-    for `xr-live-viewer.min.js`, or `< 73 KB gz` for `xr-live.min.js` with live
+*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 62 KB gz`
+    for `xr-live-viewer.min.js`, or `< 98 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
-    each, or `< 61 KB gz` for all 15 combined).
+    each, or `< 65 KB gz` for all 15 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
     `XRLiveRealityKitSession`):** The in-process Rust compiler
     (`ThreeLiveCompiler`) compiles `<script type="text/three">` on-device,
@@ -126,8 +128,8 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 ### Register optional plugins for advanced features
 
 When bundling with Vite, Rollup, esbuild, or Webpack, you can pair the
-`<xr-live>` core (`three-live/xr-live` at `< 73 KB gz`, or
-`three-live/xr-live-viewer` at `< 52 KB gz`) with only the specific plugins your
+`<xr-live>` core (`three-live/xr-live` at `< 98 KB gz`, or
+`three-live/xr-live-viewer` at `< 62 KB gz`) with only the specific plugins your
 application uses:
 
 ```ts
@@ -145,11 +147,11 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 ```
 
 To load all 15 spatial plugins without a bundler, import
-`/dist/xr-live-spatial.min.js` (`< 63 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 254 KB gz`, which also includes `xr-live-sensors`, the 6 `xr-live-sim`
+`/dist/xr-live-spatial.min.js` (`< 65 KB gz`) or `/dist/xr-live-full.min.js`
+(`< 352 KB gz`, which also includes `xr-live-sensors`, the 6 `xr-live-sim`
 simulation plugins, and `xr-live-webgpu`). For WebGPU-accelerated 3D Gaussian
 Splatting without the full bundle, add `/dist/xr-live-webgpu.min.js`
-(`< 12 KB gz`).
+(`< 13 KB gz`).
 
 --------------------------------------------------------------------------------
 
@@ -255,8 +257,9 @@ All 15 spatial plugins are included in `xr-live-full.min.js` and
 `xr-live-spatial.min.js`, or can be imported individually from
 `xr-live/src/plugins/<name>` and registered via
 `XRLiveElement.registerPlugin(plugin)`. Every plugin has a corresponding native
-implementation in Android (`mobile/android/src/main/java/com/google/threelive/`)
-and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
+implementation in Android
+(`mobile/android-runtime/src/main/java/com/google/threelive/`) and iOS or
+visionOS (`mobile/ios/Sources/ThreeLiveRuntime/`):
 
 *   **`head-follow` (`xr-live-head-follow`):** Implements `FollowHead` lazy HUD
     behavior (angular deadzone plus critically damped spring
@@ -628,10 +631,10 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
 `customData.xr`), allowing native Android and iOS or visionOS apps to run full
 6DoF spatial experiences natively:
 
-### Android (`mobile/android/src/main/java/com/google/threelive/`)
+### Android (`mobile/android-runtime/src/main/java/com/google/threelive/`)
 
-*   **[`XRLiveRuntimeSession.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveRuntimeSession.kt),
-    [`XRSpatialFeatures.kt`](../mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt),
+*   **[`XRLiveRuntimeSession.kt`](../mobile/android-runtime/src/main/java/com/google/threelive/XRLiveRuntimeSession.kt),
+    [`XRSpatialFeatures.kt`](../mobile/android-runtime/src/main/java/com/google/threelive/XRSpatialFeatures.kt),
     and modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`,
     `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`,
     `SpatialLocomotion.kt`, `SharedRoom.kt`, `SpatialAudio.kt`):** Executes lazy
@@ -646,18 +649,18 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
     when it returns `false`: another peer holds the node. Near-simultaneous
     grabs resolve like the web (lowest peer ID wins) and report
     `Listener.onPeerGrabConflict`.
-*   **[`XRLiveSceneCoreHelper.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt):**
+*   **[`XRLiveSceneCoreHelper.kt`](../mobile/android-runtime/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt):**
     Jetpack XR SceneCore integration for Android XR headsets and phones,
     attaching `MovableComponent`, `ResizableComponent`, `Anchor`, and billboard
     updates directly from compiled `.glb` bytes.
-*   **[`XRGeminiLiveController.kt`](../mobile/android/src/main/java/com/google/threelive/gemini/XRGeminiLiveController.kt):**
+*   **[`XRGeminiLiveController.kt`](../mobile/android-runtime/src/main/java/com/google/threelive/gemini/XRGeminiLiveController.kt):**
     Native Kotlin WebSocket and PCM audio streaming client for Gemini Live.
 
-### iOS and visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`)
+### iOS and visionOS (`mobile/ios/Sources/ThreeLiveRuntime/`)
 
-*   **[`XRLiveRealityKitSession.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRLiveRealityKitSession.swift),
-    [`XRLiveRealityKit.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRLiveRealityKit.swift),
-    [`XRSpatialRealityKitFeatures.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRSpatialRealityKitFeatures.swift),
+*   **[`XRLiveRealityKitSession.swift`](../mobile/ios/Sources/ThreeLiveRuntime/XRLiveRealityKitSession.swift),
+    [`XRLiveRealityKit.swift`](../mobile/ios/Sources/ThreeLiveRuntime/XRLiveRealityKit.swift),
+    [`XRSpatialRealityKitFeatures.swift`](../mobile/ios/Sources/ThreeLiveRuntime/XRSpatialRealityKitFeatures.swift),
     and modular feature controllers (`SpatialMeasure.swift`,
     `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`,
     `PersistentAnchors.swift`, `SpatialLocomotion.swift`, `SharedRoom.swift`,

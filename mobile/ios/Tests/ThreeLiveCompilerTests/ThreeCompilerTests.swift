@@ -20,6 +20,7 @@ import XCTest
 #endif
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 final class ThreeCompilerTests: XCTestCase {
 
@@ -536,4 +537,95 @@ final class ThreeCompilerTests: XCTestCase {
       XCTAssertTrue(again.entity(forNode: 1) === box)
     }
   #endif
+
+  // MARK: - Pluggable ThreeCompilerBackend & Boa-free ThreeLiveKernels C ABI
+
+  private final class RecordingBackend: ThreeCompilerBackend, @unchecked Sendable {
+    private let lock = NSLock()
+    var lastGLBScript: String?
+    var lastUSDZScript: String?
+    var lastTranscodedGLBCount: Int = 0
+    var lastAIRequest: String?
+
+    func compileToGLBSync(_ script: String) throws -> Data {
+      lock.lock()
+      lastGLBScript = script
+      lock.unlock()
+      return Data([0x67, 0x6C, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00])
+    }
+
+    func compileToUSDZSync(_ script: String) throws -> Data {
+      lock.lock()
+      lastUSDZScript = script
+      lock.unlock()
+      return Data([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00])
+    }
+
+    func glbToUSDZSync(_ glbData: Data) throws -> Data {
+      lock.lock()
+      lastTranscodedGLBCount = glbData.count
+      lock.unlock()
+      return Data([0x50, 0x4B, 0x03, 0x04, 0xFF, 0x00, 0x00, 0x00])
+    }
+
+    private func recordAIRequest(_ request: String) {
+      lock.lock()
+      lastAIRequest = request
+      lock.unlock()
+    }
+
+    func aiCall(_ request: String, onCompilerThread: Bool) async throws -> String {
+      recordAIRequest(request)
+      return "{\"ok\":true,\"onCompilerThread\":\(onCompilerThread)}"
+    }
+  }
+
+  func testCustomBackendDelegationCapabilityGatesAndRestore() async throws {
+    let mock = RecordingBackend()
+    ThreeCompiler.setBackend(mock)
+    defer { ThreeCompiler.setBackend(nil) }
+
+    XCTAssertTrue(ThreeCompiler.backend as AnyObject? === mock)
+
+    let glb = try await ThreeCompiler.compile("const custom = 1;")
+    XCTAssertEqual(Array(glb.prefix(4)), Self.glbMagic)
+    XCTAssertEqual(mock.lastGLBScript, "const custom = 1;")
+
+    let usdz = try await ThreeCompiler.compileUSDZ("const customUsd = 2;")
+    XCTAssertEqual(Array(usdz.prefix(4)), Self.zipMagic)
+    XCTAssertEqual(mock.lastUSDZScript, "const customUsd = 2;")
+
+    let transcoded = try await ThreeCompiler.glbToUSDZ(glb)
+    XCTAssertEqual(Array(transcoded.prefix(4)), Self.zipMagic)
+    XCTAssertEqual(mock.lastTranscodedGLBCount, glb.count)
+
+    let aiReply = try await ThreeCompiler.aiCall("{\"op\":\"ping\"}", onCompilerThread: false)
+    XCTAssertEqual(mock.lastAIRequest, "{\"op\":\"ping\"}")
+    XCTAssertTrue(aiReply.contains("\"ok\":true"))
+
+    // Capability enforcement must run before delegating to the custom backend.
+    mock.lastGLBScript = nil
+    do {
+      _ = try await ThreeCompiler.compile("const blocked = 1;", capabilities: .zero)
+      XCTFail("Expected scripts=false policy to block compilation before reaching backend")
+    } catch {}
+    XCTAssertNil(mock.lastGLBScript)
+
+    // Embedded NUL validation must also run before delegating to the custom backend.
+    do {
+      _ = try await ThreeCompiler.compile("const bad = 1;\u{0}")
+      XCTFail("Expected embedded NUL byte to be rejected")
+    } catch let error as ThreeCompilerError {
+      guard case .invalidScript = error else {
+        return XCTFail("Expected .invalidScript, got \(error)")
+      }
+    }
+    XCTAssertNil(mock.lastGLBScript)
+
+    // Restoring nil falls back to NativeThreeCompilerBackend automatically.
+    ThreeCompiler.setBackend(nil)
+    XCTAssertTrue(ThreeCompiler.backend is NativeThreeCompilerBackend)
+    let nativeGlb = try await ThreeCompiler.compile(Self.validScript)
+    XCTAssertEqual(Array(nativeGlb.prefix(4)), Self.glbMagic)
+  }
 }

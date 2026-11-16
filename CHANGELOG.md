@@ -68,6 +68,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Single-JS-Engine Host Integration (`ThreeCompilerBackend`, Boa-Free
+    `kernels`, & `three-live-compiler-bundle.min.js`):** Mobile and desktop host
+    applications that already embed a JavaScript VM (such as Boa, QuickJS, V8,
+    or JavaScriptCore) can now run Three-Live without linking a second JS
+    engine:
+
+    -   **Pluggable `ThreeCompilerBackend` SPI & Artifact Split:** Android
+        splits into `com.google.threelive:runtime` (pure Kotlin spatial/XR/AI
+        runtime + `ThreeCompiler.setBackend(...)`, zero JNI/Boa),
+        `com.google.threelive:kernels` (Boa-free `libthree_live_kernels.so`),
+        and `com.google.threelive:compiler` (re-exporting `:runtime` +
+        `NativeThreeCompilerBackend`); all optional Android adapters
+        (`:filament`, `:firebase-ai`, `:detect-mlkit`, `:hands-androidxr`,
+        `:hands-mediapipe`) now depend on `:runtime`. SwiftPM splits into
+        `ThreeLiveRuntime`, `ThreeLiveKernels` (`ThreeLiveKernels.xcframework`,
+        zero Boa symbols), `ThreeLiveCompilerNative`, and the umbrella
+        `ThreeLiveCompiler` product (`ThreeLiveFirebaseAI` now depends on
+        `ThreeLiveRuntime`).
+    -   **Self-Contained Hosted Compiler Bundle & `engine-requirements.json`:**
+        `dist/three-live-compiler-bundle.min.js` (`three-live/compiler-bundle`,
+        `< 260 KB gz`) bundles `ThreeEngine.{compileToGLB, compileToUSDZ,
+        glbToUSDZ, aiCall, resetScene, wrapIsolatedScript,
+        installSandboxHardening}` with built-in pure-JS UTF-8 polyfills and
+        automatic `globalThis.__three_live_host__` (`abiVersion: 1`) native
+        kernel acceleration, paired with machine-readable JS engine capability
+        metadata in `dist/engine-requirements.json`.
+    -   **Boa-Free Native Kernels C ABI
+        (`compiler/include/three_live_kernels.h`):** Cargo feature split
+        (`kernels`, `boa`, `cli`, `wasm`, `jni`) exposing 24 self-describing
+        geometry, CSG, procedural PBR texture, PNG/DEFLATE, UTF-8, and USDZ
+        kernels via `three_live_kernels_table(&count)` +
+        `three_live_kernel_free`, with GLB serialization unified on
+        `three-convert.ts::sceneToGLB`.
+
 -   **Loop-Free Node Materials (`three-live-tsl` / `tslPlugin` /
     `extras.tsl`):** Opt-in cross-platform procedural PBR shader graph
     authoring via `THREE.MeshStandardNodeMaterial` (`MeshPhysicalNodeMaterial`)

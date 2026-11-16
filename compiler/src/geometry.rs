@@ -17,7 +17,9 @@
 //! Evaluates complex parametric curves, surfaces, and meshes directly in native
 //! SIMD-vectorized Rust loops, bypassing interpreted JavaScript bytecode overhead.
 
+#[cfg(feature = "boa")]
 use crate::constants::*;
+#[cfg(feature = "boa")]
 use boa_engine::{
     builtins::typed_array::TypedArrayKind,
     js_string,
@@ -28,6 +30,7 @@ use boa_engine::{
     Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction,
 };
 
+#[cfg(feature = "boa")]
 pub fn js_float32_array_from_slice(
     slice: &[f32],
     context: &mut Context,
@@ -40,6 +43,7 @@ pub fn js_float32_array_from_slice(
     JsFloat32Array::from_array_buffer(arr_buf, context)
 }
 
+#[cfg(feature = "boa")]
 pub fn js_uint32_array_from_slice(slice: &[u32], context: &mut Context) -> JsResult<JsUint32Array> {
     let mut aligned = AlignedVec::with_capacity(64, slice.len() * 4);
     for &v in slice {
@@ -49,6 +53,7 @@ pub fn js_uint32_array_from_slice(slice: &[u32], context: &mut Context) -> JsRes
     JsUint32Array::from_array_buffer(arr_buf, context)
 }
 
+#[cfg(feature = "boa")]
 pub fn js_uint16_array_from_slice(slice: &[u16], context: &mut Context) -> JsResult<JsUint16Array> {
     let mut aligned = AlignedVec::with_capacity(64, slice.len() * 2);
     for &v in slice {
@@ -67,6 +72,7 @@ pub struct NativeGeometry {
     pub indices: Vec<u32>,
 }
 
+#[cfg(feature = "boa")]
 impl NativeGeometry {
     /// Converts the native buffers into a JavaScript Object containing Float32Array and
     /// Uint32Array using single-allocation 64-byte aligned ArrayBuffers.
@@ -1173,356 +1179,13 @@ pub fn buffers_to_csg_polygons(
     polys
 }
 
-fn extract_f32_slice(val: &JsValue, context: &mut Context) -> Option<Vec<f32>> {
-    let obj = val.as_object()?;
-    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
-        let buf_val = typed_arr.buffer(context).ok()?;
-        let buf_obj = buf_val.as_object()?;
-        let arr_buf = JsArrayBuffer::from_object(buf_obj.clone()).ok()?;
-        let data = arr_buf.data()?;
-        let offset = typed_arr.byte_offset(context).unwrap_or(0);
-        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
-        let end = offset.saturating_add(len).min(data.len());
-        let start = offset.min(end);
-        let slice = &data[start..end];
-        let floats: Vec<f32> = slice
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        return Some(floats);
-    }
-    None
-}
-
-fn extract_u32_slice(val: &JsValue, context: &mut Context) -> Option<Vec<u32>> {
-    let obj = val.as_object()?;
-    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
-        let buf_val = typed_arr.buffer(context).ok()?;
-        let buf_obj = buf_val.as_object()?;
-        let arr_buf = JsArrayBuffer::from_object(buf_obj.clone()).ok()?;
-        let data = arr_buf.data()?;
-        let offset = typed_arr.byte_offset(context).unwrap_or(0);
-        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
-        let end = offset.saturating_add(len).min(data.len());
-        let start = offset.min(end);
-        let slice = &data[start..end];
-        match typed_arr.kind() {
-            Some(TypedArrayKind::Uint32) => {
-                let ints: Vec<u32> = slice
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-                Some(ints)
-            }
-            Some(TypedArrayKind::Uint16) => {
-                let ints: Vec<u32> = slice
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| u16::from_ne_bytes([c[0], c[1]]) as u32)
-                    .collect();
-                Some(ints)
-            }
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
-// --- Boa Native Function Bindings ---
-
-pub fn native_plane(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let width = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let height = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let width_segments =
-        (args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as usize).clamp(1, 2048);
-    let height_segments =
-        (args.get(3).and_then(|v| v.as_number()).unwrap_or(1.0) as usize).clamp(1, 2048);
-
-    let projected_vertices = (width_segments + 1) * (height_segments + 1);
-    if projected_vertices > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "Plane projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                projected_vertices, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    let geo = generate_plane(width, height, width_segments, height_segments);
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-pub fn native_torus(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let tube = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.4) as f32;
-    let radial_segments =
-        (args.get(2).and_then(|v| v.as_number()).unwrap_or(12.0) as usize).clamp(3, 2048);
-    let tubular_segments =
-        (args.get(3).and_then(|v| v.as_number()).unwrap_or(48.0) as usize).clamp(3, 2048);
-    let arc = args.get(4).and_then(|v| v.as_number()).unwrap_or(std::f64::consts::TAU) as f32;
-
-    let projected_vertices = (radial_segments + 1) * (tubular_segments + 1);
-    if projected_vertices > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "Torus projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                projected_vertices, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    let geo = generate_torus(radius, tube, radial_segments, tubular_segments, arc);
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-pub fn native_csg_boolean(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let pos_a = args
-        .first()
-        .and_then(|v| extract_f32_slice(v, context))
-        .ok_or_else(|| JsNativeError::typ().with_message("Missing position buffer for Mesh A"))?;
-    let norm_a = args.get(1).and_then(|v| extract_f32_slice(v, context));
-    let uv_a = args.get(2).and_then(|v| extract_f32_slice(v, context));
-    let idx_a = args.get(3).and_then(|v| extract_u32_slice(v, context));
-    let mat_a = args.get(4).and_then(|v| extract_f32_slice(v, context));
-
-    let pos_b = args
-        .get(5)
-        .and_then(|v| extract_f32_slice(v, context))
-        .ok_or_else(|| JsNativeError::typ().with_message("Missing position buffer for Mesh B"))?;
-    let norm_b = args.get(6).and_then(|v| extract_f32_slice(v, context));
-    let uv_b = args.get(7).and_then(|v| extract_f32_slice(v, context));
-    let idx_b = args.get(8).and_then(|v| extract_u32_slice(v, context));
-    let mat_b = args.get(9).and_then(|v| extract_f32_slice(v, context));
-
-    let op_code = args.get(10).and_then(|v| v.as_number()).unwrap_or(0.0) as u32;
-
-    let polys_a = buffers_to_csg_polygons(
-        &pos_a,
-        norm_a.as_deref(),
-        uv_a.as_deref(),
-        idx_a.as_deref(),
-        mat_a.as_deref(),
-    );
-    let polys_b = buffers_to_csg_polygons(
-        &pos_b,
-        norm_b.as_deref(),
-        uv_b.as_deref(),
-        idx_b.as_deref(),
-        mat_b.as_deref(),
-    );
-
-    let total_in = polys_a.len() + polys_b.len();
-    if total_in > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "CSG combined polygon count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                total_in, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    let result_polys = evaluate_csg(&polys_a, &polys_b, op_code);
-    let geo = csg_polygons_to_geometry(&result_polys);
-
-    let vert_count = geo.positions.len() / 3;
-    if vert_count > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "CSG output vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                vert_count, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-pub fn native_torus_knot(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let tube = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.4) as f32;
-    let tubular_segments =
-        (args.get(2).and_then(|v| v.as_number()).unwrap_or(64.0) as usize).clamp(3, 2048);
-    let radial_segments =
-        (args.get(3).and_then(|v| v.as_number()).unwrap_or(8.0) as usize).clamp(3, 2048);
-    let p = args.get(4).and_then(|v| v.as_number()).unwrap_or(2.0) as f32;
-    let q = args.get(5).and_then(|v| v.as_number()).unwrap_or(3.0) as f32;
-
-    let projected_vertices = (tubular_segments + 1) * (radial_segments + 1);
-    if projected_vertices > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "TorusKnot projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                projected_vertices, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    let geo = generate_torus_knot(radius, tube, tubular_segments, radial_segments, p, q);
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-pub fn native_sphere(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let width_segments =
-        (args.get(1).and_then(|v| v.as_number()).unwrap_or(16.0) as usize).clamp(3, 2048);
-    let height_segments =
-        (args.get(2).and_then(|v| v.as_number()).unwrap_or(12.0) as usize).clamp(2, 2048);
-
-    let projected_vertices = (width_segments + 1) * (height_segments + 1);
-    if projected_vertices > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "Sphere projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                projected_vertices, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    let geo = generate_sphere(radius, width_segments, height_segments);
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-pub fn native_cylinder(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let radius_top = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let radius_bottom = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let height = args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let radial_segments =
-        (args.get(3).and_then(|v| v.as_number()).unwrap_or(16.0) as usize).clamp(3, 2048);
-
-    let projected_vertices = (radial_segments + 1) * 2;
-    if projected_vertices > SECURITY_3D_MAX_VERTICES {
-        return Err(JsNativeError::range()
-            .with_message(format!(
-                "Cylinder projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
-                projected_vertices, SECURITY_3D_MAX_VERTICES
-            ))
-            .into());
-    }
-
-    let geo = generate_cylinder(radius_top, radius_bottom, height, radial_segments);
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-pub fn native_box(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let width = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let height = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-    let depth = args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
-
-    let geo = generate_box(width, height, depth);
-    geo.to_js_object(context).map(JsValue::from)
-}
-
-/// Converts a JS `Array` of numbers into a `Float32Array` in a single native pass without
-/// invoking Boa's per-element `@@iterator` object allocation loop.
-pub fn native_f32_array(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let val = args.first().cloned().unwrap_or(JsValue::undefined());
-    if let Some(obj) = val.as_object() {
-        if let Ok(js_arr) = JsArray::from_object(obj.clone()) {
-            let len = js_arr.length(context)? as usize;
-            if len > SECURITY_3D_MAX_VERTICES * 16 {
-                return Err(JsNativeError::range()
-                    .with_message(format!("BufferAttribute array length ({}) exceeds quota", len))
-                    .into());
-            }
-            let mut aligned = AlignedVec::with_capacity(64, len * 4);
-            for i in 0..len {
-                let v = js_arr.at(i as i64, context)?.as_number().unwrap_or(0.0) as f32;
-                aligned.extend_from_slice(&v.to_ne_bytes());
-            }
-            let arr_buf = JsArrayBuffer::from_byte_block(aligned, context)?;
-            let typed = JsFloat32Array::from_array_buffer(arr_buf, context)?;
-            return Ok(JsValue::from(typed));
-        }
-    }
-    let empty = js_float32_array_from_slice(&[], context)?;
-    Ok(JsValue::from(empty))
-}
-
-/// Converts a JS `Array` of vertex indices into a `Uint16Array` or `Uint32Array` in a single
-/// native pass without invoking Boa's per-element `@@iterator` object allocation loop.
-pub fn native_index_array(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let val = args.first().cloned().unwrap_or(JsValue::undefined());
-    if let Some(obj) = val.as_object() {
-        if let Ok(js_arr) = JsArray::from_object(obj.clone()) {
-            let len = js_arr.length(context)? as usize;
-            if len > SECURITY_3D_MAX_INDICES {
-                return Err(JsNativeError::range()
-                    .with_message(format!(
-                        "Index array length ({}) exceeds SECURITY_3D_MAX_INDICES ({})",
-                        len, SECURITY_3D_MAX_INDICES
-                    ))
-                    .into());
-            }
-            let mut vals = Vec::with_capacity(len);
-            let mut max_idx = 0u32;
-            for i in 0..len {
-                let v = js_arr.at(i as i64, context)?.as_number().unwrap_or(0.0) as u32;
-                if v > max_idx {
-                    max_idx = v;
-                }
-                vals.push(v);
-            }
-            if max_idx > 65535 {
-                let typed = js_uint32_array_from_slice(&vals, context)?;
-                return Ok(JsValue::from(typed));
-            } else {
-                let mut aligned = AlignedVec::with_capacity(64, len * 2);
-                for &v in &vals {
-                    aligned.extend_from_slice(&(v as u16).to_ne_bytes());
-                }
-                let arr_buf = JsArrayBuffer::from_byte_block(aligned, context)?;
-                let typed = JsUint16Array::from_array_buffer(arr_buf, context)?;
-                return Ok(JsValue::from(typed));
-            }
-        }
-    }
-    let empty = js_uint16_array_from_slice(&[], context)?;
-    Ok(JsValue::from(empty))
-}
-
-/// Native Rust accelerator for `THREE.BufferGeometry.prototype.computeVertexNormals()`.
-pub fn native_compute_vertex_normals(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let positions = args.first().and_then(|v| extract_f32_slice(v, context)).unwrap_or_default();
+/// Computes smooth per-vertex normals from flat `positions` (`[x, y, z, ...]`) and optional
+/// triangle `indices`. Returns an empty vector if `positions` has fewer than 3 floats.
+pub fn compute_vertex_normals_slice(positions: &[f32], indices: Option<&[u32]>) -> Vec<f32> {
     let vert_count = positions.len() / 3;
-    if vert_count == 0 || vert_count > SECURITY_3D_MAX_VERTICES {
-        let empty = js_float32_array_from_slice(&[], context)?;
-        return Ok(JsValue::from(empty));
+    if vert_count == 0 {
+        return Vec::new();
     }
-    let indices = args.get(1).and_then(|v| extract_u32_slice(v, context));
     let mut normals = vec![0.0f32; vert_count * 3];
 
     if let Some(idx) = indices {
@@ -1595,11 +1258,381 @@ pub fn native_compute_vertex_normals(
         }
     }
 
+    normals
+}
+
+#[cfg(feature = "boa")]
+fn extract_f32_slice(val: &JsValue, context: &mut Context) -> Option<Vec<f32>> {
+    let obj = val.as_object()?;
+    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+        if typed_arr.kind() != Some(boa_engine::builtins::typed_array::TypedArrayKind::Float32) {
+            return None;
+        }
+        let buf_val = typed_arr.buffer(context).ok()?;
+        let buf_obj = buf_val.as_object()?;
+        let arr_buf = JsArrayBuffer::from_object(buf_obj.clone()).ok()?;
+        let data = arr_buf.data()?;
+        let offset = typed_arr.byte_offset(context).unwrap_or(0);
+        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
+        let end = offset.saturating_add(len).min(data.len());
+        let start = offset.min(end);
+        let slice = &data[start..end];
+        let floats: Vec<f32> = slice
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        return Some(floats);
+    }
+    None
+}
+
+#[cfg(feature = "boa")]
+fn extract_u32_slice(val: &JsValue, context: &mut Context) -> Option<Vec<u32>> {
+    let obj = val.as_object()?;
+    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+        let buf_val = typed_arr.buffer(context).ok()?;
+        let buf_obj = buf_val.as_object()?;
+        let arr_buf = JsArrayBuffer::from_object(buf_obj.clone()).ok()?;
+        let data = arr_buf.data()?;
+        let offset = typed_arr.byte_offset(context).unwrap_or(0);
+        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
+        let end = offset.saturating_add(len).min(data.len());
+        let start = offset.min(end);
+        let slice = &data[start..end];
+        match typed_arr.kind() {
+            Some(TypedArrayKind::Uint32) => {
+                let ints: Vec<u32> = slice
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                Some(ints)
+            }
+            Some(TypedArrayKind::Uint16) => {
+                let ints: Vec<u32> = slice
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_ne_bytes([c[0], c[1]]) as u32)
+                    .collect();
+                Some(ints)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+// --- Boa Native Function Bindings ---
+
+#[cfg(feature = "boa")]
+pub fn native_plane(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let width = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let height = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let width_segments =
+        (args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as usize).clamp(1, 2048);
+    let height_segments =
+        (args.get(3).and_then(|v| v.as_number()).unwrap_or(1.0) as usize).clamp(1, 2048);
+
+    let projected_vertices = (width_segments + 1) * (height_segments + 1);
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "Plane projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_plane(width, height, width_segments, height_segments);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+#[cfg(feature = "boa")]
+pub fn native_torus(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let tube = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.4) as f32;
+    let radial_segments =
+        (args.get(2).and_then(|v| v.as_number()).unwrap_or(12.0) as usize).clamp(3, 2048);
+    let tubular_segments =
+        (args.get(3).and_then(|v| v.as_number()).unwrap_or(48.0) as usize).clamp(3, 2048);
+    let arc = args.get(4).and_then(|v| v.as_number()).unwrap_or(std::f64::consts::TAU) as f32;
+
+    let projected_vertices = (radial_segments + 1) * (tubular_segments + 1);
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "Torus projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_torus(radius, tube, radial_segments, tubular_segments, arc);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+#[cfg(feature = "boa")]
+pub fn native_csg_boolean(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let pos_a = args
+        .first()
+        .and_then(|v| extract_f32_slice(v, context))
+        .ok_or_else(|| JsNativeError::typ().with_message("Missing position buffer for Mesh A"))?;
+    let norm_a = args.get(1).and_then(|v| extract_f32_slice(v, context));
+    let uv_a = args.get(2).and_then(|v| extract_f32_slice(v, context));
+    let idx_a = args.get(3).and_then(|v| extract_u32_slice(v, context));
+    let mat_a = args.get(4).and_then(|v| extract_f32_slice(v, context));
+
+    let pos_b = args
+        .get(5)
+        .and_then(|v| extract_f32_slice(v, context))
+        .ok_or_else(|| JsNativeError::typ().with_message("Missing position buffer for Mesh B"))?;
+    let norm_b = args.get(6).and_then(|v| extract_f32_slice(v, context));
+    let uv_b = args.get(7).and_then(|v| extract_f32_slice(v, context));
+    let idx_b = args.get(8).and_then(|v| extract_u32_slice(v, context));
+    let mat_b = args.get(9).and_then(|v| extract_f32_slice(v, context));
+
+    let op_code = args.get(10).and_then(|v| v.as_number()).unwrap_or(0.0) as u32;
+
+    let polys_a = buffers_to_csg_polygons(
+        &pos_a,
+        norm_a.as_deref(),
+        uv_a.as_deref(),
+        idx_a.as_deref(),
+        mat_a.as_deref(),
+    );
+    let polys_b = buffers_to_csg_polygons(
+        &pos_b,
+        norm_b.as_deref(),
+        uv_b.as_deref(),
+        idx_b.as_deref(),
+        mat_b.as_deref(),
+    );
+
+    let total_in = polys_a.len() + polys_b.len();
+    if total_in > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "CSG combined polygon count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                total_in, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let result_polys = evaluate_csg(&polys_a, &polys_b, op_code);
+    let geo = csg_polygons_to_geometry(&result_polys);
+
+    let vert_count = geo.positions.len() / 3;
+    if vert_count > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "CSG output vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                vert_count, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+#[cfg(feature = "boa")]
+pub fn native_torus_knot(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let tube = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.4) as f32;
+    let tubular_segments =
+        (args.get(2).and_then(|v| v.as_number()).unwrap_or(64.0) as usize).clamp(3, 2048);
+    let radial_segments =
+        (args.get(3).and_then(|v| v.as_number()).unwrap_or(8.0) as usize).clamp(3, 2048);
+    let p = args.get(4).and_then(|v| v.as_number()).unwrap_or(2.0) as f32;
+    let q = args.get(5).and_then(|v| v.as_number()).unwrap_or(3.0) as f32;
+
+    let projected_vertices = (tubular_segments + 1) * (radial_segments + 1);
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "TorusKnot projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_torus_knot(radius, tube, tubular_segments, radial_segments, p, q);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+#[cfg(feature = "boa")]
+pub fn native_sphere(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let width_segments =
+        (args.get(1).and_then(|v| v.as_number()).unwrap_or(16.0) as usize).clamp(3, 2048);
+    let height_segments =
+        (args.get(2).and_then(|v| v.as_number()).unwrap_or(12.0) as usize).clamp(2, 2048);
+
+    let projected_vertices = (width_segments + 1) * (height_segments + 1);
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "Sphere projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_sphere(radius, width_segments, height_segments);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+#[cfg(feature = "boa")]
+pub fn native_cylinder(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let radius_top = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let radius_bottom = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let height = args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let radial_segments =
+        (args.get(3).and_then(|v| v.as_number()).unwrap_or(16.0) as usize).clamp(3, 2048);
+
+    let projected_vertices = (radial_segments + 1) * 2;
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "Cylinder projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_cylinder(radius_top, radius_bottom, height, radial_segments);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+#[cfg(feature = "boa")]
+pub fn native_box(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let width = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let height = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let depth = args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+
+    let geo = generate_box(width, height, depth);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+/// Converts a JS `Array` of numbers into a `Float32Array` in a single native pass without
+/// invoking Boa's per-element `@@iterator` object allocation loop.
+#[cfg(feature = "boa")]
+pub fn native_f32_array(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let val = args.first().cloned().unwrap_or(JsValue::undefined());
+    if let Some(obj) = val.as_object() {
+        if let Ok(js_arr) = JsArray::from_object(obj.clone()) {
+            let len = js_arr.length(context)? as usize;
+            if len > SECURITY_3D_MAX_VERTICES * 16 {
+                return Err(JsNativeError::range()
+                    .with_message(format!("BufferAttribute array length ({}) exceeds quota", len))
+                    .into());
+            }
+            let mut aligned = AlignedVec::with_capacity(64, len * 4);
+            for i in 0..len {
+                let v = js_arr.at(i as i64, context)?.as_number().unwrap_or(0.0) as f32;
+                aligned.extend_from_slice(&v.to_ne_bytes());
+            }
+            let arr_buf = JsArrayBuffer::from_byte_block(aligned, context)?;
+            let typed = JsFloat32Array::from_array_buffer(arr_buf, context)?;
+            return Ok(JsValue::from(typed));
+        }
+    }
+    let empty = js_float32_array_from_slice(&[], context)?;
+    Ok(JsValue::from(empty))
+}
+
+/// Converts a JS `Array` of vertex indices into a `Uint16Array` or `Uint32Array` in a single
+/// native pass without invoking Boa's per-element `@@iterator` object allocation loop.
+#[cfg(feature = "boa")]
+pub fn native_index_array(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let val = args.first().cloned().unwrap_or(JsValue::undefined());
+    if let Some(obj) = val.as_object() {
+        if let Ok(js_arr) = JsArray::from_object(obj.clone()) {
+            let len = js_arr.length(context)? as usize;
+            if len > SECURITY_3D_MAX_INDICES {
+                return Err(JsNativeError::range()
+                    .with_message(format!(
+                        "Index array length ({}) exceeds SECURITY_3D_MAX_INDICES ({})",
+                        len, SECURITY_3D_MAX_INDICES
+                    ))
+                    .into());
+            }
+            let mut vals = Vec::with_capacity(len);
+            let mut max_idx = 0u32;
+            for i in 0..len {
+                let v = js_arr.at(i as i64, context)?.as_number().unwrap_or(0.0) as u32;
+                if v > max_idx {
+                    max_idx = v;
+                }
+                vals.push(v);
+            }
+            if max_idx > 65535 {
+                let typed = js_uint32_array_from_slice(&vals, context)?;
+                return Ok(JsValue::from(typed));
+            } else {
+                let mut aligned = AlignedVec::with_capacity(64, len * 2);
+                for &v in &vals {
+                    aligned.extend_from_slice(&(v as u16).to_ne_bytes());
+                }
+                let arr_buf = JsArrayBuffer::from_byte_block(aligned, context)?;
+                let typed = JsUint16Array::from_array_buffer(arr_buf, context)?;
+                return Ok(JsValue::from(typed));
+            }
+        }
+    }
+    let empty = js_uint16_array_from_slice(&[], context)?;
+    Ok(JsValue::from(empty))
+}
+
+/// Native Rust accelerator for `THREE.BufferGeometry.prototype.computeVertexNormals()`.
+#[cfg(feature = "boa")]
+pub fn native_compute_vertex_normals(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let positions = args.first().and_then(|v| extract_f32_slice(v, context)).unwrap_or_default();
+    let vert_count = positions.len() / 3;
+    if vert_count == 0 || vert_count > SECURITY_3D_MAX_VERTICES {
+        let empty = js_float32_array_from_slice(&[], context)?;
+        return Ok(JsValue::from(empty));
+    }
+    let indices = args.get(1).and_then(|v| extract_u32_slice(v, context));
+    let normals = compute_vertex_normals_slice(&positions, indices.as_deref());
     let out = js_float32_array_from_slice(&normals, context)?;
     Ok(JsValue::from(out))
 }
 
 /// Registers all native geometry accelerators on the global object.
+#[cfg(feature = "boa")]
 pub fn register_native_geometry_callables(context: &mut Context) -> JsResult<()> {
     context.register_global_builtin_callable(
         js_string!("__three_live_native_torus_knot__"),

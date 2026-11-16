@@ -744,7 +744,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">80.9 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">84.6 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -2001,12 +2001,9 @@ for (let t = 0; t < 5; t++) {
     if (roomGLBPromise) return roomGLBPromise;
     roomGLBPromise = (async () => {
       const isSandboxedOrigin = window.origin === "null";
-      const isCorpHost = !isSandboxedOrigin && /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
       const urls = isSandboxedOrigin
         ? [LIVING_ROOM_CDN]
-        : isCorpHost
-        ? ["./livingRoom.glb", "../livingRoom.glb", LIVING_ROOM_CDN]
-        : [LIVING_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
+        : ["./livingRoom.glb", "../livingRoom.glb", LIVING_ROOM_CDN];
       for (const url of urls) {
         try {
           const res = await fetch(url);

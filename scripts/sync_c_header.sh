@@ -13,39 +13,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Keeps the SwiftPM copy of the C header byte-identical to the canonical one.
+# Keeps the SwiftPM copies of the C headers byte-identical to the canonical ones.
 #
-# SwiftPM requires the public header to live inside the ThreeLiveCompilerC target directory,
-# so the repository necessarily carries two copies. Nothing in the compiler would catch a
-# divergence between them -- a mismatched declaration is an ABI bug, not a build error -- so
-# the copy is generated and CI asserts it is current.
+# SwiftPM requires each public header to live inside its C target directory, so the repository
+# necessarily carries copies for ThreeLiveCompilerC and ThreeLiveKernelsC. Nothing in the C
+# compiler catches a divergence between them -- a mismatched declaration is an ABI bug, not a
+# build error -- so the copies are generated and CI asserts they are current.
 #
-#   sync_c_header.sh          Regenerate the SwiftPM copy.
-#   sync_c_header.sh --check  Fail if the copy is stale. Used by CI.
+#   sync_c_header.sh          Regenerate the SwiftPM copies.
+#   sync_c_header.sh --check  Fail if any copy is stale. Used by CI.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CANONICAL="${ROOT_DIR}/compiler/include/three_live_compiler.h"
-SWIFTPM_COPY="${ROOT_DIR}/mobile/ios/Sources/ThreeLiveCompilerC/include/ThreeLiveCompiler.h"
+COMPILER_CANONICAL="${ROOT_DIR}/compiler/include/three_live_compiler.h"
+COMPILER_SWIFTPM="${ROOT_DIR}/mobile/ios/Sources/ThreeLiveCompilerC/include/ThreeLiveCompiler.h"
 
-if [[ ! -f "${CANONICAL}" ]]; then
-    echo "Error: canonical header not found at ${CANONICAL}" >&2
-    exit 1
-fi
+KERNELS_CANONICAL="${ROOT_DIR}/compiler/include/three_live_kernels.h"
+KERNELS_SWIFTPM="${ROOT_DIR}/mobile/ios/Sources/ThreeLiveKernelsC/include/ThreeLiveKernels.h"
+
+for hdr in "${COMPILER_CANONICAL}" "${KERNELS_CANONICAL}"; do
+    if [[ ! -f "${hdr}" ]]; then
+        echo "Error: canonical header not found at ${hdr}" >&2
+        exit 1
+    fi
+done
 
 if [[ "${1:-}" == "--check" ]]; then
-    if ! diff -u "${CANONICAL}" "${SWIFTPM_COPY}"; then
+    stale=0
+    if ! diff -u "${COMPILER_CANONICAL}" "${COMPILER_SWIFTPM}"; then
         echo "" >&2
-        echo "Error: ${SWIFTPM_COPY} is out of date." >&2
+        echo "Error: ${COMPILER_SWIFTPM} is out of date." >&2
+        stale=1
+    fi
+    if ! diff -u "${KERNELS_CANONICAL}" "${KERNELS_SWIFTPM}"; then
+        echo "" >&2
+        echo "Error: ${KERNELS_SWIFTPM} is out of date." >&2
+        stale=1
+    fi
+    if [[ "${stale}" -ne 0 ]]; then
         echo "Run 'bash scripts/sync_c_header.sh' and commit the result." >&2
         exit 1
     fi
-    echo "C header copy is up to date."
+    echo "C header copies are up to date."
     exit 0
 fi
 
-cp "${CANONICAL}" "${SWIFTPM_COPY}"
-echo "Synced $(basename "${SWIFTPM_COPY}") from $(basename "${CANONICAL}")."
+mkdir -p "$(dirname "${COMPILER_SWIFTPM}")" "$(dirname "${KERNELS_SWIFTPM}")"
+cp "${COMPILER_CANONICAL}" "${COMPILER_SWIFTPM}"
+cp "${KERNELS_CANONICAL}" "${KERNELS_SWIFTPM}"
+echo "Synced $(basename "${COMPILER_SWIFTPM}") and $(basename "${KERNELS_SWIFTPM}") from canonical headers."

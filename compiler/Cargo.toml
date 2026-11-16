@@ -14,7 +14,7 @@
 
 [package]
 name = "three-live-compiler"
-version = "1.4.0"
+version = "1.3.2"
 edition = "2021"
 description = "High-performance procedural Three.js to binary glTF 2.0 (GLB) compiler powered by Boa"
 license = "Apache-2.0"
@@ -24,6 +24,8 @@ include = [
     "src/**/*",
     "include/**/*",
     "build.rs",
+    "exported_symbols_compiler.lds",
+    "exported_symbols_kernels.lds",
     "assets/three-author-engine.min.js",
     "Cargo.toml",
 ]
@@ -45,36 +47,42 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 # Use enum-based JsValueInner (`jsvalue-enum`) instead of 48-bit NaN-boxing so heap
 # pointers with ARM64 Top-Byte Ignore (TBI) / MTE tags on Android 11+ (`0xb400...`)
 # or 5-level paging (LA57) do not trip Boa's 48-bit pointer mask assertion.
-boa_engine = { version = "0.21", features = ["jsvalue-enum"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-# Raw DEFLATE for playground scene links (`scene_link.rs`).
+boa_engine = { version = "0.21", features = ["jsvalue-enum"], optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+# Raw DEFLATE for playground scene links (`scene_link.rs`) and stored PNG recompression (`kernels.rs`).
 miniz_oxide = "0.8"
 # Decodes JPEG reference images for `three_live_render --reference` (pure Rust, no rayon).
-jpeg-decoder = { version = "0.3", default-features = false }
+jpeg-decoder = { version = "0.3", default-features = false, optional = true }
 clap = { version = "4.4", features = ["derive"], optional = true }
 jni = { version = "0.21", optional = true }
 
-# Unconditional on wasm32 rather than feature-gated: `src/time.rs` needs `Date.now()`
-# on that target no matter which features are selected, because
-# `std::time::Instant::now()` panics there.
+# Optional on wasm32: only needed when `boa` is enabled (`src/time.rs` `Date.now()` and
+# `boa_engine`'s `getrandom` dependency). Boa-free `kernels` builds on `wasm32` pull in zero
+# JS/wasm-bindgen bindings.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-# Transitive dependency of `boa_engine`. Since 0.3 it refuses to build for
-# `wasm32-unknown-unknown` unless the top-level crate names a backend, so it has to be
-# declared here even though we never call it directly. Also requires
-# `RUSTFLAGS='--cfg getrandom_backend="wasm_js"'`; see `build_wasm.sh`.
-getrandom = { version = "0.3", features = ["wasm_js"] }
+wasm-bindgen = { version = "0.2", optional = true }
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 
 [features]
-default = ["cli"]
-cli = ["dep:clap"]
-# Retained as a no-op marker so existing `--features wasm` invocations keep working.
-# The wasm module and its bindings are now selected by `target_arch` directly.
-wasm = []
+default = ["cli", "boa"]
+# Boa-free stateless C-ABI native geometry, texture, PNG, CRC32, and USDZ accelerators.
+kernels = []
+boa = [
+    "kernels",
+    "dep:boa_engine",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:jpeg-decoder",
+    "dep:wasm-bindgen",
+    "dep:getrandom",
+]
+cli = ["boa", "dep:clap"]
+# Retained as a marker so existing `--features wasm` invocations keep working.
+wasm = ["boa"]
 jni = ["dep:jni"]
 
 [dev-dependencies]

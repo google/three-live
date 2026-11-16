@@ -23,7 +23,7 @@
  * "46.2 KB gz"), so the hub page and every demo page show the same number,
  * measured from the bundle actually being served.
  *
- * CLI usage (also used by the Blaze www_site_bundle genrule):
+ * CLI usage:
  *   node stamp_bundle_sizes.js \
  *     --bundle three-live.min.js=path/to/three-live.min.js \
  *     --bundle xr-live.min.js=path/to/xr-live.min.js \

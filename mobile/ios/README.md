@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+<!-- disableFinding(LINK_RELATIVE_G3DOC) -->
+
 # Three-Live iOS, visionOS, tvOS & macOS Swift Package
 
 Native Swift bindings and C-ABI bridge for `three-live-compiler`.
@@ -53,6 +55,21 @@ Add `ThreeLiveCompiler` to your app target:
     ]
 )
 ```
+
+> **Apps that already embed a JavaScript engine (Boa, JavaScriptCore,
+> QuickJS):** Depend on
+> `.product(name: "ThreeLiveRuntime", package: "three-live")` +
+> `.product(name: "ThreeLiveKernels", package: "three-live")` instead of
+> `ThreeLiveCompiler` so zero Boa symbols are linked into your app binary. Load
+> `three-live-compiler-bundle.min.js` into your JS realm (wiring
+> `globalThis.__three_live_host__` via `ThreeLiveKernels.descriptors()`) and
+> call `ThreeCompiler.setBackend(hostBackend)`.
+
+> **Non-SwiftPM static-archive integrators (Bazel, Buck, custom Xcode
+> targets):** Pass `-ObjC` in `OTHER_LDFLAGS` when linking
+> `ThreeLiveCompilerNative` statically so Objective-C runtime discovery resolves
+> `ThreeLiveDefaultBackendProvider`, or call
+> `ThreeCompiler.setBackend(NativeThreeCompilerBackend.shared)` at startup.
 
 > **AR Quick Look requires a camera purpose string.** If your app calls
 > `QuickLookHelper.presentAR`, add `NSCameraUsageDescription` to your
@@ -122,9 +139,9 @@ func openAR(viewController: UIViewController) async {
 ### 4. Run behaviors and spatial traits natively
 
 Compiled `.glb` files carry `KHR_interactivity` behavior graphs and canonical
-`extras.xr` traits (see [`docs/xr-spatial-parity.md`](../../docs/xr-spatial-parity.md)).
-`XRLiveRuntimeSession` (platform-neutral) executes them; `XRLiveRealityKitSession`
-binds it to RealityKit entities.
+`extras.xr` traits (see [`docs/xr-live.md`](../../docs/xr-live.md)).
+`XRLiveRuntimeSession` (platform-neutral) executes them;
+`XRLiveRealityKitSession` binds it to RealityKit entities.
 
 ```swift
 import ThreeLiveCompiler
@@ -153,7 +170,9 @@ spring, orbit), `ManipulationHandles`, `WorldUnderstanding.unprojectDetection`,
 bash scripts/build_ios_xcframework.sh
 ```
 
-Output: `mobile/ios/ThreeLiveCompiler.xcframework` (gitignored).
+Outputs: `mobile/ios/ThreeLiveKernels.xcframework` (Boa-free) and
+`mobile/ios/ThreeLiveCompiler.xcframework` (gitignored). Pass `--kernels-only`
+or `--compiler-only` to build a single XCFramework.
 
 The framework carries seven slices:
 
@@ -182,13 +201,14 @@ otherwise it downloads the release artifact. The release tag and SHA-256 in
 verifies the published package by resolving and running it as an external
 consumer.
 
-## Keeping the C header in sync
+## Keeping the C headers in sync
 
-SwiftPM requires the public header inside the `ThreeLiveCompilerC` target, so
-the repository carries two copies of it.
-`compiler/include/three_live_compiler.h` is canonical:
+SwiftPM requires the public headers inside the `ThreeLiveCompilerC` and
+`ThreeLiveKernelsC` targets, so the repository carries synced copies of them.
+`compiler/include/three_live_compiler.h` and
+`compiler/include/three_live_kernels.h` are canonical:
 
 ```bash
-bash scripts/sync_c_header.sh          # regenerate the SwiftPM copy
+bash scripts/sync_c_header.sh          # regenerate the SwiftPM copies
 bash scripts/sync_c_header.sh --check  # what CI runs
 ```

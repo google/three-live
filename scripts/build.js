@@ -342,29 +342,113 @@ function buildThreeLive() {
     outfile: path.join(tlDist, 'three-convert.cjs'),
   });
 
-  // 6. Embedded Engine (IIFE) for Rust compiler
-  const engineJs = path.join(tlDist, 'three-author-engine.js');
+  // 6. Hosted Compiler Bundle (ESM, CJS, IIFE min) & Embedded Engine for Rust
+  // compiler
+  const compilerDefines = {
+    'IS_DEV': 'false',
+    'ENABLE_NATIVE_HOOKS': 'true',
+    'ENABLE_SERVER_EXTRACT': 'true',
+  };
   buildTarget({
-    entryPoints: [path.join(THREE_LIVE_DIR, 'src/three-author.ts')],
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/compiler-bundle.ts')],
+    bundle: true,
+    format: 'esm',
+    minify: true,
+    target: 'es2020',
+    banner: {js: FULL_LICENSE_BANNER},
+    define: compilerDefines,
+    outfile: path.join(tlDist, 'three-live-compiler-bundle.js'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/compiler-bundle.ts')],
+    bundle: true,
+    format: 'cjs',
+    minify: true,
+    target: 'es2020',
+    banner: {js: FULL_LICENSE_BANNER},
+    define: compilerDefines,
+    outfile: path.join(tlDist, 'three-live-compiler-bundle.cjs'),
+  });
+  const compilerBundleMin =
+      path.join(tlDist, 'three-live-compiler-bundle.min.js');
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/compiler-bundle.ts')],
     bundle: true,
     format: 'iife',
     globalName: 'ThreeEngine',
     minify: true,
     target: 'es2020',
     banner: {js: FULL_LICENSE_BANNER},
-    define: {
-      'IS_DEV': 'false',
-      'ENABLE_NATIVE_HOOKS': 'true',
-      'ENABLE_SERVER_EXTRACT': 'true',
-    },
-    outfile: engineJs,
+    define: compilerDefines,
+    outfile: compilerBundleMin,
   });
+  const engineJs = path.join(tlDist, 'three-author-engine.js');
+  fs.copyFileSync(compilerBundleMin, engineJs);
 
   const compilerAssetsDir = path.join(ROOT_DIR, 'compiler/assets');
   if (!fs.existsSync(compilerAssetsDir)) {
     fs.mkdirSync(compilerAssetsDir, { recursive: true });
   }
-  fs.copyFileSync(engineJs, path.join(compilerAssetsDir, 'three-author-engine.min.js'));
+  fs.copyFileSync(
+      compilerBundleMin,
+      path.join(compilerAssetsDir, 'three-author-engine.min.js'));
+
+  const engineRequirements = {
+    schemaVersion: 1,
+    bundle: 'three-live-compiler-bundle.min.js',
+    globalName: 'ThreeEngine',
+    hostContractGlobal: '__three_live_host__',
+    hostContractVersion: 1,
+    kernelsAbiVersion: 1,
+    runtimeLimits: {
+      loopIterationLimit: 250000,
+      recursionLimit: 256,
+      stackSizeLimit: 262144,
+    },
+    quotas: {
+      maxArrayBufferBytes: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_HEAP_BYTES),
+      maxStringRepeatChars: 4194304,
+      maxScriptBytes: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_SCRIPT_BYTES),
+      maxVertices: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_VERTICES),
+      maxMeshes: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_MESHES),
+      maxSceneNodes: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_MESHES) * 4,
+      maxIndices: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_INDICES),
+      maxTextures: Number(DEFAULT_DEFINES.SECURITY_3D_MAX_TEXTURES),
+      maxTextureDimension:
+          Number(DEFAULT_DEFINES.SECURITY_3D_MAX_TEXTURE_DIMENSION),
+    },
+    executionModel: {
+      executionCeilingMs:
+          Number(DEFAULT_DEFINES.SECURITY_3D_EXECUTION_CEILING_MS),
+      transcodeCeilingMs: 750,
+      interruptCheckOpcodes:
+          Number(DEFAULT_DEFINES.SECURITY_3D_INTERRUPT_CHECK_OPCODES),
+      requireBudgetedAsyncEvaluation: true,
+      boaBudgetEvaluator: 'Script::evaluate_async_with_budget',
+      forbidDynamicCodeEvaluation: true,
+      lockdownEntrypoint: 'ThreeEngine.installSandboxHardening()',
+      lockdownTargets: [
+        'globalThis.eval',
+        'globalThis.Function',
+        'Function.prototype.constructor',
+        'GeneratorFunction.prototype.constructor',
+        'AsyncFunction.prototype.constructor',
+        'AsyncGeneratorFunction.prototype.constructor',
+      ],
+      notes:
+          'Boa resets loop_iteration_limit per CallFrame and executes eval/Function synchronously without yielding. Hosts running untrusted scripts must call ThreeEngine.installSandboxHardening() prior to user code and evaluate ThreeEngine.wrapIsolatedScript(script) (or supply __three_live_host__.evalScript) via Script::evaluate_async_with_budget.',
+    },
+    threading: {
+      minNativeStackBytes: 8388608,
+      concurrentCallsPerRealm: false,
+    },
+  };
+  const engineReqJson = JSON.stringify(engineRequirements, null, 2) + '\n';
+  fs.writeFileSync(
+      path.join(THREE_LIVE_DIR, 'engine-requirements.json'), engineReqJson,
+      'utf8');
+  fs.writeFileSync(
+      path.join(tlDist, 'engine-requirements.json'), engineReqJson, 'utf8');
 
   // 7. three-live-element (ESM & CJS)
   buildTarget({
@@ -704,11 +788,19 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-live-ai.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-webgpu.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-tsl.d.ts'), rootDts);
+  fs.writeFileSync(
+      path.join(tlDist, 'three-live-compiler-bundle.d.ts'), rootDts);
 
   // Sync to root dist/ and examples
   if (!fs.existsSync(DIST_DIR)) {
     fs.mkdirSync(DIST_DIR, { recursive: true });
   }
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-compiler-bundle.min.js'),
+      path.join(DIST_DIR, 'three-live-compiler-bundle.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'engine-requirements.json'),
+      path.join(DIST_DIR, 'engine-requirements.json'));
   const sandboxHtmlSrc =
       path.join(THREE_LIVE_DIR, 'src/three-live-sandbox.html');
   fs.copyFileSync(sandboxHtmlSrc, path.join(tlDist, 'three-live-sandbox.html'));
@@ -1133,8 +1225,8 @@ function reportSizes() {
   console.log('Asset                                      Raw Size     Gzip Size     Budget');
   console.log('------------------------------------------------------------------------------');
   const files = [
-    {name: 'three-live-viewer.min.js', budgetKb: '34'},
-    {name: 'three-live.min.js', budgetKb: '82'},
+    {name: 'three-live-viewer.min.js', budgetKb: '35'},
+    {name: 'three-live.min.js', budgetKb: '86'},
     {name: 'three-live-studio.min.js', budgetKb: '36'},
     {name: 'three-live-cad.min.js', budgetKb: '20'},
     {name: 'three-live-kit-mechanical.min.js', budgetKb: '18'},
@@ -1148,14 +1240,15 @@ function reportSizes() {
     {name: 'three-live-ai.min.js', budgetKb: '35'},
     {name: 'three-live-webgpu.min.js', budgetKb: '23'},
     {name: 'three-live-tsl.min.js', budgetKb: '19'},
-    {name: 'three-live-full.min.js', budgetKb: '238'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '60'},
-    {name: 'xr-live.min.js', budgetKb: '94'},
+    {name: 'three-live-full.min.js', budgetKb: '242'},
+    {name: 'three-live-compiler-bundle.min.js', budgetKb: '260'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '62'},
+    {name: 'xr-live.min.js', budgetKb: '98'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '65'},
     {name: 'xr-live-sim.min.js', budgetKb: '30'},
     {name: 'xr-live-webgpu.min.js', budgetKb: '13'},
-    {name: 'xr-live-full.min.js', budgetKb: '348'},
+    {name: 'xr-live-full.min.js', budgetKb: '352'},
   ];
   const failures = [];
   for (const f of files) {

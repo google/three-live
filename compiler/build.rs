@@ -20,12 +20,35 @@ fn main() {
     // Notify rustc that this build is executed under Cargo
     println!("cargo:rustc-check-cfg=cfg(cargo_build)");
     println!("cargo:rustc-cfg=cargo_build");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    if target_os == "android" {
         println!("cargo:rustc-cdylib-link-arg=-Wl,-z,max-page-size=16384");
         println!("cargo:rustc-cdylib-link-arg=-Wl,-z,common-page-size=16384");
     }
+    if env::var_os("CARGO_FEATURE_BOA").is_none() {
+        let lds_path = Path::new(&manifest_dir).join("exported_symbols_kernels.lds");
+        println!("cargo:rerun-if-changed=exported_symbols_kernels.lds");
+        if target_os == "android" || target_os == "linux" {
+            assert!(lds_path.exists(), "Missing linker script at {}", lds_path.display());
+            println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libthree_live_kernels.so");
+            println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={}", lds_path.display());
+        }
+        return;
+    }
+    if target_os == "android" {
+        let compiler_lds = Path::new(&manifest_dir).join("exported_symbols_compiler.lds");
+        println!("cargo:rerun-if-changed=exported_symbols_compiler.lds");
+        if compiler_lds.exists() {
+            println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={}", compiler_lds.display());
+        }
+    }
     println!("cargo:rerun-if-changed=../three-live/src/constants.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/compiler-bundle.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/compiler-polyfills.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/ai-protocol.ts");
     println!("cargo:rerun-if-changed=../three-live/src/three-author.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/three-convert.ts");
     println!("cargo:rerun-if-changed=../three-live/src/three-view.ts");
     println!("cargo:rerun-if-changed=../three-live/src/xr-trait-schema.ts");
     println!("cargo:rerun-if-changed=../three-live/src/xr-sim-schema.ts");
@@ -38,8 +61,7 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set by Cargo");
     let dest_path = Path::new(&out_dir).join("three-author-engine.min.js");
 
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let entry_path = Path::new(&manifest_dir).join("../three-live/src/three-author.ts");
+    let entry_path = Path::new(&manifest_dir).join("../three-live/src/compiler-bundle.ts");
     let vendored_path = Path::new(&manifest_dir).join("assets/three-author-engine.min.js");
 
     let mut built_from_source = false;

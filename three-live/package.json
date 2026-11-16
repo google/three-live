@@ -68,6 +68,13 @@
       "import": "./dist/three-author.js",
       "require": "./dist/three-author.cjs"
     },
+    "./compiler-bundle": {
+      "types": "./dist/three-live-compiler-bundle.d.ts",
+      "import": "./dist/three-live-compiler-bundle.js",
+      "require": "./dist/three-live-compiler-bundle.cjs"
+    },
+    "./compiler-bundle.min.js": "./dist/three-live-compiler-bundle.min.js",
+    "./engine-requirements.json": "./dist/engine-requirements.json",
     "./xr": {
       "types": "./dist/three-xr.d.ts",
       "import": "./dist/three-xr.js",

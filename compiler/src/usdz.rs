@@ -18,6 +18,7 @@
 //! and 64-byte payload-aligned uncompressed ZIP archiving for Apple RealityKit.
 
 use crate::constants::SECURITY_3D_MAX_HEAP_BYTES;
+#[cfg(feature = "boa")]
 use boa_engine::{
     js_string,
     object::builtins::{JsArray, JsArrayBuffer, JsTypedArray, JsUint8Array},
@@ -31,6 +32,7 @@ use boa_engine::{
 /// these hooks are installed as frozen, non-deletable globals, a script could hand
 /// one an arbitrarily large buffer and force a proportional Rust allocation — and a
 /// Rust allocation failure aborts the process, which `catch_unwind` cannot contain.
+#[cfg(feature = "boa")]
 #[inline]
 fn check_native_input_size(len: usize, hook: &str) -> JsResult<()> {
     if len > SECURITY_3D_MAX_HEAP_BYTES {
@@ -140,13 +142,18 @@ pub struct ZipEntryRef<'a> {
     pub data: &'a [u8],
 }
 
+#[cfg(feature = "boa")]
 thread_local! {
     static CAPTURE_USDZ_DIRECT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static STASHED_USDZ_BYTES: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static CAPTURE_GLB_DIRECT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static STASHED_GLB_BYTES: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
 }
 
+#[cfg(feature = "boa")]
 struct DirectCaptureGuard;
 
+#[cfg(feature = "boa")]
 impl Drop for DirectCaptureGuard {
     fn drop(&mut self) {
         CAPTURE_USDZ_DIRECT.with(|c| c.set(false));
@@ -158,6 +165,7 @@ impl Drop for DirectCaptureGuard {
 
 /// Runs a closure with direct Rust USDZ buffer capture enabled, bypassing the Boa JS heap
 /// round-trip.
+#[cfg(feature = "boa")]
 pub fn with_direct_usdz_capture<F, R>(f: F) -> (R, Option<Vec<u8>>)
 where
     F: FnOnce() -> R,
@@ -170,8 +178,37 @@ where
     (res, captured)
 }
 
+#[cfg(feature = "boa")]
+struct DirectGlbCaptureGuard;
+
+#[cfg(feature = "boa")]
+impl Drop for DirectGlbCaptureGuard {
+    fn drop(&mut self) {
+        CAPTURE_GLB_DIRECT.with(|c| c.set(false));
+        STASHED_GLB_BYTES.with(|s| {
+            let _ = s.borrow_mut().take();
+        });
+    }
+}
+
+/// Runs a closure with direct Rust GLB buffer capture enabled, capturing the `Uint8Array`
+/// emitted by `sceneToGLB` without returning or re-extracting a JS TypedArray value.
+#[cfg(feature = "boa")]
+pub fn with_direct_glb_capture<F, R>(f: F) -> (R, Option<Vec<u8>>)
+where
+    F: FnOnce() -> R,
+{
+    let _guard = DirectGlbCaptureGuard;
+    CAPTURE_GLB_DIRECT.with(|c| c.set(true));
+    STASHED_GLB_BYTES.with(|s| *s.borrow_mut() = None);
+    let res = f();
+    let captured = STASHED_GLB_BYTES.with(|s| s.borrow_mut().take());
+    (res, captured)
+}
+
 /// Creates a Boa `JsUint8Array` from a byte slice with a single exact-sized 64-byte aligned
 /// allocation, avoiding `JsUint8Array::from_iter`'s `FlatMap` `size_hint() == 0` reallocation loop.
+#[cfg(feature = "boa")]
 pub fn js_uint8_array_from_slice(slice: &[u8], context: &mut Context) -> JsResult<JsUint8Array> {
     let mut aligned = boa_engine::object::builtins::AlignedVec::with_capacity(64, slice.len());
     aligned.extend_from_slice(slice);
@@ -364,6 +401,7 @@ pub fn build_usdz_zip(entries: &[ZipEntry]) -> Vec<u8> {
 }
 
 /// Helper to extract binary buffer bytes from either a TypedArray, ArrayBuffer, or Array.
+#[cfg(feature = "boa")]
 pub fn extract_byte_buffer(val: &JsValue, context: &mut Context) -> Result<Vec<u8>, String> {
     if let Some(obj) = val.as_object() {
         if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
@@ -422,6 +460,7 @@ pub fn extract_byte_buffer(val: &JsValue, context: &mut Context) -> Result<Vec<u
 }
 
 /// Native Boa hook for computing CRC-32 without copying `ArrayBuffer` memory.
+#[cfg(feature = "boa")]
 pub fn native_crc32(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     if let Some(val) = args.first() {
         if let Some(obj) = val.as_object() {
@@ -457,7 +496,7 @@ pub fn native_crc32(_this: &JsValue, args: &[JsValue], context: &mut Context) ->
 
 /// Formats USDA point3f triplets directly from raw IEEE-754 float bytes without intermediate
 /// Vec<f32> allocation.
-fn format_usda_points_from_bytes(bytes: &[u8]) -> String {
+pub fn format_usda_points_from_bytes(bytes: &[u8]) -> String {
     let pos_count = bytes.len() / 12;
     let mut s = String::with_capacity(pos_count * 32);
     for i in 0..pos_count {
@@ -491,6 +530,7 @@ fn format_usda_points_from_bytes(bytes: &[u8]) -> String {
 }
 
 /// Native Boa hook for formatting USDA points directly from JS TypedArray buffers.
+#[cfg(feature = "boa")]
 pub fn native_format_usda_points(
     _this: &JsValue,
     args: &[JsValue],
@@ -499,18 +539,25 @@ pub fn native_format_usda_points(
     if let Some(val) = args.first() {
         if let Some(obj) = val.as_object() {
             if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
-                if let Ok(buf_val) = typed_arr.buffer(context) {
-                    if let Some(buf_obj) = buf_val.as_object() {
-                        if let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj.clone()) {
-                            let offset = typed_arr.byte_offset(context).unwrap_or(0);
-                            let len = typed_arr.byte_length(context).unwrap_or(0);
-                            if let Some(data) = arr_buf.data() {
-                                let end = offset.saturating_add(len).min(data.len());
-                                let start = offset.min(end);
-                                let slice = &data[start..end];
-                                check_native_input_size(slice.len(), "native_format_usda_points")?;
-                                let formatted = format_usda_points_from_bytes(slice);
-                                return Ok(JsValue::from(js_string!(formatted)));
+                if typed_arr.kind()
+                    == Some(boa_engine::builtins::typed_array::TypedArrayKind::Float32)
+                {
+                    if let Ok(buf_val) = typed_arr.buffer(context) {
+                        if let Some(buf_obj) = buf_val.as_object() {
+                            if let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj.clone()) {
+                                let offset = typed_arr.byte_offset(context).unwrap_or(0);
+                                let len = typed_arr.byte_length(context).unwrap_or(0);
+                                if let Some(data) = arr_buf.data() {
+                                    let end = offset.saturating_add(len).min(data.len());
+                                    let start = offset.min(end);
+                                    let slice = &data[start..end];
+                                    check_native_input_size(
+                                        slice.len(),
+                                        "native_format_usda_points",
+                                    )?;
+                                    let formatted = format_usda_points_from_bytes(slice);
+                                    return Ok(JsValue::from(js_string!(formatted)));
+                                }
                             }
                         }
                     }
@@ -526,7 +573,7 @@ pub fn native_format_usda_points(
 }
 
 /// Formats USDA texCoord2f (u, 1 - v) pairs directly from raw IEEE-754 float bytes.
-fn format_usda_uvs_from_bytes(bytes: &[u8]) -> String {
+pub fn format_usda_uvs_from_bytes(bytes: &[u8]) -> String {
     let uv_count = bytes.len() / 8;
     let mut s = String::with_capacity(uv_count * 24);
     for i in 0..uv_count {
@@ -552,6 +599,7 @@ fn format_usda_uvs_from_bytes(bytes: &[u8]) -> String {
 }
 
 /// Native Boa hook for formatting USDA UVs directly from JS Float32Array buffers.
+#[cfg(feature = "boa")]
 pub fn native_format_usda_uvs(
     _this: &JsValue,
     args: &[JsValue],
@@ -560,18 +608,22 @@ pub fn native_format_usda_uvs(
     if let Some(val) = args.first() {
         if let Some(obj) = val.as_object() {
             if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
-                if let Ok(buf_val) = typed_arr.buffer(context) {
-                    if let Some(buf_obj) = buf_val.as_object() {
-                        if let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj.clone()) {
-                            let offset = typed_arr.byte_offset(context).unwrap_or(0);
-                            let len = typed_arr.byte_length(context).unwrap_or(0);
-                            if let Some(data) = arr_buf.data() {
-                                let end = offset.saturating_add(len).min(data.len());
-                                let start = offset.min(end);
-                                let slice = &data[start..end];
-                                check_native_input_size(slice.len(), "native_format_usda_uvs")?;
-                                let formatted = format_usda_uvs_from_bytes(slice);
-                                return Ok(JsValue::from(js_string!(formatted)));
+                if typed_arr.kind()
+                    == Some(boa_engine::builtins::typed_array::TypedArrayKind::Float32)
+                {
+                    if let Ok(buf_val) = typed_arr.buffer(context) {
+                        if let Some(buf_obj) = buf_val.as_object() {
+                            if let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj.clone()) {
+                                let offset = typed_arr.byte_offset(context).unwrap_or(0);
+                                let len = typed_arr.byte_length(context).unwrap_or(0);
+                                if let Some(data) = arr_buf.data() {
+                                    let end = offset.saturating_add(len).min(data.len());
+                                    let start = offset.min(end);
+                                    let slice = &data[start..end];
+                                    check_native_input_size(slice.len(), "native_format_usda_uvs")?;
+                                    let formatted = format_usda_uvs_from_bytes(slice);
+                                    return Ok(JsValue::from(js_string!(formatted)));
+                                }
                             }
                         }
                     }
@@ -597,7 +649,35 @@ pub fn native_format_usda_uvs(
     Ok(JsValue::from(js_string!("")))
 }
 
+/// Formats USDA integer index arrays directly from raw `u16` (`is_u16 = true`) or `u32` bytes.
+pub fn format_usda_ints_from_bytes(slice: &[u8], is_u16: bool) -> String {
+    if is_u16 {
+        let count = slice.len() / 2;
+        let mut s = String::with_capacity(count * 8);
+        for (i, c) in slice.as_chunks::<2>().0.iter().enumerate() {
+            let v = u16::from_ne_bytes([c[0], c[1]]);
+            s.push_str(&v.to_string());
+            if i + 1 < count {
+                s.push_str(", ");
+            }
+        }
+        s
+    } else {
+        let count = slice.len() / 4;
+        let mut s = String::with_capacity(count * 8);
+        for (i, c) in slice.as_chunks::<4>().0.iter().enumerate() {
+            let v = u32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+            s.push_str(&v.to_string());
+            if i + 1 < count {
+                s.push_str(", ");
+            }
+        }
+        s
+    }
+}
+
 /// Native Boa hook for formatting integer index arrays directly from JS Uint16Array/Uint32Array.
+#[cfg(feature = "boa")]
 pub fn native_format_usda_ints(
     _this: &JsValue,
     args: &[JsValue],
@@ -616,34 +696,12 @@ pub fn native_format_usda_ints(
                                 let start = offset.min(end);
                                 let slice = &data[start..end];
                                 check_native_input_size(slice.len(), "native_format_usda_ints")?;
-                                let kind = typed_arr.kind();
-                                if kind
+                                let is_u16 = typed_arr.kind()
                                     == Some(
                                         boa_engine::builtins::typed_array::TypedArrayKind::Uint16,
-                                    )
-                                {
-                                    let count = slice.len() / 2;
-                                    let mut s = String::with_capacity(count * 8);
-                                    for (i, c) in slice.as_chunks::<2>().0.iter().enumerate() {
-                                        let v = u16::from_ne_bytes([c[0], c[1]]);
-                                        s.push_str(&v.to_string());
-                                        if i + 1 < count {
-                                            s.push_str(", ");
-                                        }
-                                    }
-                                    return Ok(JsValue::from(js_string!(s)));
-                                } else {
-                                    let count = slice.len() / 4;
-                                    let mut s = String::with_capacity(count * 8);
-                                    for (i, c) in slice.as_chunks::<4>().0.iter().enumerate() {
-                                        let v = u32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
-                                        s.push_str(&v.to_string());
-                                        if i + 1 < count {
-                                            s.push_str(", ");
-                                        }
-                                    }
-                                    return Ok(JsValue::from(js_string!(s)));
-                                }
+                                    );
+                                let s = format_usda_ints_from_bytes(slice, is_u16);
+                                return Ok(JsValue::from(js_string!(s)));
                             }
                         }
                     }
@@ -655,6 +713,7 @@ pub fn native_format_usda_ints(
 }
 
 /// Native Boa hook for assembling a 64-byte aligned USDZ ZIP package with zero entry copies.
+#[cfg(feature = "boa")]
 pub fn native_build_usdz_zip(
     _this: &JsValue,
     args: &[JsValue],
@@ -785,6 +844,7 @@ pub fn native_build_usdz_zip(
 
 /// Native Boa hook for UTF-8 encoding strings (`TextEncoder.prototype.encode`) in O(1) JS loop
 /// iterations so large USDA scene graphs (>250 KB) do not trip Boa's loop iteration limit.
+#[cfg(feature = "boa")]
 pub fn native_utf8_encode(
     _this: &JsValue,
     args: &[JsValue],
@@ -805,6 +865,7 @@ pub fn native_utf8_encode(
 
 /// Native Boa hook for UTF-8 decoding byte buffers (`TextDecoder.prototype.decode`) in O(1) JS
 /// loop iterations.
+#[cfg(feature = "boa")]
 pub fn native_utf8_decode(
     _this: &JsValue,
     args: &[JsValue],
@@ -832,7 +893,7 @@ fn srgb_byte_to_linear(b: u8) -> f64 {
     }
 }
 
-pub(crate) fn encode_rgba_png_data_uri_impl(
+pub fn encode_rgba_png_data_uri_impl(
     src: &[u8],
     src_w: usize,
     src_h: usize,
@@ -1013,6 +1074,7 @@ pub(crate) fn encode_rgba_png_data_uri_impl(
 
 /// Native Boa hook for encoding RGBA8 pixel buffers (`THREE.CanvasTexture`) into stored-DEFLATE
 /// `data:image/png;base64,...` URIs + linear `avgColor` in O(1) JS loop iterations.
+#[cfg(feature = "boa")]
 pub fn native_encode_rgba_png(
     _this: &JsValue,
     args: &[JsValue],
@@ -1075,32 +1137,20 @@ pub fn native_encode_rgba_png(
     Ok(JsValue::from(arr))
 }
 
-/// Native Boa hook for decoding `data:image/(png|jpeg);base64,...` URIs during USDZ packaging
-/// in O(1) JS loop iterations.
-pub fn native_decode_b64_image(
-    _this: &JsValue,
-    args: &[JsValue],
-    context: &mut Context,
-) -> JsResult<JsValue> {
-    let Some(val) = args.first() else {
-        return Ok(JsValue::null());
-    };
-    let Some(js_str) = val.as_string() else {
-        return Ok(JsValue::null());
-    };
-    check_native_input_size(js_str.len(), "native_decode_b64_image")?;
-    let s = js_str.to_std_string_escaped();
-    check_native_input_size(s.len(), "native_decode_b64_image")?;
-    let Some(comma_idx) = s.find(',') else {
-        return Ok(JsValue::null());
-    };
+/// Decodes `data:image/(png|jpeg|jpg);base64,...` URIs into raw PNG/JPEG bytes, recompressing
+/// uncompressed stored PNGs via `miniz_oxide` for compact USDZ archives.
+pub fn decode_b64_image_data_uri(s: &str) -> Option<Vec<u8>> {
+    if s.len() > SECURITY_3D_MAX_HEAP_BYTES {
+        return None;
+    }
+    let comma_idx = s.find(',')?;
     let header = s[..comma_idx].to_ascii_lowercase();
     if !(header.starts_with("data:image/png")
         || header.starts_with("data:image/jpeg")
         || header.starts_with("data:image/jpg"))
         || !header.ends_with(";base64")
     {
-        return Ok(JsValue::null());
+        return None;
     }
     let payload = s[comma_idx + 1..].as_bytes();
     let mut out = Vec::with_capacity((payload.len() * 3) / 4);
@@ -1120,14 +1170,14 @@ pub fn native_decode_b64_image(
             b'=' => {
                 pad += 1;
                 if pad > 2 || qlen < 2 {
-                    return Ok(JsValue::null());
+                    return None;
                 }
                 0
             }
-            _ => return Ok(JsValue::null()),
+            _ => return None,
         };
         if pad > 0 && b != b'=' {
-            return Ok(JsValue::null());
+            return None;
         }
         quad[qlen] = v;
         qlen += 1;
@@ -1146,25 +1196,128 @@ pub fn native_decode_b64_image(
             qlen = 0;
             if pad > 0 {
                 if payload[byte_idx + 1..].iter().any(|c| !c.is_ascii_whitespace()) {
-                    return Ok(JsValue::null());
+                    return None;
                 }
                 break;
             }
         }
     }
-    if qlen != 0 {
-        return Ok(JsValue::null());
+    if qlen != 0 || out.len() > SECURITY_3D_MAX_HEAP_BYTES {
+        return None;
     }
-    check_native_input_size(out.len(), "native_decode_b64_image")?;
-    // USDZ packaging: DEFLATE the stored PNGs the in-engine encoders write.
-    if let Some(packed) = crate::render::recompress_stored_png(&out) {
+    if let Some(packed) = crate::kernels::recompress_stored_png(&out) {
         out = packed;
     }
+    Some(out)
+}
+
+/// Native Boa hook for decoding `data:image/(png|jpeg);base64,...` URIs during USDZ packaging
+/// in O(1) JS loop iterations.
+#[cfg(feature = "boa")]
+pub fn native_decode_b64_image(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let Some(val) = args.first() else {
+        return Ok(JsValue::null());
+    };
+    let Some(js_str) = val.as_string() else {
+        return Ok(JsValue::null());
+    };
+    check_native_input_size(js_str.len(), "native_decode_b64_image")?;
+    let s = js_str.to_std_string_escaped();
+    check_native_input_size(s.len(), "native_decode_b64_image")?;
+    let Some(out) = decode_b64_image_data_uri(&s) else {
+        return Ok(JsValue::null());
+    };
     let arr = js_uint8_array_from_slice(&out, context)?;
     Ok(JsValue::from(arr))
 }
 
-/// Registers native USDZ accelerator functions on the Boa global object.
+/// Native Boa hook for capturing compiled GLB bytes directly from `sceneToGLB()` when
+/// `with_direct_glb_capture` is active.
+#[cfg(feature = "boa")]
+pub fn native_stash_glb(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    if !CAPTURE_GLB_DIRECT.with(|c| c.get()) {
+        return Ok(JsValue::new(false));
+    }
+    let Some(val) = args.first() else {
+        return Ok(JsValue::new(false));
+    };
+    if let Some(obj) = val.as_object() {
+        if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+            if let Ok(buf_val) = typed_arr.buffer(context) {
+                if let Some(buf_obj) = buf_val.as_object() {
+                    if let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj) {
+                        if let Some(data) = arr_buf.data() {
+                            let offset = typed_arr.byte_offset(context).unwrap_or(0);
+                            let len = typed_arr.byte_length(context).unwrap_or(0);
+                            let end = offset.saturating_add(len).min(data.len());
+                            let start = offset.min(end);
+                            let slice = &data[start..end];
+                            check_native_input_size(slice.len(), "native_stash_glb")?;
+                            STASHED_GLB_BYTES.with(|s| *s.borrow_mut() = Some(slice.to_vec()));
+                            return Ok(JsValue::new(true));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let bytes =
+        extract_byte_buffer(val, context).map_err(|e| JsNativeError::typ().with_message(e))?;
+    STASHED_GLB_BYTES.with(|s| *s.borrow_mut() = Some(bytes));
+    Ok(JsValue::new(true))
+}
+
+/// Native Boa hook for DEFLATE-recompressing stored `data:image/png;base64,...` URIs emitted by
+/// procedural and AI texture encoders during `sceneToGLB`.
+#[cfg(feature = "boa")]
+pub fn native_compress_png_uri(
+    _this: &JsValue,
+    args: &[JsValue],
+    _context: &mut Context,
+) -> JsResult<JsValue> {
+    let Some(val) = args.first() else {
+        return Ok(JsValue::null());
+    };
+    let Some(js_str) = val.as_string() else {
+        return Ok(JsValue::null());
+    };
+    check_native_input_size(js_str.len(), "native_compress_png_uri")?;
+    let s = js_str.to_std_string_escaped();
+    check_native_input_size(s.len(), "native_compress_png_uri")?;
+    let compressed = crate::kernels::compress_png_data_uri(&s);
+    Ok(JsValue::from(js_string!(compressed.as_ref())))
+}
+
+/// Native Boa hook for decoding PNG bytes into `[width, height, rgba_uint8_array]`.
+#[cfg(feature = "boa")]
+pub fn native_decode_png(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let Some(val) = args.first() else {
+        return Ok(JsValue::null());
+    };
+    let bytes =
+        extract_byte_buffer(val, context).map_err(|e| JsNativeError::typ().with_message(e))?;
+    let Ok((w, h, rgba)) = crate::kernels::decode_png_rgba(&bytes) else {
+        return Ok(JsValue::null());
+    };
+    let arr = js_uint8_array_from_slice(&rgba, context)?;
+    let res = JsArray::from_iter([JsValue::new(w), JsValue::new(h), JsValue::from(arr)], context);
+    Ok(JsValue::from(res))
+}
+
+/// Registers native USDZ & GLB accelerator functions on the Boa global object.
+#[cfg(feature = "boa")]
 pub fn register_native_usdz_callables(context: &mut Context) -> JsResult<()> {
     context.register_global_builtin_callable(
         js_string!("__three_live_native_crc32__"),
@@ -1210,6 +1363,21 @@ pub fn register_native_usdz_callables(context: &mut Context) -> JsResult<()> {
         js_string!("__three_live_native_decode_b64_image__"),
         1,
         NativeFunction::from_fn_ptr(native_decode_b64_image),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_stash_glb__"),
+        1,
+        NativeFunction::from_fn_ptr(native_stash_glb),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_compress_png_uri__"),
+        1,
+        NativeFunction::from_fn_ptr(native_compress_png_uri),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_decode_png__"),
+        1,
+        NativeFunction::from_fn_ptr(native_decode_png),
     )?;
     Ok(())
 }
@@ -1326,6 +1494,7 @@ mod tests {
         assert_eq!(entries_found, 2);
     }
 
+    #[cfg(feature = "boa")]
     #[test]
     fn test_direct_usdz_capture_and_from_slice() {
         let mut context = Context::default();

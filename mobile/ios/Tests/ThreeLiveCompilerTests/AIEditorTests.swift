@@ -15,6 +15,7 @@
 import XCTest
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 /// Tap & Speak on iOS (B2b-3), exercised against the real shared Rust core: prompts, reply
 /// parsing, sandbox validation, and the realtime voice protocol all come from `three_live_ai_call`.

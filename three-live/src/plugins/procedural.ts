@@ -5759,11 +5759,25 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     // token (Boa) or the pack object's identity (Web workers).
     const g = globalThis as Record<string, unknown>;
     const nat = g['__three_live_native_texture_pack__'];
+    const host = g['__three_live_host__'] as
+      | {
+          texturePackLookup?: (
+            key: string,
+            spec: {prompt: string; size: number; seed: number},
+          ) => Uint8Array | null | undefined;
+          texturePackToken?: () => number;
+        }
+      | undefined;
     const pack = g['__three_live_texture_pack__'];
     let token = 0;
     if (typeof nat === 'function') {
       const tok = g['__three_live_native_texture_pack_token__'];
       token = typeof tok === 'function' ? Number(tok()) || 0 : 0;
+    } else if (typeof host?.texturePackLookup === 'function') {
+      token =
+        typeof host.texturePackToken === 'function'
+          ? Number(host.texturePackToken()) || 0
+          : 0;
     } else if (pack && typeof pack === 'object') {
       token = aiPackIds.get(pack) ?? 0;
       if (!token) aiPackIds.set(pack, (token = ++aiPackSeq));
@@ -5775,6 +5789,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     if (typeof nat === 'function') {
       const res = nat(prompt, size, seed, ns, rough, metal);
       if (Array.isArray(res) && res.length === 3) maps = res as Uint8Array[];
+    } else if (typeof host?.texturePackLookup === 'function') {
+      const rgba = host.texturePackLookup(key, {prompt, size, seed});
+      if (rgba instanceof Uint8Array && rgba.length === size * size * 4) {
+        maps = [rgba, ...deriveTextureMaps(rgba, size, ns, rough, metal)];
+      }
     } else {
       // tslint:disable-next-line:no-any Host-supplied pack entry.
       const e: any =

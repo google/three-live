@@ -142,7 +142,7 @@ android {
 }
 
 dependencies {
-  api(project(":mobile:android"))
+  api(project(":mobile:android-runtime"))
 
   // Keep in sync with mobile/examples/android_compose/build.gradle.kts.
   api("com.google.android.filament:filament-android:$filamentVersion")
@@ -159,7 +159,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "filament"
-      version = "1.4.0"
+      version = "1.3.2"
       afterEvaluate { from(components["release"]) }
 
       pom {

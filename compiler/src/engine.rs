@@ -33,7 +33,7 @@ use boa_engine::{
 };
 
 #[cfg(not(cargo_build))]
-use three_author_engine_asset::EMBEDDED_THREE_AUTHOR_ENGINE_JS;
+pub use three_author_engine_asset::EMBEDDED_THREE_AUTHOR_ENGINE_JS;
 
 #[cfg(cargo_build)]
 pub const EMBEDDED_THREE_AUTHOR_ENGINE_JS: &str =
@@ -116,266 +116,13 @@ impl ThreeEngine {
         crate::ai_texture::register_native_texture_callables(&mut context)
             .map_err(|e| format!("Failed to register native texture callables: {}", e))?;
 
-        // 2.2. Initialize standard Web encoding polyfills backed by native Rust UTF-8 hooks
-        let polyfills = r#"
-            if (typeof TextEncoder === 'undefined') {
-                globalThis.TextEncoder = class TextEncoder {
-                    encode(str = '') {
-                        return globalThis.__three_live_native_utf8_encode__(String(str));
-                    }
-                };
-            }
-            if (typeof TextDecoder === 'undefined') {
-                globalThis.TextDecoder = class TextDecoder {
-                    decode(bytes) {
-                        if (bytes === undefined || bytes === null) return '';
-                        return globalThis.__three_live_native_utf8_decode__(bytes);
-                    }
-                };
-            }
-        "#;
-        context
-            .eval(Source::from_bytes(polyfills.as_bytes()))
-            .map_err(|e| format!("Failed to initialize encoding polyfills: {}", e))?;
-
-        // 3. Pre-warm context with Three.js shim environment
+        // 3. Pre-warm context with Three.js shim + hosted compiler bundle (`ThreeEngine`)
         context
             .eval(Source::from_bytes(EMBEDDED_THREE_AUTHOR_ENGINE_JS.as_bytes()))
             .map_err(|e| format!("Failed to initialize THREE shim: {}", e))?;
 
         // 4. Harden VM intrinsics, freeze prototypes, and block dynamic code evaluation
-        let hardening = r#"
-            (() => {
-                const freezeObjAndProto = (obj) => {
-                    if (!obj) return;
-                    try { Object.freeze(obj); } catch (_) {}
-                    if (obj.prototype) {
-                        try { Object.freeze(obj.prototype); } catch (_) {}
-                    }
-                };
-
-                // Close every route back into the engine's *synchronous* evaluator.
-                //
-                // The execution deadline works by driving Boa's budgeted, yielding VM
-                // loop and checking the wall clock at each yield. The `eval` builtin
-                // and the `Function` constructor both run their body on the
-                // synchronous runner, which does not return control until the body has
-                // finished — so leaving either reachable would let a script opt out of
-                // the deadline entirely with `eval("while(true){}")`. The authoring
-                // engine uses neither.
-                //
-                // This has to run *before* the freeze pass: once a prototype is frozen,
-                // its `constructor` back-reference can no longer be replaced, and
-                // `(function(){}).constructor` is just as good as `Function`.
-                const RealFunction = Function;
-                const blockDynamicCode = function () {
-                    throw new EvalError(
-                        'Dynamic code evaluation is disabled in the Three-Live sandbox'
-                    );
-                };
-                const dynamicCodeProtos = [];
-                const collectProto = (sample) => {
-                    try {
-                        const proto = Object.getPrototypeOf(sample);
-                        if (proto) dynamicCodeProtos.push(proto);
-                    } catch (_) {}
-                };
-                collectProto(function () {});
-                try { collectProto(function* () {}); } catch (_) {}
-                try { collectProto(async function () {}); } catch (_) {}
-                try { collectProto(async function* () {}); } catch (_) {}
-                for (const proto of dynamicCodeProtos) {
-                    try {
-                        Object.defineProperty(proto, 'constructor', {
-                            value: blockDynamicCode,
-                            writable: false,
-                            configurable: false
-                        });
-                    } catch (_) {}
-                }
-                for (const name of ['eval', 'Function']) {
-                    try {
-                        Object.defineProperty(globalThis, name, {
-                            value: blockDynamicCode,
-                            writable: false,
-                            configurable: false
-                        });
-                    } catch (_) {}
-                }
-
-                // Bound String.prototype.repeat / padStart / padEnd to prevent single-call
-                // multi-hundred-MB string allocations before any VM opcode yield occurs.
-                //
-                // This is a partial mitigation. `HostHooks::max_buffer_size` only covers
-                // ArrayBuffer, and Boa exposes no general heap ceiling, so other
-                // amplifiers (repeated `s += s`, `new Array(n).fill()`, `Array#join`)
-                // can still allocate large amounts of memory between deadline checks.
-                // Hostile-input deployments should also rely on process-level memory
-                // limits.
-                const MAX_SANDBOX_STRING_LEN = 4 * 1024 * 1024;
-                const origRepeat = String.prototype.repeat;
-                const origPadStart = String.prototype.padStart;
-                const origPadEnd = String.prototype.padEnd;
-                Object.defineProperty(String.prototype, 'repeat', {
-                    value: function (count) {
-                        const str = String(this);
-                        const n = Number(count);
-                        if (n > 0 && str.length * n > MAX_SANDBOX_STRING_LEN) {
-                            throw new RangeError(
-                                'SecurityError: String.prototype.repeat exceeds sandbox string limit'
-                            );
-                        }
-                        return origRepeat.call(str, count);
-                    },
-                    writable: false,
-                    configurable: false
-                });
-                Object.defineProperty(String.prototype, 'padStart', {
-                    value: function (targetLength, padString) {
-                        if (Number(targetLength) > MAX_SANDBOX_STRING_LEN) {
-                            throw new RangeError(
-                                'SecurityError: String.prototype.padStart exceeds sandbox string limit'
-                            );
-                        }
-                        return origPadStart.call(this, targetLength, padString);
-                    },
-                    writable: false,
-                    configurable: false
-                });
-                Object.defineProperty(String.prototype, 'padEnd', {
-                    value: function (targetLength, padString) {
-                        if (Number(targetLength) > MAX_SANDBOX_STRING_LEN) {
-                            throw new RangeError(
-                                'SecurityError: String.prototype.padEnd exceeds sandbox string limit'
-                            );
-                        }
-                        return origPadEnd.call(this, targetLength, padString);
-                    },
-                    writable: false,
-                    configurable: false
-                });
-
-                [
-                    Object, Array, RealFunction, blockDynamicCode, String, Number, Boolean, RegExp, Date, Error,
-                    Map, Set, Promise, ArrayBuffer, DataView,
-                    Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
-                    Int32Array, Uint32Array, Float32Array, Float64Array,
-                    Math, JSON, TextEncoder, TextDecoder
-                ].forEach(freezeObjAndProto);
-
-
-                if (typeof THREE === 'object' && THREE !== null) {
-                    for (const key of Object.keys(THREE)) {
-                        freezeObjAndProto(THREE[key]);
-                    }
-                    const authNs = globalThis.__THREE_LIVE_REGISTRY__?.authorNamespace;
-                    if (authNs && typeof authNs === 'object') {
-                        for (const key of Object.keys(authNs)) {
-                            freezeObjAndProto(authNs[key]);
-                        }
-                        try { Object.freeze(authNs); } catch (_) {}
-                    }
-                    try { Object.freeze(THREE); } catch (_) {}
-                    try {
-                        Object.defineProperty(globalThis, 'THREE', {
-                            value: THREE,
-                            writable: false,
-                            configurable: false
-                        });
-                    } catch (_) {}
-                }
-                if (typeof globalThis.document === 'object' && globalThis.document !== null) {
-                    try {
-                        if (globalThis.document.body) Object.freeze(globalThis.document.body);
-                        if (globalThis.document.documentElement) Object.freeze(globalThis.document.documentElement);
-                        Object.freeze(globalThis.document);
-                        Object.defineProperty(globalThis, 'document', {
-                            value: globalThis.document,
-                            writable: false,
-                            configurable: false
-                        });
-                    } catch (_) {}
-                }
-                if (typeof globalThis.window === 'object' && globalThis.window !== null && globalThis.window !== globalThis) {
-                    try {
-                        Object.freeze(globalThis.window);
-                        Object.defineProperty(globalThis, 'window', {
-                            value: globalThis.window,
-                            writable: false,
-                            configurable: false
-                        });
-                    } catch (_) {}
-                }
-
-                const nativeHooks = [
-                    '__three_live_native_crc32__',
-                    '__three_live_native_build_usdz_zip__',
-                    '__three_live_native_format_usda_points__',
-                    '__three_live_native_format_usda_uvs__',
-                    '__three_live_native_format_usda_ints__',
-                    '__three_live_native_utf8_encode__',
-                    '__three_live_native_utf8_decode__',
-                    '__three_live_native_encode_rgba_png__',
-                    '__three_live_native_decode_b64_image__',
-                    '__three_live_native_torus_knot__',
-                    '__three_live_native_sphere__',
-                    '__three_live_native_cylinder__',
-                    '__three_live_native_box__',
-                    '__three_live_native_plane__',
-                    '__three_live_native_torus__',
-                    '__three_live_native_csg_boolean__',
-                    '__three_live_native_f32_array__',
-                    '__three_live_native_index_array__',
-                    '__three_live_native_compute_vertex_normals__',
-                    '__three_live_native_material_preset__',
-                    '__three_live_native_texture_pack__',
-                    '__three_live_native_texture_pack_token__'
-                ];
-                for (const hookName of nativeHooks) {
-                    if (typeof globalThis[hookName] === 'function') {
-                        const fn = globalThis[hookName];
-                        try {
-                            Object.defineProperty(globalThis, hookName, {
-                                value: fn,
-                                writable: false,
-                                configurable: false
-                            });
-                        } catch (_) {}
-                    }
-                }
-
-                const OriginalFunction = Function;
-                const resetScene = globalThis.__three_live_reset_scene__;
-                if (typeof resetScene === 'function') {
-                    resetScene();
-                }
-                const baselineKeys = new Set(Reflect.ownKeys(globalThis));
-
-                const scrubGlobals = () => {
-                    if (typeof resetScene === 'function') {
-                        resetScene();
-                    }
-                    for (const key of Reflect.ownKeys(globalThis)) {
-                        if (!baselineKeys.has(key)) {
-                            try { delete globalThis[key]; } catch (_) {}
-                            // Top-level `var` and function declarations create
-                            // non-configurable globals that `delete` cannot remove;
-                            // blank them so the next script on a reused engine never
-                            // sees a previous scene's values.
-                            if (Object.prototype.hasOwnProperty.call(globalThis, key)) {
-                                try { globalThis[key] = undefined; } catch (_) {}
-                            }
-                        }
-                    }
-                };
-
-                Object.defineProperty(globalThis, '__three_live_scrub_globals__', {
-                    value: scrubGlobals,
-                    writable: false,
-                    configurable: false
-                });
-            })();
-        "#;
+        let hardening = "ThreeEngine.installSandboxHardening({ disableSyncCompile: true });";
         context
             .eval(Source::from_bytes(hardening.as_bytes()))
             .map_err(|e| format!("Failed to harden VM environment: {}", e))?;
@@ -477,34 +224,32 @@ impl ThreeEngine {
             .eval(Source::from_bytes(b"__three_live_scrub_globals__();"))
             .map_err(|e| format!("Failed to reset sandbox globals: {}", e))?;
 
-        // Parse the user source as a top-level script rather than handing it to the JS
-        // `eval` builtin, which is what the old helper did. That detail is the whole
-        // fix: `eval` runs its body on Boa's *synchronous* runner, so the body finishes
-        // before control ever comes back to us and the outer frame's budget is never
-        // consulted — the deadline simply would not fire.
-        //
-        // The block wrapper restores the one thing indirect `eval` gave us for free:
-        // a fresh scope per run. At the top level of a script, `let`/`const`/`class`
-        // land in the *global* lexical environment and survive into the next compile,
-        // so a second script declaring the same name would fail with "duplicate
-        // lexical declaration". `var` still reaches the global object, exactly as it
-        // did under `eval`, and `__three_live_scrub_globals__` clears it.
-        //
-        // A script can of course close the block early. That costs it the isolation and
-        // grants it nothing: the wrapper is a scoping device, not a privilege boundary,
-        // and the code runs in the same realm with the same globals either way.
-        let takes_dt = {
-            let lower = script.to_ascii_lowercase();
-            lower.contains("function animate(dt")
-                || lower.contains("function animate(delta")
-                || lower.contains("function animate(step")
-                || lower.contains("animate = (dt")
-                || lower.contains("animate = function(dt")
-        };
-        let wrapped = format!(
-            "{{\n{}\n;\nif (typeof scene === 'object' && scene !== null && Array.isArray(scene.children)) {{ globalThis.scene = scene; }}\nif (typeof camera === 'object' && camera !== null && camera.position) {{ globalThis.camera = camera; }}\nif (typeof animate === 'function') {{ globalThis.animate = animate; globalThis.__three_live_animate_takes_dt__ = {}; }}\n}}",
-            script, takes_dt
-        );
+        // Delegate syntax validation (`FunctionBody` parse in an isolated function scope,
+        // without mutating `context.realm().scope()` or executing any user code) and IIFE
+        // wrapping to `ThreeEngine.wrapIsolatedScript(script)`.
+        let engine_obj = self
+            .context
+            .global_object()
+            .get(js_string!("ThreeEngine"), &mut self.context)
+            .ok()
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| "ThreeEngine is missing from globalThis".to_string())?;
+        let wrap_fn = engine_obj
+            .get(js_string!("wrapIsolatedScript"), &mut self.context)
+            .ok()
+            .and_then(|v| v.as_callable())
+            .ok_or_else(|| "ThreeEngine.wrapIsolatedScript is missing".to_string())?;
+        let wrapped_val = wrap_fn
+            .call(
+                &JsValue::from(engine_obj),
+                &[JsValue::from(js_string!(script))],
+                &mut self.context,
+            )
+            .map_err(|e| format!("Three.js script error: {}", e))?;
+        let wrapped = wrapped_val
+            .as_string()
+            .map(|s| s.to_std_string_escaped())
+            .ok_or_else(|| "wrapIsolatedScript did not return a string".to_string())?;
         self.eval_with_deadline(
             &wrapped,
             clock,
@@ -657,6 +402,69 @@ impl ThreeEngine {
         Ok((results, time_varying))
     }
 
+    /// Directly compiles a Three.js scene script into a binary glTF 2.0 (`.glb`) archive using
+    /// the unified TypeScript `sceneToGLB` serializer with zero-copy native buffer capture.
+    pub fn compile_glb(&mut self, script: &str) -> Result<Vec<u8>, String> {
+        if self.poisoned {
+            return Err("SecurityError: JS engine is poisoned after a prior timeout".to_string());
+        }
+        if script.len() > SECURITY_3D_MAX_SCRIPT_BYTES {
+            return Err(format!(
+                "Script length ({} bytes) exceeds SECURITY_3D_MAX_SCRIPT_BYTES ({})",
+                script.len(),
+                SECURITY_3D_MAX_SCRIPT_BYTES
+            ));
+        }
+
+        let clock = Stopwatch::start();
+
+        // 1. Evaluate user script under strict SECURITY_3D_EXECUTION_CEILING_MS
+        if let Err(e) = self.eval_isolated_script(script, &clock) {
+            let _ = self.reset_scene();
+            return Err(e);
+        }
+
+        // 2. Serialize populated scene via `ThreeEngine.serializeCurrentSceneToGLB()` with direct
+        //    zero-copy Rust capture (`__three_live_native_stash_glb__`).
+        let glb_call = "ThreeEngine.serializeCurrentSceneToGLB();";
+        let (eval_res, stashed_glb) = crate::usdz::with_direct_glb_capture(|| {
+            self.eval_with_deadline(
+                glb_call,
+                &clock,
+                SECURITY_3D_TRANSCODE_CEILING_MS,
+                "SECURITY_3D_TRANSCODE_CEILING_MS",
+                "sceneToGLB() evaluation failed",
+            )
+        });
+        let glb_val = match eval_res {
+            Ok(val) => val,
+            Err(e) => {
+                let _ = self.reset_scene();
+                return Err(e);
+            }
+        };
+
+        let glb_bytes = match stashed_glb {
+            Some(bytes) => bytes,
+            None => crate::usdz::extract_byte_buffer(&glb_val, &mut self.context).map_err(|e| {
+                let _ = self.reset_scene();
+                format!("Failed to extract GLB binary bytes: {}", e)
+            })?,
+        };
+
+        let total_elapsed_ms = clock.elapsed_ms();
+        if total_elapsed_ms > SECURITY_3D_TRANSCODE_CEILING_MS as f64 {
+            let _ = self.reset_scene();
+            return Err(format!(
+                "3D GLB compilation time ({:.1} ms) exceeded SECURITY_3D_TRANSCODE_CEILING_MS ({} ms)",
+                total_elapsed_ms, SECURITY_3D_TRANSCODE_CEILING_MS
+            ));
+        }
+
+        let _ = self.reset_scene();
+        Ok(glb_bytes)
+    }
+
     /// Directly compiles a Three.js scene script into an Apple 64-byte aligned USDZ archive.
     pub fn compile_usdz(&mut self, script: &str) -> Result<Vec<u8>, String> {
         if self.poisoned {
@@ -678,15 +486,16 @@ impl ThreeEngine {
             return Err(e);
         }
 
-        // 3. Call scene.toUSDZ() with direct zero-copy native capture and preemptive deadline
-        let usdz_call = "scene.toUSDZ();";
+        // 3. Serialize via ThreeEngine.serializeCurrentSceneToUSDZ() (never user-mutable
+        //    `scene.toUSDZ()`) with direct zero-copy native capture and preemptive deadline.
+        let usdz_call = "ThreeEngine.serializeCurrentSceneToUSDZ();";
         let (eval_res, stashed_usdz) = crate::usdz::with_direct_usdz_capture(|| {
             self.eval_with_deadline(
                 usdz_call,
                 &clock,
                 SECURITY_3D_TRANSCODE_CEILING_MS,
                 "SECURITY_3D_TRANSCODE_CEILING_MS",
-                "scene.toUSDZ() evaluation failed",
+                "sceneToUSDZ() evaluation failed",
             )
         });
         let usdz_val = match eval_res {
@@ -1911,20 +1720,24 @@ fn extract_u32_buffer(
                                 SECURITY_3D_MAX_HEAP_BYTES
                             ));
                         }
-                        if typed_arr.kind() == Some(TypedArrayKind::Uint16) {
+                        if typed_arr.kind() == Some(TypedArrayKind::Uint8) {
+                            slice.iter().map(|&b| b as u32).collect()
+                        } else if typed_arr.kind() == Some(TypedArrayKind::Uint16) {
                             slice
                                 .as_chunks::<2>()
                                 .0
                                 .iter()
                                 .map(|c| u16::from_ne_bytes([c[0], c[1]]) as u32)
                                 .collect()
-                        } else {
+                        } else if typed_arr.kind() == Some(TypedArrayKind::Uint32) {
                             slice
                                 .as_chunks::<4>()
                                 .0
                                 .iter()
                                 .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
                                 .collect()
+                        } else {
+                            Vec::new()
                         }
                     } else {
                         Vec::new()

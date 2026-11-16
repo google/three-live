@@ -902,6 +902,80 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   ) => void;
 }
 
+/** Host contract v1 exposed to `three-live-compiler-bundle` before sandbox hardening. */
+export interface ThreeLiveHostContractV1 {
+  readonly version: 1;
+  now?(): number;
+  log?(level: 'info' | 'warn' | 'error', message: string): void;
+  charge?(units: number): void;
+  texturePackLookup?(
+    key: string,
+    spec: {prompt: string; size: number; seed: number},
+  ): Uint8Array | null | undefined;
+  texturePackToken?(): number;
+  evalScript?(wrappedSource: string): void;
+  decodeImage?(
+    bytes: Uint8Array,
+  ): {width: number; height: number; rgba: Uint8Array} | null | undefined;
+}
+
+/** Options controlling animation baking during GLB / USDZ serialization. */
+export interface ConvertAnimOptions {
+  animateFn?: (time: number) => void;
+  animateCallback?: (time: number) => void;
+  duration?: number;
+  fps?: number;
+  bakeAnimations?: boolean;
+}
+
+/** Options for `installSandboxHardening()`. */
+export interface SandboxHardeningOptions {
+  disableSyncCompile?: boolean;
+}
+
+/** Supported `globalThis.__three_live_host__` contract version (`1`). */
+export declare const HOST_CONTRACT_VERSION = 1;
+/** Pure-JS UTF-8 string -> `Uint8Array` encoder. */
+export declare function pureJsUtf8Encode(str: string): Uint8Array;
+/** Pure-JS UTF-8 `Uint8Array` -> string decoder. */
+export declare function pureJsUtf8Decode(
+  input: ArrayBuffer | ArrayBufferView,
+): string;
+/** Installs `TextEncoder`, `TextDecoder`, `performance.now`, and `console` shims if absent. */
+export declare function installCompilerPolyfills(): void;
+/** Compiles a Three-Live JS script into a binary glTF 2.0 (`.glb`) `Uint8Array`. */
+export declare function compileToGLB(
+  script: string,
+  options?: ConvertAnimOptions,
+): Uint8Array;
+/** Compiles a Three-Live JS script into an Apple 64-byte aligned `.usdz` `Uint8Array`. */
+export declare function compileToUSDZ(
+  script: string,
+  options?: ConvertAnimOptions,
+): Uint8Array;
+/** Transcodes a binary `.glb` buffer into an Apple 64-byte aligned `.usdz` `Uint8Array`. */
+export declare function glbToUSDZ(
+  glbBytes: Uint8Array | ArrayBuffer,
+): Uint8Array;
+/** Executes one synchronous JSON AI scene-editing / selection / texture / voice op. */
+export declare function aiCall(requestJson: string): string;
+/** Resets `globalThis.scene`, `camera`, `animate`, and non-baseline globals. */
+export declare function resetScene(): void;
+/** Validates byte length + standalone syntax and wraps `script` in an isolated IIFE scope. */
+export declare function wrapIsolatedScript(script: string): string;
+/** Serializes the currently populated `globalThis.scene` to a binary GLB `Uint8Array`. */
+export declare function serializeCurrentSceneToGLB(
+  options?: ConvertAnimOptions,
+): Uint8Array;
+/** Serializes the currently populated `globalThis.scene` to a 64-byte aligned USDZ `Uint8Array`. */
+export declare function serializeCurrentSceneToUSDZ(
+  options?: ConvertAnimOptions,
+): Uint8Array;
+/** Locks down dynamic code evaluation, freezes prototypes/registry, and hides `__three_live_host__`. */
+export declare function installSandboxHardening(
+  options?: SandboxHardeningOptions,
+): void;
+
 declare global {
   namespace JSX {
     interface IntrinsicElements {

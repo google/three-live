@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Optional Jetpack XR (androidx.xr.arcore) hand-tracking adapter for three-live. The core
-// `:mobile:android` library stays zero-dependency; Android XR headset apps opt in by adding this
-// module and calling ThreeLiveAndroidXrHands.install(session).
+// `:mobile:android-runtime` library stays zero-dependency; Android XR headset apps opt in by adding
+// this module and calling ThreeLiveAndroidXrHands.install(session).
 
 plugins {
   id("com.android.library")
@@ -47,7 +47,7 @@ android {
 }
 
 dependencies {
-  api(project(":mobile:android"))
+  api(project(":mobile:android-runtime"))
   api("androidx.xr.arcore:arcore:1.0.0-alpha03")
   api("androidx.xr.runtime:runtime:1.0.0-alpha03")
 
@@ -59,7 +59,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "hands-androidxr"
-      version = "1.4.0"
+      version = "1.3.2"
       afterEvaluate { from(components["release"]) }
 
       pom {

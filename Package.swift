@@ -22,80 +22,179 @@ import PackageDescription
 
 // MARK: - Binary target resolution
 //
-// The native compiler ships as a prebuilt XCFramework. When one is present in the working
-// tree -- because `scripts/build_ios_xcframework.sh` has been run -- it is used directly.
-// Otherwise the release artifact is downloaded from GitHub.
+// Prebuilt XCFrameworks live in the working tree when `scripts/build_ios_xcframework.sh` has run;
+// otherwise release artifacts are downloaded from GitHub Releases.
 //
-// The two constants below are rewritten automatically at release time by
+// The three constants below are rewritten automatically at release time by
 // `scripts/update_spm_binary_target.sh`. Do not edit them by hand.
 let releaseTag = "v1.3.2"
 let releaseChecksum = "edbfe8c579b1bfe4f4c4e05cda4f987a24bab5e19774aff5ef4fd58ab06f83ca"
+let releaseKernelsChecksum = "0000000000000000000000000000000000000000000000000000000000000000"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let candidateFrameworkPaths = [
+
+let candidateCompilerPaths = [
   "mobile/ios/ThreeLiveCompiler.xcframework",
   "ThreeLiveCompiler.xcframework",
 ]
-let localFrameworkPath = candidateFrameworkPaths.first {
+let localFrameworkPath = candidateCompilerPaths.first {
   FileManager.default.fileExists(atPath: packageDir.appendingPathComponent($0).path)
 }
 
-var compilerDeps: [Target.Dependency] = ["ThreeLiveCompilerC"]
-var targets: [Target] = [
-  .target(
-    name: "ThreeLiveCompilerC",
-    path: "mobile/ios/Sources/ThreeLiveCompilerC",
-    publicHeadersPath: "include"
+let candidateKernelsPaths = [
+  "mobile/ios/ThreeLiveKernels.xcframework",
+  "ThreeLiveKernels.xcframework",
+]
+let localKernelsFrameworkPath = candidateKernelsPaths.first {
+  FileManager.default.fileExists(atPath: packageDir.appendingPathComponent($0).path)
+}
+
+let hasPinnedCompilerChecksum = releaseChecksum.contains(where: { $0 != "0" })
+let hasPinnedKernelsChecksum = releaseKernelsChecksum.contains(where: { $0 != "0" })
+
+var products: [Product] = [
+  .library(
+    name: "ThreeLiveRuntime",
+    targets: ["ThreeLiveRuntime"]
   )
 ]
 
-if let localFrameworkPath {
+var targets: [Target] = [
+  .target(
+    name: "ThreeLiveRuntime",
+    path: "mobile/ios/Sources/ThreeLiveRuntime"
+  )
+]
+
+// Boa-free native kernels (`ThreeLiveKernels`), available whenever built locally or published on
+// the pinned release tag.
+let hasKernelsTarget = (localKernelsFrameworkPath != nil) || hasPinnedKernelsChecksum
+if hasKernelsTarget {
   targets.append(
-    .binaryTarget(
-      name: "ThreeLiveCompilerBinary",
-      path: localFrameworkPath
+    .target(
+      name: "ThreeLiveKernelsC",
+      path: "mobile/ios/Sources/ThreeLiveKernelsC",
+      publicHeadersPath: "include"
     )
   )
-} else {
-  // Fail with an actionable message rather than letting SwiftPM report an opaque checksum
-  // mismatch, and rather than silently dropping the binary target (which would surface much
-  // later as undefined `three_live_*` symbols at link time).
-  guard releaseChecksum.contains(where: { $0 != "0" }) else {
-    fatalError(
-      """
-      ThreeLiveCompiler has no pinned release checksum, so the prebuilt XCFramework \
-      cannot be downloaded. This tag was not published by the release workflow. \
-      Either check out a released tag, or build the framework locally with \
-      `bash scripts/build_ios_xcframework.sh`.
-      """
+  if let localKernelsFrameworkPath {
+    targets.append(
+      .binaryTarget(
+        name: "ThreeLiveKernelsBinary",
+        path: localKernelsFrameworkPath
+      )
+    )
+  } else {
+    targets.append(
+      .binaryTarget(
+        name: "ThreeLiveKernelsBinary",
+        url: "https://github.com/google/three-live/releases/download/"
+          + "\(releaseTag)/ThreeLiveKernels.xcframework.zip",
+        checksum: releaseKernelsChecksum
+      )
     )
   }
   targets.append(
-    .binaryTarget(
-      name: "ThreeLiveCompilerBinary",
-      url: "https://github.com/google/three-live/releases/download/"
-        + "\(releaseTag)/ThreeLiveCompiler.xcframework.zip",
-      checksum: releaseChecksum
+    .target(
+      name: "ThreeLiveKernels",
+      dependencies: ["ThreeLiveKernelsC", "ThreeLiveKernelsBinary"],
+      path: "mobile/ios/Sources/ThreeLiveKernels"
+    )
+  )
+  products.append(
+    .library(
+      name: "ThreeLiveKernels",
+      targets: ["ThreeLiveKernels"]
+    )
+  )
+  targets.append(
+    .testTarget(
+      name: "ThreeLiveKernelsTests",
+      dependencies: ["ThreeLiveRuntime", "ThreeLiveKernels"],
+      path: "mobile/ios/Tests/ThreeLiveKernelsTests"
     )
   )
 }
-compilerDeps.append("ThreeLiveCompilerBinary")
 
-targets.append(
-  .target(
-    name: "ThreeLiveCompiler",
-    dependencies: compilerDeps,
-    path: "mobile/ios/Sources/ThreeLiveCompiler"
+// Default Rust + Boa compiler (`ThreeLiveCompilerNative` and umbrella `ThreeLiveCompiler`).
+let hasCompilerTarget = (localFrameworkPath != nil) || hasPinnedCompilerChecksum
+if !hasCompilerTarget && !hasKernelsTarget {
+  fatalError(
+    """
+    ThreeLiveCompiler has no pinned release checksum, so the prebuilt XCFramework \
+    cannot be downloaded. This tag was not published by the release workflow. \
+    Either check out a released tag, or build the framework locally with \
+    `bash scripts/build_ios_xcframework.sh`.
+    """
   )
-)
+}
 
-targets.append(
-  .testTarget(
-    name: "ThreeLiveCompilerTests",
-    dependencies: ["ThreeLiveCompiler"],
-    path: "mobile/ios/Tests/ThreeLiveCompilerTests"
+if hasCompilerTarget {
+  targets.append(
+    .target(
+      name: "ThreeLiveCompilerC",
+      path: "mobile/ios/Sources/ThreeLiveCompilerC",
+      publicHeadersPath: "include"
+    )
   )
-)
+  if let localFrameworkPath {
+    targets.append(
+      .binaryTarget(
+        name: "ThreeLiveCompilerBinary",
+        path: localFrameworkPath
+      )
+    )
+  } else {
+    targets.append(
+      .binaryTarget(
+        name: "ThreeLiveCompilerBinary",
+        url: "https://github.com/google/three-live/releases/download/"
+          + "\(releaseTag)/ThreeLiveCompiler.xcframework.zip",
+        checksum: releaseChecksum
+      )
+    )
+  }
+  targets.append(
+    .target(
+      name: "ThreeLiveCompilerNative",
+      dependencies: [
+        "ThreeLiveRuntime",
+        "ThreeLiveCompilerC",
+        "ThreeLiveCompilerBinary",
+      ],
+      path: "mobile/ios/Sources/ThreeLiveCompilerNative"
+    )
+  )
+  targets.append(
+    .target(
+      name: "ThreeLiveCompiler",
+      dependencies: [
+        "ThreeLiveRuntime",
+        "ThreeLiveCompilerNative",
+      ],
+      path: "mobile/ios/Sources/ThreeLiveCompiler"
+    )
+  )
+  products.append(
+    .library(
+      name: "ThreeLiveCompilerNative",
+      targets: ["ThreeLiveCompilerNative"]
+    )
+  )
+  products.append(
+    .library(
+      name: "ThreeLiveCompiler",
+      targets: ["ThreeLiveCompiler"]
+    )
+  )
+  targets.append(
+    .testTarget(
+      name: "ThreeLiveCompilerTests",
+      dependencies: ["ThreeLiveRuntime", "ThreeLiveCompiler"],
+      path: "mobile/ios/Tests/ThreeLiveCompilerTests"
+    )
+  )
+}
 
 let package = Package(
   name: "ThreeLiveCompiler",
@@ -105,11 +204,6 @@ let package = Package(
     .visionOS(.v1),
     .tvOS(.v15),
   ],
-  products: [
-    .library(
-      name: "ThreeLiveCompiler",
-      targets: ["ThreeLiveCompiler"]
-    )
-  ],
+  products: products,
   targets: targets
 )

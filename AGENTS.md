@@ -28,8 +28,8 @@ This file provides high-signal context, architectural invariants, and authoring 
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Goal | Element | Recommended Bundle | Enforced Budget |
 | :--- | :--- | :--- | :---: |
-| `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 34 KB gz` |
-| Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 82 KB gz` |
+| `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 35 KB gz` |
+| Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 86 KB gz` |
 | Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js` | `< 36 KB gz` |
 | Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry`, `PatternInstancer` arrays, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` | `three-live-cad.min.js` | `< 20 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz` |
@@ -43,13 +43,15 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 35 KB gz` |
 | Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 23 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
-| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 238 KB gz` |
-| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 94 KB gz` |
+| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 242 KB gz` |
+| Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 260 KB gz` |
+| `.glb` / `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` (no scripting) | `<xr-live>` | `xr-live-viewer.min.js` | `< 62 KB gz` |
+| 6DoF WebXR + `<script type="text/three">` + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 98 KB gz` |
 | Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP | `<xr-live>` | `xr-live-sensors.min.js` | `< 10 KB gz` |
 | Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins | `<xr-live>` | `xr-live-spatial.min.js` | `< 65 KB gz` |
 | Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` |
 | Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` | `xr-live-webgpu.min.js` | `< 13 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 348 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 352 KB gz` |
 <!-- mdformat on -->
 
 ---
@@ -273,20 +275,25 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         `VariantSets`, `SpatialAudio`, and `UsdShade` / MaterialX `NodeGraph`s)
         bytes via C FFI (`compiler/include/three_live_compiler.h`) and
         `three-live-cli`.
-4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
-    -   **Android (`mobile/android/src/main/java/com/google/threelive/`):**
-        `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt` +
-        modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`,
-        `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`,
-        `SpatialLocomotion.kt`, `SharedRoom.kt`, `SpatialAudio.kt`,
-        `IKSolver.kt`, `LodController.kt`), `XRSimWorld.kt` + simulation
-        controllers (`CharacterController.kt`, `SteeringAgents.kt`,
-        `RigidBodyPhysics.kt`, `HitZones.kt`, `Objectives.kt`, `SynthAudio.kt`,
-        `XRSimParity.kt`, `XRSimRenderBridge.kt`), `TslMaterialCompiler.kt`,
+4.  **Native Mobile SDKs (`mobile/android-runtime/`, `mobile/android-kernels/`,
+    `mobile/android/`, & `mobile/ios/`):**
+    -   **Android (`mobile/android-runtime/src/main/java/com/google/threelive/`,
+        `mobile/android/`, `mobile/android-kernels/`):** `ThreeCompiler.kt` +
+        `ThreeCompilerBackend` SPI, `XRLiveSceneCoreHelper.kt`,
+        `XRSpatialMath.kt`, `XRSpatialFeatures.kt` + modular feature controllers
+        (`SpatialMeasure.kt`, `MagneticSnap.kt`, `GazeDwell.kt`,
+        `ExplodedView.kt`, `PersistentAnchors.kt`, `SpatialLocomotion.kt`,
+        `SharedRoom.kt`, `SpatialAudio.kt`, `IKSolver.kt`, `LodController.kt`),
+        `XRSimWorld.kt` + simulation controllers (`CharacterController.kt`,
+        `SteeringAgents.kt`, `RigidBodyPhysics.kt`, `HitZones.kt`,
+        `Objectives.kt`, `SynthAudio.kt`, `XRSimParity.kt`,
+        `XRSimRenderBridge.kt`), `TslMaterialCompiler.kt`,
         `XRLiveRuntimeSession.kt`, and `mobile/android-filament/`
         (`ThreeLiveFilamentRenderer.kt`, `TslFilamatBridge.kt`).
-    -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):**
-        `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`,
+    -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveRuntime/`,
+        `ThreeLiveKernels/`, `ThreeLiveCompilerNative/`,
+        `ThreeLiveCompiler/`):** `ThreeCompiler.swift` + `ThreeCompilerBackend`
+        SPI, `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`,
         `XRTslMaterialValidator.swift`, `XRSpatialRealityKitFeatures.swift` +
         modular feature controllers (`SpatialMeasure.swift`,
         `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`,
@@ -298,7 +305,11 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         `SynthAudio.swift`, `XRSimRealityKitBridge.swift`), and
         `XRLiveRealityKit.swift`.
 
-**Parity Rule:** Whenever you add or modify a trait in `three-live/src/xr-trait-schema.ts`, you must update its handling in Web (`xr-live/src/plugins/`), Android (`mobile/android/`), and iOS/visionOS (`mobile/ios/`) and keep `XRLiveSwiftSourceParityTest.kt` green.
+**Parity Rule:** Whenever you add or modify a trait in
+`three-live/src/xr-trait-schema.ts`, you must update its handling in Web
+(`xr-live/src/plugins/`), Android (`mobile/android-runtime/`), and iOS/visionOS
+(`mobile/ios/Sources/ThreeLiveRuntime/`) and keep the cross-platform trait and
+golden parity tests green.
 
 ---
 

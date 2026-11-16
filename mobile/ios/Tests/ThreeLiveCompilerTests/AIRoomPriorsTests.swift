@@ -16,6 +16,7 @@ import XCTest
 import simd
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 /// RoomPlan metric priors (B4): the platform-independent `fromRoomScan` mapping.
 final class AIRoomPriorsTests: XCTestCase {

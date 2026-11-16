@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "bundle": "three-live-compiler-bundle.min.js",
+  "globalName": "ThreeEngine",
+  "hostContractGlobal": "__three_live_host__",
+  "hostContractVersion": 1,
+  "kernelsAbiVersion": 1,
+  "runtimeLimits": {
+    "loopIterationLimit": 250000,
+    "recursionLimit": 256,
+    "stackSizeLimit": 262144
+  },
+  "quotas": {
+    "maxArrayBufferBytes": 16777216,
+    "maxStringRepeatChars": 4194304,
+    "maxScriptBytes": 1048576,
+    "maxVertices": 100000,
+    "maxMeshes": 1000,
+    "maxSceneNodes": 4000,
+    "maxIndices": 300000,
+    "maxTextures": 16,
+    "maxTextureDimension": 2048
+  },
+  "executionModel": {
+    "executionCeilingMs": 250,
+    "transcodeCeilingMs": 750,
+    "interruptCheckOpcodes": 10000,
+    "requireBudgetedAsyncEvaluation": true,
+    "boaBudgetEvaluator": "Script::evaluate_async_with_budget",
+    "forbidDynamicCodeEvaluation": true,
+    "lockdownEntrypoint": "ThreeEngine.installSandboxHardening()",
+    "lockdownTargets": [
+      "globalThis.eval",
+      "globalThis.Function",
+      "Function.prototype.constructor",
+      "GeneratorFunction.prototype.constructor",
+      "AsyncFunction.prototype.constructor",
+      "AsyncGeneratorFunction.prototype.constructor"
+    ],
+    "notes": "Boa resets loop_iteration_limit per CallFrame and executes eval/Function synchronously without yielding. Hosts running untrusted scripts must call ThreeEngine.installSandboxHardening() prior to user code and evaluate ThreeEngine.wrapIsolatedScript(script) (or supply __three_live_host__.evalScript) via Script::evaluate_async_with_budget."
+  },
+  "threading": {
+    "minNativeStackBytes": 8388608,
+    "concurrentCallsPerRealm": false
+  }
+}

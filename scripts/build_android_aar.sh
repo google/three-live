@@ -19,13 +19,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPILER_DIR="${ROOT_DIR}/compiler"
 ANDROID_DIR="${ROOT_DIR}/mobile/android"
+ANDROID_RUNTIME_DIR="${ROOT_DIR}/mobile/android-runtime"
+ANDROID_KERNELS_DIR="${ROOT_DIR}/mobile/android-kernels"
 JNILIBS_DIR="${ANDROID_DIR}/src/main/jniLibs"
+KERNELS_JNILIBS_DIR="${ANDROID_KERNELS_DIR}/src/main/jniLibs"
+TARGET_ROOT="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}"
 
-echo "=== Three-Live: Building Android AAR ==="
+echo "=== Three-Live: Building Android AARs (runtime, kernels, compiler) ==="
 
 # Ensure JAVA_HOME points to a Gradle 8.7 / AGP 8.5 compatible JDK (17 through 21).
-# Newer Homebrew OpenJDK releases (e.g. JDK 25) cause Gradle 8.7's Groovy/Kotlin runtime
-# to fail with `What went wrong: 25.0.2`.
 java_major_version() {
     local java_bin="$1"
     if [ ! -x "${java_bin}" ] && ! command -v "${java_bin}" >/dev/null 2>&1; then
@@ -107,72 +109,56 @@ if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
-PREBUILT_JNI_VERSION="v1.4.0"
+PREBUILT_JNI_VERSION="v1.3.2"
 
 download_prebuilt_jnilibs() {
-    # If all 3 ABI .so files and the expected prebuilt version stamp are present in jniLibs, reuse them directly.
     if [ -f "${JNILIBS_DIR}/.prebuilt-version" ] && \
        [ "$(cat "${JNILIBS_DIR}/.prebuilt-version" 2>/dev/null || true)" = "${PREBUILT_JNI_VERSION}" ] && \
        [ -f "${JNILIBS_DIR}/arm64-v8a/libthree_live_compiler.so" ] && \
        [ -f "${JNILIBS_DIR}/x86_64/libthree_live_compiler.so" ] && \
-       [ -f "${JNILIBS_DIR}/armeabi-v7a/libthree_live_compiler.so" ]; then
-        echo "--> Using existing prebuilt Android JNI libraries (${PREBUILT_JNI_VERSION}) in ${JNILIBS_DIR}"
+       [ -f "${JNILIBS_DIR}/armeabi-v7a/libthree_live_compiler.so" ] && \
+       [ -f "${KERNELS_JNILIBS_DIR}/arm64-v8a/libthree_live_kernels.so" ] && \
+       [ -f "${KERNELS_JNILIBS_DIR}/x86_64/libthree_live_kernels.so" ] && \
+       [ -f "${KERNELS_JNILIBS_DIR}/armeabi-v7a/libthree_live_kernels.so" ]; then
+        echo "--> Using existing prebuilt Android JNI libraries (${PREBUILT_JNI_VERSION})"
         return 0
     fi
 
-    rm -rf "${JNILIBS_DIR}"
-    mkdir -p "${JNILIBS_DIR}"
+    rm -rf "${JNILIBS_DIR}" "${KERNELS_JNILIBS_DIR}"
+    mkdir -p "${JNILIBS_DIR}" "${KERNELS_JNILIBS_DIR}"
 
     local tmp_dir
     tmp_dir="$(mktemp -d)"
-    local aar_file="${tmp_dir}/three-live-compiler-release.aar"
+    local compiler_aar="${tmp_dir}/three-live-compiler-release.aar"
+    local kernels_aar="${tmp_dir}/three-live-kernels-release.aar"
     local downloaded=0
 
     echo "--> Downloading prebuilt Android JNI libraries from GitHub Releases (skipping local Rust build)..."
 
     if command -v gh >/dev/null 2>&1; then
-        if gh release download "${PREBUILT_JNI_VERSION}" --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1 || \
-           gh release download v1.0.0 --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1; then
+        if gh release download "${PREBUILT_JNI_VERSION}" --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1 && \
+           gh release download "${PREBUILT_JNI_VERSION}" --repo google/three-live --pattern "three-live-kernels-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1; then
             downloaded=1
         fi
     fi
 
     if [ "${downloaded}" -eq 0 ]; then
-        local gh_token="${GITHUB_TOKEN:-}"
-        if [ -z "${gh_token}" ] && command -v git >/dev/null 2>&1; then
-            gh_token="$(printf "protocol=https\nhost=github.com\n\n" | GIT_TERMINAL_PROMPT=0 git -C "${ROOT_DIR}" credential fill 2>/dev/null | sed -n 's/^password=//p' || true)"
-        fi
-        if [ -n "${gh_token}" ] && command -v python3 >/dev/null 2>&1; then
-            local asset_url
-            asset_url="$(curl -fsSL -H "Authorization: token ${gh_token}" "https://api.github.com/repos/google/three-live/releases/tags/${PREBUILT_JNI_VERSION}" 2>/dev/null | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for a in data.get('assets', []):
-    if a.get('name') == 'three-live-compiler-release.aar':
-        print(a.get('url', ''))
-        break
-" 2>/dev/null || true)"
-            if [ -n "${asset_url}" ]; then
-                if curl -fsSL -H "Authorization: token ${gh_token}" -H "Accept: application/octet-stream" "${asset_url}" -o "${aar_file}" 2>/dev/null; then
-                    downloaded=1
-                fi
-            fi
-        fi
-    fi
-
-    if [ "${downloaded}" -eq 0 ]; then
-        if curl -fsSL "https://github.com/google/three-live/releases/download/${PREBUILT_JNI_VERSION}/three-live-compiler-release.aar" -o "${aar_file}" 2>/dev/null || \
-           curl -fsSL "https://github.com/google/three-live/releases/download/v1.0.0/three-live-compiler-release.aar" -o "${aar_file}" 2>/dev/null; then
+        if curl -fsSL "https://github.com/google/three-live/releases/download/${PREBUILT_JNI_VERSION}/three-live-compiler-release.aar" -o "${compiler_aar}" 2>/dev/null && \
+           curl -fsSL "https://github.com/google/three-live/releases/download/${PREBUILT_JNI_VERSION}/three-live-kernels-release.aar" -o "${kernels_aar}" 2>/dev/null; then
             downloaded=1
         fi
     fi
 
-    if [ "${downloaded}" -eq 1 ] && [ -f "${aar_file}" ]; then
-        unzip -qo "${aar_file}" "jni/*" -d "${tmp_dir}"
-        cp -R "${tmp_dir}/jni/"* "${JNILIBS_DIR}/"
+    if [ "${downloaded}" -eq 1 ] && [ -f "${compiler_aar}" ] && [ -f "${kernels_aar}" ]; then
+        mkdir -p "${tmp_dir}/compiler_jni" "${tmp_dir}/kernels_jni"
+        unzip -qo "${compiler_aar}" "jni/*" -d "${tmp_dir}/compiler_jni"
+        unzip -qo "${kernels_aar}" "jni/*" -d "${tmp_dir}/kernels_jni"
+        cp -R "${tmp_dir}/compiler_jni/jni/"* "${JNILIBS_DIR}/"
+        cp -R "${tmp_dir}/kernels_jni/jni/"* "${KERNELS_JNILIBS_DIR}/"
         echo "${PREBUILT_JNI_VERSION}" > "${JNILIBS_DIR}/.prebuilt-version"
+        echo "${PREBUILT_JNI_VERSION}" > "${KERNELS_JNILIBS_DIR}/.prebuilt-version"
         rm -rf "${tmp_dir}"
-        echo "--> Extracted prebuilt JNI libraries (arm64-v8a, x86_64, armeabi-v7a) [${PREBUILT_JNI_VERSION}] into ${JNILIBS_DIR}"
+        echo "--> Extracted prebuilt compiler + kernels JNI libraries [${PREBUILT_JNI_VERSION}]"
         return 0
     fi
 
@@ -183,8 +169,6 @@ for a in data.get('assets', []):
 UNAME_S="$(uname -s)"
 USE_PREBUILT="${THREE_LIVE_PREBUILT_JNI:-}"
 if [ -z "${USE_PREBUILT}" ]; then
-    # On macOS, default to downloading the prebuilt Android JNI .so libraries from GitHub Releases
-    # unless THREE_LIVE_BUILD_RUST_FROM_SOURCE=1 is set.
     if [ "${UNAME_S}" = "Darwin" ] && [ "${THREE_LIVE_BUILD_RUST_FROM_SOURCE:-0}" != "1" ]; then
         USE_PREBUILT="1"
     else
@@ -201,11 +185,22 @@ if [ "${USE_PREBUILT}" = "1" ]; then
     fi
 fi
 
-if [ "${BUILT_JNI}" -eq 0 ]; then
-    rm -rf "${JNILIBS_DIR}"
-    mkdir -p "${JNILIBS_DIR}"
+copy_built_so() {
+    local target="$1"
+    local dest="$2"
+    if [ -f "${COMPILER_DIR}/target/${target}/release/libthree_live_compiler.so" ]; then
+        cp "${COMPILER_DIR}/target/${target}/release/libthree_live_compiler.so" "${dest}"
+    elif [ -f "${TARGET_ROOT}/${target}/release/libthree_live_compiler.so" ]; then
+        cp "${TARGET_ROOT}/${target}/release/libthree_live_compiler.so" "${dest}"
+    else
+        cp "${ROOT_DIR}/target/${target}/release/libthree_live_compiler.so" "${dest}"
+    fi
+}
 
-    # Check requirements for source build
+if [ "${BUILT_JNI}" -eq 0 ]; then
+    rm -rf "${JNILIBS_DIR}" "${KERNELS_JNILIBS_DIR}"
+    mkdir -p "${JNILIBS_DIR}" "${KERNELS_JNILIBS_DIR}"
+
     if ! command -v cargo &> /dev/null; then
         echo "Error: cargo is required to build from source (and prebuilt JNI download failed)." >&2
         exit 1
@@ -230,12 +225,19 @@ if [ "${BUILT_JNI}" -eq 0 ]; then
     cd "${COMPILER_DIR}"
 
     if command -v cargo-ndk &> /dev/null; then
+        local_tmp="$(mktemp -d)"
         for i in "${!TARGETS[@]}"; do
             target="${TARGETS[$i]}"
             abi="${ABI_NAMES[$i]}"
-            echo "  Building for ${abi} (${target}) via cargo-ndk..."
+            echo "  Building Boa-free kernels for ${abi} (${target}) via cargo-ndk..."
+            cargo ndk -t "${abi}" -o "${local_tmp}/kernels" build --release --no-default-features --features kernels,jni
+            mkdir -p "${KERNELS_JNILIBS_DIR}/${abi}"
+            cp "${local_tmp}/kernels/${abi}/libthree_live_compiler.so" "${KERNELS_JNILIBS_DIR}/${abi}/libthree_live_kernels.so"
+
+            echo "  Building compiler for ${abi} (${target}) via cargo-ndk..."
             cargo ndk -t "${abi}" -o "${JNILIBS_DIR}" build --release --features jni
         done
+        rm -rf "${local_tmp}"
     else
         # Direct NDK clang cross-compilation (no cargo-ndk required!)
         TOOLCHAIN_BIN="$(ls -d "${NDK_ROOT}/toolchains/llvm/prebuilt/"*/bin 2>/dev/null | head -n 1 || true)"
@@ -255,30 +257,37 @@ if [ "${BUILT_JNI}" -eq 0 ]; then
         for i in "${!TARGETS[@]}"; do
             target="${TARGETS[$i]}"
             abi="${ABI_NAMES[$i]}"
-            echo "  Building for ${abi} (${target}) via NDK clang..."
+            echo "  Building Boa-free kernels for ${abi} (${target}) via NDK clang..."
+            cargo build --target "${target}" --release --no-default-features --features kernels,jni
+            mkdir -p "${KERNELS_JNILIBS_DIR}/${abi}"
+            copy_built_so "${target}" "${KERNELS_JNILIBS_DIR}/${abi}/libthree_live_kernels.so"
+
+            echo "  Building compiler for ${abi} (${target}) via NDK clang..."
             cargo build --target "${target}" --release --features jni
             mkdir -p "${JNILIBS_DIR}/${abi}"
-            if [ -f "${COMPILER_DIR}/target/${target}/release/libthree_live_compiler.so" ]; then
-                cp "${COMPILER_DIR}/target/${target}/release/libthree_live_compiler.so" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
-            else
-                cp "${ROOT_DIR}/target/${target}/release/libthree_live_compiler.so" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
-            fi
+            copy_built_so "${target}" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
         done
     fi
     echo "${PREBUILT_JNI_VERSION}" > "${JNILIBS_DIR}/.prebuilt-version"
+    echo "${PREBUILT_JNI_VERSION}" > "${KERNELS_JNILIBS_DIR}/.prebuilt-version"
 fi
 
-echo "--> Assembling Android AAR..."
+echo "--> Assembling Android AARs (:mobile:android-runtime, :mobile:android-kernels, :mobile:android)..."
 cd "${ROOT_DIR}"
-./gradlew :mobile:android:assembleRelease
+./gradlew :mobile:android-runtime:assembleRelease :mobile:android-kernels:assembleRelease :mobile:android:assembleRelease
 
+RUNTIME_AAR_PATH="$(ls "${ANDROID_RUNTIME_DIR}"/build/outputs/aar/*-release.aar 2>/dev/null | head -n 1)"
+KERNELS_AAR_PATH="$(ls "${ANDROID_KERNELS_DIR}"/build/outputs/aar/*-release.aar 2>/dev/null | head -n 1)"
 AAR_PATH="$(ls "${ANDROID_DIR}"/build/outputs/aar/*-release.aar 2>/dev/null | head -n 1)"
-if [ -z "${AAR_PATH}" ]; then
-    echo "Error: assembleRelease did not produce an AAR in ${ANDROID_DIR}/build/outputs/aar/" >&2
+if [ -z "${RUNTIME_AAR_PATH}" ] || [ -z "${KERNELS_AAR_PATH}" ] || [ -z "${AAR_PATH}" ]; then
+    echo "Error: assembleRelease did not produce all expected AARs (runtime, kernels, compiler)." >&2
     exit 1
 fi
 
-echo "=== Success! Android AAR built at: ${AAR_PATH} ==="
+echo "=== Success! Android AARs built: ==="
+echo "  - runtime:  ${RUNTIME_AAR_PATH}"
+echo "  - kernels:  ${KERNELS_AAR_PATH}"
+echo "  - compiler: ${AAR_PATH}"
 
 if [ "${1:-}" = "--demo" ]; then
     echo "--> Building Compose demo APK (:mobile:examples:android_compose:assembleDebug)..."

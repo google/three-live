@@ -33,7 +33,7 @@ let package = Package(
     .target(
       name: "ThreeLiveFirebaseAI",
       dependencies: [
-        .product(name: "ThreeLiveCompiler", package: "three-live"),
+        .product(name: "ThreeLiveRuntime", package: "three-live"),
         .product(name: "FirebaseAILogic", package: "firebase-ios-sdk"),
       ]
     )

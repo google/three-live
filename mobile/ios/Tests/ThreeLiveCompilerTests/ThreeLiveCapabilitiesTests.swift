@@ -16,6 +16,7 @@ import XCTest
 import simd
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 /// End-to-end security tests covering all 9 `ThreeLiveCapabilities` on iOS / macOS.
 final class ThreeLiveCapabilitiesTests: XCTestCase {

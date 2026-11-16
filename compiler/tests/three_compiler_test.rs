@@ -1047,16 +1047,12 @@ fn test_float64_array_is_widened() {
         3,
         "Float64Array must be widened element-wise, not reinterpreted as f32"
     );
-    assert_eq!(
-        pos["min"].as_array().expect("min present"),
-        &vec![serde_json::json!(0.0), serde_json::json!(0.0), serde_json::json!(0.0)],
-        "min must reflect the authored f64 values"
-    );
-    assert_eq!(
-        pos["max"].as_array().expect("max present"),
-        &vec![serde_json::json!(1.0), serde_json::json!(1.0), serde_json::json!(0.0)],
-        "max must reflect the authored f64 values"
-    );
+    let min_vals: Vec<f64> =
+        pos["min"].as_array().expect("min present").iter().map(|v| v.as_f64().unwrap()).collect();
+    let max_vals: Vec<f64> =
+        pos["max"].as_array().expect("max present").iter().map(|v| v.as_f64().unwrap()).collect();
+    assert_eq!(min_vals, vec![0.0, 0.0, 0.0], "min must reflect the authored f64 values");
+    assert_eq!(max_vals, vec![1.0, 1.0, 0.0], "max must reflect the authored f64 values");
 
     // A non-float element type must be rejected outright rather than reinterpreted.
     let bad = r#"
@@ -1649,7 +1645,13 @@ fn test_empty_mesh_does_not_shift_interactivity_node_indices() {
     let gltf = parse_gltf_json(&glb);
     let nodes = gltf["nodes"].as_array().unwrap();
     let target_idx = nodes.iter().position(|n| n["name"] == "Target").expect("Target node");
-    assert_eq!(nodes[target_idx]["translation"], serde_json::json!([2.0, 0.0, 0.0]));
+    let target_t: Vec<f64> = nodes[target_idx]["translation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    assert_eq!(target_t, vec![2.0, 0.0, 0.0]);
     let graph = gltf["extensions"]["KHR_interactivity"].to_string();
     let ptr = format!("/nodes/{}/extensions/KHR_node_visibility/visible", target_idx);
     assert_eq!(
@@ -1829,7 +1831,9 @@ fn test_rotated_parent_world_transform_in_glb_and_usdz() {
     for (got, want) in rot.iter().zip([0.0, 0.0, h, h]) {
         assert!((got - want).abs() < 1e-6, "parent rotation {:?}", rot);
     }
-    assert_eq!(nodes[1]["translation"], serde_json::json!([1.0, 0.0, 0.0]));
+    let child_t: Vec<f64> =
+        nodes[1]["translation"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert_eq!(child_t, vec![1.0, 0.0, 0.0]);
     assert!(nodes[1].get("rotation").is_none(), "child keeps its local (identity) rotation");
 
     let usdz = compile_three_to_usdz(script).expect("USDZ should compile");
@@ -1913,29 +1917,62 @@ fn test_node_quota_limit() {
     assert!(err.contains("maximum allowed nodes"), "unexpected error: {}", err);
 }
 
-/// A hand-built SceneGraph cannot describe a cycle or reference a missing mesh.
+/// Cyclic JS hierarchy links, non-finite TRS, and out-of-range glTF mesh indices are sanitized.
 #[test]
 fn test_glb_writer_rejects_invalid_hierarchy_links() {
-    use three_live_compiler::scene::{SceneGraph, SceneNode};
-    let scene = SceneGraph {
-        nodes: vec![
-            SceneNode { name: "Root".into(), parent: Some(1), mesh: Some(7), ..Default::default() },
-            SceneNode {
-                name: "Child".into(),
-                parent: Some(0),
-                rotation: [f32::NAN, 0.0, 0.0, 1.0],
-                translation: [f32::INFINITY, 1.0, 0.0],
-                ..Default::default()
-            },
-        ],
-        ..Default::default()
-    };
-    let gltf = parse_gltf_json(&three_live_compiler::write_glb(&scene).expect("GLB"));
-    assert_eq!(gltf["scenes"][0]["nodes"], serde_json::json!([0]), "forward parent -> root");
-    assert_eq!(gltf["nodes"][0]["children"], serde_json::json!([1]));
-    assert!(gltf["nodes"][0].get("mesh").is_none(), "out-of-range mesh dropped");
+    let script = r#"
+        const root = new THREE.Group();
+        root.name = 'Root';
+        const child = new THREE.Group();
+        child.name = 'Child';
+        child.quaternion.set(NaN, 0, 0, 1);
+        child.position.set(Infinity, 1, 0);
+        root.add(child);
+        // Force a cycle in children array directly
+        child.children.push(root);
+        scene.add(root);
+    "#;
+    let glb = transcode_three_to_glb(script).expect("GLB");
+    let gltf = parse_gltf_json(&glb);
+    assert_eq!(gltf["scenes"][0]["nodes"], serde_json::json!([0]), "root node preserved");
+    assert_eq!(gltf["nodes"][0]["children"], serde_json::json!([1]), "forward edge preserved");
+    assert!(gltf["nodes"][1].get("children").is_none(), "cycle back-edge dropped without empty []");
     assert!(gltf["nodes"][1].get("rotation").is_none(), "non-finite rotation -> identity");
-    assert_eq!(gltf["nodes"][1]["translation"], serde_json::json!([0.0, 1.0, 0.0]));
+    let sanitized_t: Vec<f64> = gltf["nodes"][1]["translation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    assert_eq!(sanitized_t, vec![0.0, 1.0, 0.0]);
+
+    // Verify read_glb also drops out-of-range mesh indices and cyclic parent links safely.
+    let crafted_json = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "scene": 0,
+        "scenes": [{ "nodes": [0] }],
+        "nodes": [
+            { "name": "Root", "mesh": 7, "children": [1] },
+            { "name": "Child", "children": [0] }
+        ]
+    });
+    let mut json_bytes = serde_json::to_vec(&crafted_json).unwrap();
+    while !json_bytes.len().is_multiple_of(4) {
+        json_bytes.push(0x20);
+    }
+    let total_len = (20 + json_bytes.len()) as u32;
+    let mut crafted_glb = Vec::with_capacity(total_len as usize);
+    crafted_glb.extend_from_slice(&0x46546C67u32.to_le_bytes());
+    crafted_glb.extend_from_slice(&2u32.to_le_bytes());
+    crafted_glb.extend_from_slice(&total_len.to_le_bytes());
+    crafted_glb.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+    crafted_glb.extend_from_slice(&0x4E4F534Au32.to_le_bytes());
+    crafted_glb.extend_from_slice(&json_bytes);
+    let parsed_sg = three_live_compiler::read_glb(&crafted_glb).expect("read_glb");
+    assert_eq!(parsed_sg.nodes.len(), 2);
+    assert!(parsed_sg.nodes[0].mesh.is_none(), "out-of-range mesh dropped");
+    assert_eq!(parsed_sg.nodes[0].parent, None);
+    assert_eq!(parsed_sg.nodes[1].parent, Some(0));
 }
 
 #[test]

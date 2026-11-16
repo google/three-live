@@ -20,6 +20,7 @@ import XCTest
 import simd
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 private final class SimRecorder: XRSimWorldDelegate {
   var events: [(String, [String: Any])] = []

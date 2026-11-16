@@ -13,28 +13,74 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Verifies that a built ThreeLiveCompiler.xcframework is complete and usable:
+# Verifies that a built ThreeLiveCompiler.xcframework or ThreeLiveKernels.xcframework is complete
+# and usable:
 #   * every declared slice directory contains a static library,
 #   * every static library exports the full C ABI and nothing else (no Rust standard library,
 #     compiler-rt or crate symbols, which would clash with another Rust library in the app),
+#   * ThreeLiveKernels.xcframework contains zero Boa JavaScript engine symbols,
 #   * no library is suspiciously small.
 #
-# Usage: verify_xcframework.sh <path-to-xcframework> [expected-slice-count]
+# Usage: verify_xcframework.sh [--kernels] <path-to-xcframework> [expected-slice-count]
 #
 # Written for bash 3.2, which is what macOS ships as /bin/bash.
 
 set -euo pipefail
 
+MODE="compiler"
+if [[ "${1:-}" == "--kernels" ]]; then
+    MODE="kernels"
+    shift
+fi
+
 XCFRAMEWORK="${1:-}"
 EXPECTED_SLICES="${2:-0}"
 
 if [[ -z "${XCFRAMEWORK}" || ! -d "${XCFRAMEWORK}" ]]; then
-    echo "Error: usage: $(basename "$0") <path-to-xcframework> [expected-slice-count]" >&2
+    echo "Error: usage: $(basename "$0") [--kernels] <path-to-xcframework> [expected-slice-count]" >&2
     exit 1
 fi
 
-# The complete C ABI surface. Mach-O prefixes C symbols with an underscore.
-REQUIRED_SYMBOLS="
+if [[ "$(basename "${XCFRAMEWORK}")" == "ThreeLiveKernels.xcframework" ]]; then
+    MODE="kernels"
+fi
+
+if [[ "${MODE}" == "kernels" ]]; then
+    REQUIRED_SYMBOLS="
+_three_live_kernels_abi_version
+_three_live_kernels_table
+_three_live_kernel_free
+_three_live_kernel_box
+_three_live_kernel_sphere
+_three_live_kernel_cylinder
+_three_live_kernel_plane
+_three_live_kernel_torus
+_three_live_kernel_torus_knot
+_three_live_kernel_csg_boolean
+_three_live_kernel_material_preset
+_three_live_kernel_seam_blend
+_three_live_kernel_derive_texture_maps
+_three_live_kernel_encode_rgba_png
+_three_live_kernel_decode_b64_image
+_three_live_kernel_decode_png
+_three_live_kernel_compress_png_uri
+_three_live_kernel_crc32
+_three_live_kernel_utf8_encode
+_three_live_kernel_utf8_decode
+_three_live_kernel_f32_array
+_three_live_kernel_index_array
+_three_live_kernel_compute_vertex_normals
+_three_live_kernel_format_usda_points
+_three_live_kernel_format_usda_uvs
+_three_live_kernel_format_usda_ints
+_three_live_kernel_build_usdz_zip
+"
+    ALLOWED_PREFIX="^_three_live_kernel"
+    MIN_LIB_BYTES=$((32 * 1024))
+else
+    # The complete C ABI surface. Mach-O prefixes C symbols with an underscore.
+    # Strictly disallow `_three_live_kernel*` so compiler and kernels archives stay disjoint.
+    REQUIRED_SYMBOLS="
 _three_live_compile
 _three_live_compile_usdz
 _three_live_glb_to_usdz
@@ -43,16 +89,17 @@ _three_live_free_error
 _three_live_ai_call
 _three_live_free_string
 "
-
-# A slice that is only a few KB means the Rust build silently produced a stub.
-MIN_LIB_BYTES=$((256 * 1024))
+    ALLOWED_PREFIX="^(_three_live_compile|_three_live_compile_usdz|_three_live_glb_to_usdz|_three_live_free_buffer|_three_live_free_error|_three_live_ai_call|_three_live_free_string)$"
+    # A slice that is only a few KB means the Rust build silently produced a stub.
+    MIN_LIB_BYTES=$((256 * 1024))
+fi
 
 if [[ ! -f "${XCFRAMEWORK}/Info.plist" ]]; then
     echo "Error: ${XCFRAMEWORK} has no Info.plist; it is not a valid XCFramework." >&2
     exit 1
 fi
 
-echo "Verifying $(basename "${XCFRAMEWORK}")"
+echo "Verifying $(basename "${XCFRAMEWORK}") (${MODE})"
 
 slice_count=0
 failures=0
@@ -87,7 +134,13 @@ while IFS= read -r lib; do
     # Every other defined external symbol leaks the library's internals (member headers end in
     # a colon).
     leaked=$( { nm --no-llvm-bc -gUj "${lib}" 2>/dev/null || nm -gUj "${lib}" 2>/dev/null || true; } \
-        | grep -v -e '^_three_live_' -e ':$' -e '^$' | sort -u || true )
+        | grep -E -v -e "${ALLOWED_PREFIX}" -e ':$' -e '^$' | sort -u || true )
+
+    boa_symbols=""
+    if [[ "${MODE}" == "kernels" ]]; then
+        boa_symbols=$( { nm --no-llvm-bc -j "${lib}" 2>/dev/null || nm -j "${lib}" 2>/dev/null || true; } \
+            | grep -i 'boa_engine' | head -n 5 || true )
+    fi
 
     if [[ -n "${missing}" ]]; then
         echo "  FAIL ${slice} [${architectures}]: missing symbols:${missing}" >&2
@@ -95,6 +148,10 @@ while IFS= read -r lib; do
     elif [[ -n "${leaked}" ]]; then
         echo "  FAIL ${slice} [${architectures}]: exports $(wc -l <<< "${leaked}" | tr -d '[:space:]') internal symbols, e.g.:" >&2
         head -n 5 <<< "${leaked}" | sed 's/^/         /' >&2
+        failures=$((failures + 1))
+    elif [[ -n "${boa_symbols}" ]]; then
+        echo "  FAIL ${slice} [${architectures}]: kernels library contains boa_engine symbols:" >&2
+        sed 's/^/         /' <<< "${boa_symbols}" >&2
         failures=$((failures + 1))
     else
         echo "  ok   ${slice} [${architectures}] $((size / 1024)) KB"

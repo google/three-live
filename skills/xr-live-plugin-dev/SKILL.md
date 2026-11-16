@@ -37,20 +37,22 @@ Every `<xr-live>` feature is authored once and executes across **Web (`WebGL2` /
 
 ---
 
-## Step 3: Native Android Parity (`mobile/android/`)
+## Step 3: Native Android Parity (`mobile/android-runtime/`)
 
 Update the Android runtime so compiled `.glb` scenes and scripts execute the trait identically:
 
-1. **`mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt`:** Parse the new `extras.xr` / `ANDROID_xr_scenecore` fields with the exact same clamping ranges as `xr-trait-schema.ts`.
+1.  **`mobile/android-runtime/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt`:**
+    Parse the new `extras.xr` / `ANDROID_xr_scenecore` fields with the exact
+    same clamping ranges as `xr-trait-schema.ts`.
 2.  **Modular Feature File
-    (`mobile/android/src/main/java/com/google/threelive/<FeatureName>.kt`) &
-    `XRSpatialMath.kt`:** Implement pure, allocation-free math and per-feature
+    (`mobile/android-runtime/src/main/java/com/google/threelive/<FeatureName>.kt`)
+    & `XRSpatialMath.kt`:** Implement pure, allocation-free math and per-feature
     state machines in a dedicated Kotlin file (e.g. `SpatialMeasure.kt`,
     `MagneticSnap.kt`, `GazeDwell.kt`, `ExplodedView.kt`,
     `PersistentAnchors.kt`, `SpatialLocomotion.kt`, `SharedRoom.kt`) rather than
     bloating a single monolith.
-3.  **`mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt` &
-    `XRLiveRuntimeSession.kt`:** Wire the modular controller into
+3.  **`mobile/android-runtime/src/main/java/com/google/threelive/XRSpatialFeatures.kt`
+    & `XRLiveRuntimeSession.kt`:** Wire the modular controller into
     `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry
     (and optional `sectionPlane` uniforms) for `ThreeLiveFilamentRenderer.kt`.
 
@@ -58,7 +60,7 @@ Update the Android runtime so compiled `.glb` scenes and scripts execute the tra
 
 ## Step 4: Native iOS & visionOS Parity (`mobile/ios/`)
 
-Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
+Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
 
 1. **`XRLiveRuntimeSession.swift` & `XRLiveRealityKit.swift`:** Parse the trait from GLB `extras.xr` and USDZ `customData.xr`.
 2.  **Modular Feature File (`<FeatureName>.swift`),
@@ -67,7 +69,9 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
     `SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
     `ExplodedView.swift`, `PersistentAnchors.swift`, `SpatialLocomotion.swift`,
     `SharedRoom.swift`) orchestrated by `XRSpatialRealityKitFeatures.swift`.
-3. **Parity Test Check:** Android's `mobile/android/src/test/java/com/google/threelive/XRLiveSwiftSourceParityTest.kt` verifies that the Swift sources implement all required symbols and trait keys even when building on Linux.
+3.  **Parity Test Check:** Verify both Android JVM tests
+    (`mobile/android-runtime/src/test/`) and SwiftPM tests
+    (`mobile/ios/Tests/`).
 
 ---
 
@@ -79,24 +83,33 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
     node scripts/build.js
     ```
 
-    Verify that all 15 `.min.js.gz` bundles in `scripts/build.js` remain within
+    Verify that all 24 `.min.js.gz` bundles in `scripts/build.js` remain within
     their enforced byte budgets:
 
-    -   `three-live-viewer.min.js`: `< 30 KB gz`
-    -   `three-live.min.js`: `< 73 KB gz`
-    -   `three-live-studio.min.js`: `< 29 KB gz`
+    -   `three-live-viewer.min.js`: `< 35 KB gz`
+    -   `three-live.min.js`: `< 86 KB gz`
+    -   `three-live-studio.min.js`: `< 36 KB gz`
     -   `three-live-cad.min.js`: `< 20 KB gz`
-    -   `three-live-procedural.min.js`: `< 28 KB gz`
+    -   `three-live-kit-mechanical.min.js`: `< 18 KB gz`
+    -   `three-live-kit-architecture.min.js`: `< 16 KB gz`
+    -   `three-live-kit-industrial.min.js`: `< 14 KB gz`
+    -   `three-live-kit-science.min.js`: `< 31 KB gz`
+    -   `three-live-kit-electronics.min.js`: `< 14 KB gz`
+    -   `three-live-kits.min.js`: `< 82 KB gz`
+    -   `three-live-procedural.min.js`: `< 30 KB gz`
     -   `three-live-animation.min.js`: `< 11 KB gz`
-    -   `three-live-ai.min.js`: `< 20 KB gz`
-    -   `three-live-full.min.js`: `< 160 KB gz`
-    -   `xr-live-viewer.min.js`: `< 55 KB gz`
-    -   `xr-live.min.js`: `< 84 KB gz`
+    -   `three-live-ai.min.js`: `< 35 KB gz`
+    -   `three-live-webgpu.min.js`: `< 23 KB gz`
+    -   `three-live-tsl.min.js`: `< 19 KB gz`
+    -   `three-live-full.min.js`: `< 242 KB gz`
+    -   `three-live-compiler-bundle.min.js`: `< 260 KB gz`
+    -   `xr-live-viewer.min.js`: `< 62 KB gz`
+    -   `xr-live.min.js`: `< 98 KB gz`
     -   `xr-live-sensors.min.js`: `< 10 KB gz`
-    -   `xr-live-spatial.min.js`: `< 63 KB gz`
+    -   `xr-live-spatial.min.js`: `< 65 KB gz`
     -   `xr-live-sim.min.js`: `< 30 KB gz`
-    -   `xr-live-webgpu.min.js`: `< 12 KB gz`
-    -   `xr-live-full.min.js`: `< 268 KB gz`
+    -   `xr-live-webgpu.min.js`: `< 13 KB gz`
+    -   `xr-live-full.min.js`: `< 352 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
 
    ```bash

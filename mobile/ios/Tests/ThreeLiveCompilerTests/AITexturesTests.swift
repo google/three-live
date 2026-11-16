@@ -15,6 +15,7 @@
 import XCTest
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 /// AI textures on iOS (B5d), exercised against the real shared Rust core (`texture_*` ops).
 final class AITexturesTests: XCTestCase {

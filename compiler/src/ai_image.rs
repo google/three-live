@@ -284,12 +284,15 @@ pub fn is_allowed_image_url(raw: &str) -> bool {
     }
     if s.get(..8).map(|p| p.eq_ignore_ascii_case("https://")).unwrap_or(false) {
         let rest = &s[8..];
-        let host = rest.split(&['/', '?', '#'][..]).next().unwrap_or("");
-        return !host.is_empty();
+        let authority = rest.split(&['/', '?', '#'][..]).next().unwrap_or("");
+        return !authority.is_empty() && !authority.contains('@');
     }
     if s.get(..7).map(|p| p.eq_ignore_ascii_case("http://")).unwrap_or(false) {
         let rest = &s[7..];
         let authority = rest.split(&['/', '?', '#'][..]).next().unwrap_or("");
+        if authority.contains('@') {
+            return false;
+        }
         let host = if authority.starts_with('[') {
             authority.split(']').next().map(|h| format!("{}]", h)).unwrap_or_default()
         } else {
@@ -409,7 +412,8 @@ pub fn build_visual_refinement_prompt(
 }
 
 /// Builds the rolling 4-message Chat Completions context for visual turn `turn`:
-/// `[system_msg, initial_user_msg, assistant(best_code), user_multimodal(comparison, quad?, prompt)]`.
+/// `[system_msg, initial_user_msg, assistant(best_code), user_multimodal(comparison, quad?,
+/// prompt)]`.
 pub fn build_visual_turn_messages(
     initial_messages: &[Value],
     best_code: &str,
@@ -577,9 +581,11 @@ pub struct FromImageConfig {
     pub max_repairs: usize,
     /// Closed-loop rendered 50/50 overlay + 4-up visual critique passes (`0..=5`, default `0`).
     pub visual_turns: usize,
-    /// Attach a `512x512` `CAMERA | FRONT | TOP | ISO` 4-up sheet on each visual turn (default `true`).
+    /// Attach a `512x512` `CAMERA | FRONT | TOP | ISO` 4-up sheet on each visual turn (default
+    /// `true`).
     pub include_quad_view: bool,
-    /// Optional directory to write `step_XX.js`, `step_XX_cmp.png`, and `step_XX_quad.png` snapshots.
+    /// Optional directory to write `step_XX.js`, `step_XX_cmp.png`, and `step_XX_quad.png`
+    /// snapshots.
     pub save_steps_dir: Option<std::path::PathBuf>,
 }
 
@@ -1549,11 +1555,11 @@ mod tests {
         let tmp_dir = std::env::temp_dir().join(format!("tl_vsteps_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_dir);
 
-        // 1. Multi-turn progression + inner compile repair + early-stop convergence:
-        //    Call 1 (Stage 1): returns scene_v0.
-        //    Call 2 (Visual 1): asserts 4 rolling messages (cmp + quad + text), returns syntax error.
-        //    Call 3 (Visual 1 inner repair): asserts 6 messages, returns scene_v1 (promotes to v1).
-        //    Call 4 (Visual 2): asserts rolling context reset back to 4 messages! Returns scene_v1 -> early-stops!
+        // 1. Multi-turn progression + inner compile repair + early-stop convergence: Call 1 (Stage
+        //    1): returns scene_v0. Call 2 (Visual 1): asserts 4 rolling messages (cmp + quad +
+        //    text), returns syntax error. Call 3 (Visual 1 inner repair): asserts 6 messages,
+        //    returns scene_v1 (promotes to v1). Call 4 (Visual 2): asserts rolling context reset
+        //    back to 4 messages! Returns scene_v1 -> early-stops!
         let cfg = FromImageConfig {
             image_spec: data_url.clone(),
             prompt: "Reconstruct bedroom".to_string(),

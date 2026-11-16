@@ -59,8 +59,9 @@ mobile/examples/ios_swiftui/Info.plist
 .DS_Store
 *.swp
 
-# Android SDK location (machine-specific).
+# Android SDK location & generated JNI shared libraries (machine-specific / build outputs).
 local.properties
+mobile/**/src/main/jniLibs/
 
 # Local planning / parity notes (never committed to GitHub).
 docs/xr-spatial-parity.md

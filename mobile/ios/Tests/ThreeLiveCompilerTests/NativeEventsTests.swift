@@ -16,6 +16,7 @@ import XCTest
 import simd
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 /// Native-event parity: orbit camera, hand gestures, detections and the Gemini Live client.
 final class NativeEventsTests: XCTestCase {

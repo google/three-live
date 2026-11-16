@@ -21,6 +21,7 @@ import XCTest
 import simd
 
 @testable import ThreeLiveCompiler
+@testable import ThreeLiveRuntime
 
 /// Records every delegate callback.
 private final class Recorder: XRLiveRuntimeSessionDelegate {

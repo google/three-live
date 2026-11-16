@@ -21,8 +21,6 @@ use crate::spatial_lint::{
     mat4_look_at, mat4_mul, mat4_perspective, mat4_transform_point, mat4_transform_vec4, WorldAABB,
 };
 use crate::usdz::calculate_crc32;
-use std::cell::RefCell;
-use std::sync::Arc;
 
 /// Camera / viewport selection for headless rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2022,171 +2020,12 @@ pub(crate) fn draw_label_badge(
 /// Encodes an RGBA8 buffer as a zlib-compressed PNG with per-row adaptive filtering
 /// (minimum-sum-of-absolute-differences heuristic). Produces far smaller files than
 /// [`encode_png_rgba`] for large composites such as reference comparison sheets.
+pub use crate::kernels::{
+    compress_png_data_uri, encode_png_rgba_level, recompress_stored_png, TEXTURE_PNG_LEVEL,
+};
+
 pub fn encode_png_rgba_compressed(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
     encode_png_rgba_level(width, height, rgba, 6)
-}
-
-/// [`encode_png_rgba_compressed`] at an explicit `miniz_oxide` level (1 = fastest, 9 = smallest).
-pub fn encode_png_rgba_level(
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-    level: u8,
-) -> Result<Vec<u8>, String> {
-    if width == 0 || height == 0 {
-        return Err("PNG dimensions must be >= 1x1".to_string());
-    }
-    let w = width as usize;
-    let h = height as usize;
-    let row_bytes = w.checked_mul(4).ok_or("PNG width overflow")?;
-    let needed = row_bytes.checked_mul(h).ok_or("PNG size overflow")?;
-    if rgba.len() < needed {
-        return Err(format!(
-            "RGBA buffer too small for {}x{} PNG ({} < {})",
-            w,
-            h,
-            rgba.len(),
-            needed
-        ));
-    }
-    let mut raw = Vec::with_capacity(h * (1 + row_bytes));
-    let mut cand = vec![0u8; row_bytes];
-    let mut best = vec![0u8; row_bytes];
-    for y in 0..h {
-        let cur = &rgba[y * row_bytes..(y + 1) * row_bytes];
-        let prev = if y > 0 { Some(&rgba[(y - 1) * row_bytes..y * row_bytes]) } else { None };
-        let mut best_ft = 0u8;
-        let mut best_score = u64::MAX;
-        for ft in 0u8..5 {
-            if ft >= 2 && prev.is_none() && ft != 4 {
-                continue;
-            }
-            let mut score = 0u64;
-            for i in 0..row_bytes {
-                let a = if i >= 4 { cur[i - 4] as i16 } else { 0 };
-                let b = prev.map(|p| p[i] as i16).unwrap_or(0);
-                let c = if i >= 4 { prev.map(|p| p[i - 4] as i16).unwrap_or(0) } else { 0 };
-                let pred = match ft {
-                    0 => 0,
-                    1 => a,
-                    2 => b,
-                    3 => (a + b) / 2,
-                    _ => {
-                        let pp = a + b - c;
-                        let (pa, pb, pc) = ((pp - a).abs(), (pp - b).abs(), (pp - c).abs());
-                        if pa <= pb && pa <= pc {
-                            a
-                        } else if pb <= pc {
-                            b
-                        } else {
-                            c
-                        }
-                    }
-                };
-                let v = (cur[i] as i16 - pred) as u8;
-                cand[i] = v;
-                score += (v as i8).unsigned_abs() as u64;
-            }
-            if score < best_score {
-                best_score = score;
-                best_ft = ft;
-                best.copy_from_slice(&cand);
-            }
-        }
-        raw.push(best_ft);
-        raw.extend_from_slice(&best);
-    }
-    let zlib = miniz_oxide::deflate::compress_to_vec_zlib(&raw, level.clamp(1, 9));
-
-    let mut png = Vec::with_capacity(64 + zlib.len());
-    png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
-    let write_chunk = |out: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]| {
-        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        let crc_start = out.len();
-        out.extend_from_slice(chunk_type);
-        out.extend_from_slice(data);
-        let crc = calculate_crc32(&out[crc_start..]);
-        out.extend_from_slice(&crc.to_be_bytes());
-    };
-    let mut ihdr = [0u8; 13];
-    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
-    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
-    ihdr[8] = 8;
-    ihdr[9] = 6;
-    write_chunk(&mut png, b"IHDR", &ihdr);
-    write_chunk(&mut png, b"IDAT", &zlib);
-    write_chunk(&mut png, b"IEND", &[]);
-    Ok(png)
-}
-
-/// `miniz_oxide` level for texture PNGs written into GLB files: close to level 6 in size on
-/// generated textures at a fraction of the time.
-pub const TEXTURE_PNG_LEVEL: u8 = 3;
-
-/// Re-encodes an 8-bit RGBA PNG whose zlib stream starts with a stored (uncompressed) DEFLATE
-/// block — what the in-engine texture encoders emit, since they run inside the script
-/// execution ceiling — with adaptive filtering and DEFLATE. Returns `None` when the PNG is
-/// already compressed, is not 8-bit RGBA, or would not shrink.
-pub fn recompress_stored_png(png: &[u8]) -> Option<Vec<u8>> {
-    if png.len() < 33 || &png[0..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
-        return None;
-    }
-    // IHDR: bit depth 8, color type 6 (RGBA), no interlace.
-    if png[24] != 8 || png[25] != 6 || png[28] != 0 {
-        return None;
-    }
-    // First IDAT: zlib header (2 bytes), then the first DEFLATE block header (BTYPE bits 1-2).
-    let mut pos = 8usize;
-    let mut first_block = None;
-    while pos + 12 <= png.len() {
-        let len = u32::from_be_bytes([png[pos], png[pos + 1], png[pos + 2], png[pos + 3]]) as usize;
-        if &png[pos + 4..pos + 8] == b"IDAT" {
-            if len >= 3 && pos + 8 + 3 <= png.len() {
-                first_block = Some(png[pos + 10]);
-            }
-            break;
-        }
-        pos = pos.checked_add(12 + len)?;
-    }
-    if (first_block? >> 1) & 3 != 0 {
-        return None;
-    }
-    let img = crate::reference::decode_png(png).ok()?;
-    let out = encode_png_rgba_level(img.width, img.height, &img.rgba, TEXTURE_PNG_LEVEL).ok()?;
-    (out.len() < png.len()).then_some(out)
-}
-
-thread_local! {
-    // (FNV-1a 64 of the URI, URI length) → recompressed URI. Live previews re-export the
-    // same textures on every edit; this keeps that from re-running DEFLATE each time.
-    static PNG_URI_CACHE: RefCell<Vec<((u64, usize), Arc<str>)>> = const { RefCell::new(Vec::new()) };
-}
-const PNG_URI_CACHE_ENTRIES: usize = 24;
-
-/// [`recompress_stored_png`] for a `data:image/png;base64,...` URI (cached per thread).
-/// Returns the input unchanged when it is not a stored PNG data URI.
-pub fn compress_png_data_uri(uri: &str) -> Arc<str> {
-    let Some(b64) = uri.strip_prefix("data:image/png;base64,") else {
-        return Arc::from(uri);
-    };
-    let id = (crate::ai_texture::fnv1a64(uri.as_bytes()), uri.len());
-    if let Some(hit) =
-        PNG_URI_CACHE.with(|c| c.borrow().iter().find(|(k, _)| *k == id).map(|(_, v)| v.clone()))
-    {
-        return hit;
-    }
-    let out: Arc<str> = decode_base64_str(b64, 17 * 1024 * 1024)
-        .and_then(|png| recompress_stored_png(&png))
-        .map(|png| Arc::from(format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png))))
-        .unwrap_or_else(|| Arc::from(uri));
-    PNG_URI_CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= PNG_URI_CACHE_ENTRIES {
-            c.remove(0);
-        }
-        c.push((id, out.clone()));
-    });
-    out
 }
 
 pub fn encode_png_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {

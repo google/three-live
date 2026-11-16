@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Optional ML Kit on-device object detector for three-live. The core `:mobile:android` library
-// stays
-// zero-dependency; apps opt in by adding this module and calling ThreeLiveMlKitDetector.install().
+// Optional ML Kit on-device object detector for three-live. The core `:mobile:android-runtime`
+// library stays zero-dependency; apps opt in by adding this module and calling
+// ThreeLiveMlKitDetector.install().
 
 plugins {
   id("com.android.library")
@@ -47,7 +47,7 @@ android {
 }
 
 dependencies {
-  api(project(":mobile:android"))
+  api(project(":mobile:android-runtime"))
   api("com.google.mlkit:object-detection:17.0.2")
 
   testImplementation("junit:junit:4.13.2")
@@ -58,7 +58,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "detect-mlkit"
-      version = "1.4.0"
+      version = "1.3.2"
       afterEvaluate { from(components["release"]) }
 
       pom {

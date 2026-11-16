@@ -50,7 +50,7 @@ android {
 }
 
 dependencies {
-  api(project(":mobile:android"))
+  api(project(":mobile:android-runtime"))
   // 17.17.0 is the newest release built with Kotlin 2.0 (readable by this build's Kotlin 1.9).
   api("com.google.firebase:firebase-ai:17.17.0")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
@@ -63,7 +63,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "firebase-ai"
-      version = "1.4.0"
+      version = "1.3.2"
       afterEvaluate { from(components["release"]) }
 
       pom {

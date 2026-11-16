@@ -60,14 +60,29 @@ Both native engines take binary glTF (`.glb`) as input. `three-live` executes pr
 
 ## Directory Layout
 
-- **`android/`**: Android library package containing:
-  - `ThreeCompiler.kt`: Kotlin coroutine wrapper with `GlbBuffer` (`AutoCloseable`).
-  - `FilamentHelper.kt`: Zero-copy integration recipe for Google Filament.
-  - Gradle build script generating `three-live-compiler-release.aar`.
-- **`ios/`**: Swift Package Manager (SPM) manifest and Swift wrappers:
-  - `ThreeCompiler.swift`: Swift concurrency wrapper (`async/await`) with `Data(bytesNoCopy:)`.
-  - `RealityKitHelper.swift`: Integration recipe for Apple RealityKit / visionOS.
-  - C module headers and `Package.swift` declaring `binaryTarget` for `ThreeLiveCompiler.xcframework`.
+-   **`android-runtime/` (`com.google.threelive:runtime`)**: Pure Kotlin
+    spatial/XR/AI/TSL runtime + `ThreeCompiler` + `ThreeCompilerBackend` SPI
+    (**zero** JNI `.so` or bundled JS engine).
+-   **`android-kernels/` (`com.google.threelive:kernels`)**: Boa-free native
+    geometry, CSG, procedural texture, PNG/DEFLATE, UTF-8, and USDZ C-ABI
+    kernels (`libthree_live_kernels.so`) for host apps embedding their own JS
+    engine.
+-   **`android/` (`com.google.threelive:compiler`)**: Default turnkey Android
+    package re-exporting `:runtime` and registering `NativeThreeCompilerBackend`
+    (`libthree_live_compiler.so` with embedded Rust + Boa VM).
+-   **`ios/`**: Swift Package Manager (SPM) products (`ThreeLiveRuntime`,
+    `ThreeLiveKernels`, `ThreeLiveCompilerNative`, and umbrella
+    `ThreeLiveCompiler`):
+    -   `Sources/ThreeLiveRuntime/ThreeCompiler.swift`: Swift concurrency
+        wrapper (`async/await`) and `ThreeCompilerBackend` protocol (zero C/Boa
+        dependencies).
+    -   `Sources/ThreeLiveCompilerNative/`: Default `Data(bytesNoCopy:)`
+        zero-copy backend backed by `ThreeLiveCompiler.xcframework`.
+    -   `Sources/ThreeLiveKernels/`: Boa-free `ThreeLiveKernels.xcframework`
+        C-ABI table (`three_live_kernels.h`) for host apps embedding their own
+        JS engine.
+    -   `Sources/ThreeLiveRuntime/RealityKitHelper.swift`: Integration recipe
+        for Apple RealityKit / visionOS.
 - **`examples/android_compose/`**: Turnkey Android Studio project with Jetpack Compose code editor, live presets, and interactive Google Filament 3D viewport.
 - **`examples/ios_swiftui/`**: Turnkey Xcode project with SwiftUI monospace code editor, live presets, and interactive Apple RealityKit 3D viewport.
 

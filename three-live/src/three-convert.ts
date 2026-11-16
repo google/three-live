@@ -37,6 +37,31 @@ import {
 } from './three-view';
 
 declare const ENABLE_NATIVE_HOOKS: boolean;
+declare const SECURITY_3D_MAX_HEAP_BYTES: number;
+declare const SECURITY_3D_MAX_VERTICES: number;
+declare const SECURITY_3D_MAX_MESHES: number;
+declare const SECURITY_3D_MAX_INDICES: number;
+declare const SECURITY_3D_MAX_TEXTURES: number;
+
+const MAX_HEAP_BYTES =
+  typeof SECURITY_3D_MAX_HEAP_BYTES !== 'undefined'
+    ? SECURITY_3D_MAX_HEAP_BYTES
+    : 16777216;
+const MAX_VERTICES =
+  typeof SECURITY_3D_MAX_VERTICES !== 'undefined'
+    ? SECURITY_3D_MAX_VERTICES
+    : 100000;
+const MAX_MESHES =
+  typeof SECURITY_3D_MAX_MESHES !== 'undefined' ? SECURITY_3D_MAX_MESHES : 1000;
+const MAX_SCENE_NODES = MAX_MESHES * 4;
+const MAX_INDICES =
+  typeof SECURITY_3D_MAX_INDICES !== 'undefined'
+    ? SECURITY_3D_MAX_INDICES
+    : 300000;
+const MAX_TEXTURES =
+  typeof SECURITY_3D_MAX_TEXTURES !== 'undefined'
+    ? SECURITY_3D_MAX_TEXTURES
+    : 16;
 
 // =========================================================================
 // 1. Data Types & Interfaces
@@ -439,12 +464,124 @@ function buildSceneCoreExtension(xr: XRMeshTraits): Record<string, any> {
 
 export {compileInteractivityGraph};
 
-type ConvertAnimOptions = {
+/** Options controlling animation baking during GLB / USDZ serialization. */
+export interface ConvertAnimOptions {
   animateFn?: (time: number) => void;
   animateCallback?: (time: number) => void;
   duration?: number;
   fps?: number;
-};
+  bakeAnimations?: boolean;
+}
+
+function srgbCh(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function parsePlainRgb(
+  v: unknown,
+  fb: [number, number, number],
+): [number, number, number] {
+  if (v && typeof v === 'object' && 'r' in v) {
+    const c = v as {r?: unknown; g?: unknown; b?: unknown};
+    return [finUsd(c.r, fb[0]), finUsd(c.g, fb[1]), finUsd(c.b, fb[2])];
+  }
+  let n = typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : NaN;
+  if (typeof v === 'string' && v.trim()[0] === '#') {
+    let h = v.trim().slice(1);
+    if (h.length === 3 || h.length === 4) {
+      h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    } else if (h.length === 8) {
+      h = h.slice(0, 6);
+    }
+    if (h.length === 6 && /^[0-9a-fA-F]{6}$/.test(h)) n = Number(`0x${h}`);
+  }
+  return Number.isFinite(n)
+    ? [
+        srgbCh(((n >> 16) & 255) / 255),
+        srgbCh(((n >> 8) & 255) / 255),
+        srgbCh((n & 255) / 255),
+      ]
+    : fb;
+}
+
+function toSafeExtrasJson(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  let budget = 20000;
+  let autoId = 0;
+  const seen = new Set<object>();
+  const copy = (v: unknown, d: number): unknown => {
+    if (--budget < 0 || d > 32) return undefined;
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return v;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+    if (typeof v !== 'object') return undefined;
+    const o = v as Record<string, unknown>;
+    if (Array.isArray(o.children) && o.position && o.quaternion) {
+      return (
+        (typeof o.name === 'string' && o.name) ||
+        (o.name = `Node_ref_${++autoId}`)
+      );
+    }
+    if (typeof o.applyMatrix4 === 'function' && typeof o.x === 'number') {
+      return [finUsd(o.x, 0), finUsd(o.y, 0), finUsd(o.z, 0)];
+    }
+    if (typeof o.getHex === 'function') {
+      return `#${Number((o.getHex as () => unknown)())
+        .toString(16)
+        .padStart(6, '0')}`;
+    }
+    if (seen.has(o)) return undefined;
+    seen.add(o);
+    if (Array.isArray(o)) {
+      const arrOut: unknown[] = [];
+      for (const x of o) arrOut.push(copy(x, d + 1) ?? null);
+      seen.delete(o);
+      return arrOut;
+    }
+    const objOut: Record<string, unknown> = {};
+    for (const k of Object.keys(o)) {
+      if (k !== '__proto__' && k !== 'prototype' && k !== 'constructor') {
+        const c = copy(o[k], d + 1);
+        if (c !== undefined) objOut[k] = c;
+      }
+    }
+    seen.delete(o);
+    return objOut;
+  };
+  const res = copy(value, 0) as Record<string, unknown> | undefined;
+  return res && Object.keys(res).length > 0 ? res : undefined;
+}
+
+function assertFloatAttr(raw: unknown): ArrayLike<number> {
+  if (
+    raw instanceof Float32Array ||
+    raw instanceof Float64Array ||
+    Array.isArray(raw)
+  ) {
+    return raw;
+  }
+  throw new Error('Geometry attribute must be a Float32Array or Float64Array');
+}
+
+function sanitizeF32(raw: unknown, count: number, comps: number): Float32Array {
+  const src = assertFloatAttr(raw);
+  const n = count * comps;
+  if (src instanceof Float32Array && src.length === n) {
+    let ok = true;
+    for (let i = 0; i < n; i++) {
+      if (!Number.isFinite(src[i])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return src;
+  }
+  const out = new Float32Array(n);
+  for (let i = 0, lim = Math.min(n, src.length); i < lim; i++) {
+    const v = Number(src[i]);
+    out[i] = Number.isFinite(v) ? v : 0;
+  }
+  return out;
+}
 
 const clampUsd = (v: unknown, lo: number, hi: number, fb: number): number =>
   typeof v === 'number' && Number.isFinite(v)
@@ -479,10 +616,15 @@ function readAudioEmitter(xr: any): {
         : undefined);
   if (!raw || (typeof raw === 'object' && raw.enabled === false)) return null;
   const ae = typeof raw === 'string' ? {preset: raw} : raw;
+  const rawSrc = typeof ae.src === 'string' ? ae.src.trim() : '';
   const src =
-    typeof ae.src === 'string' &&
-    !/[\x00-\x20\\%]|^\s*(javascript|data|file|http):/i.test(ae.src)
-      ? ae.src
+    rawSrc &&
+    !/[\x00-\x20\\%@]/.test(rawSrc) &&
+    (/^https:\/\/[^/]/i.test(rawSrc) ||
+      (!rawSrc.startsWith('//') &&
+        !rawSrc.includes('..') &&
+        !rawSrc.includes(':')))
+      ? rawSrc
       : undefined;
   const preset = typeof ae.preset === 'string' ? ae.preset : undefined;
   if (!src && !preset) return null;
@@ -536,9 +678,47 @@ function serializeScene(
   scene: Scene,
   options?: ConvertAnimOptions,
 ): [GLBData, Object3D[]] {
-  scene.updateMatrixWorld(true);
+  // Pre-scan node hierarchy iteratively so oversized hierarchies fail fast
+  // before `updateMatrixWorld`, and skip matrix math when no lights/helpers exist.
+  let needsMatrixWorld = false;
+  {
+    const counted = new Set<object>([scene]);
+    const pending: unknown[] = Array.isArray(scene.children)
+      ? [...scene.children]
+      : [];
+    let count = 0;
+    while (pending.length > 0) {
+      const n = pending.pop();
+      if (!n || typeof n !== 'object' || counted.has(n)) continue;
+      counted.add(n);
+      if (++count > MAX_SCENE_NODES) {
+        throw new Error(
+          `Scene exceeds maximum allowed nodes (${count}/${MAX_SCENE_NODES})`,
+        );
+      }
+      const anyN = n as Record<string, unknown>;
+      if (
+        anyN.isLight ||
+        (anyN.color && anyN.intensity !== undefined) ||
+        typeof anyN._bakeAuthorGeometry === 'function'
+      ) {
+        needsMatrixWorld = true;
+      }
+      if (Array.isArray(anyN.children)) {
+        for (let i = 0; i < anyN.children.length; i++) {
+          pending.push(anyN.children[i]);
+        }
+      }
+    }
+  }
+  if (needsMatrixWorld) {
+    scene.updateMatrixWorld?.(true);
+  }
   const buffers: Uint8Array[] = [];
   let byteOffset = 0;
+  let totalMeshes = 0;
+  let totalVertices = 0;
+  let totalIndices = 0;
   const bufferViews: any[] = [];
   const accessors: any[] = [];
   const meshes: any[] = [];
@@ -547,6 +727,7 @@ function serializeScene(
   const nodeObjects: Object3D[] = [];
   const materials: any[] = [];
   const matMap = new Map<Material, number>();
+  let defaultMatIdx: number | null = null;
   const images: Array<{uri: string}> = [];
   const samplers: Array<Record<string, number>> = [];
   const textures: Array<{sampler: number; source: number}> = [];
@@ -556,37 +737,50 @@ function serializeScene(
   const khrLights: Array<Record<string, unknown>> = [];
   let hasAnyShadowLight = false;
 
+  function ensureDefaultMaterial(): number {
+    if (defaultMatIdx !== null) return defaultMatIdx;
+    defaultMatIdx = materials.length;
+    materials.push({
+      name: 'DefaultMaterial',
+      pbrMetallicRoughness: {
+        baseColorFactor: [0.8, 0.8, 0.8, 1.0],
+        metallicFactor: 0.1,
+        roughnessFactor: 0.5,
+      },
+      doubleSided: true,
+    });
+    return defaultMatIdx;
+  }
+
   function serializeMaterial(rawMat: Material): number {
     let matIdx = matMap.get(rawMat);
     if (matIdx !== undefined) return matIdx;
     matIdx = materials.length;
     matMap.set(rawMat, matIdx);
     const m = rawMat as Material & {
-      emissive?: {r: number; g: number; b: number};
+      emissive?: {r: number; g: number; b: number} | number | string;
       emissiveIntensity?: number;
       clearcoat?: number;
       clearcoatRoughness?: number;
       sheen?: number;
-      sheenColor?: {r: number; g: number; b: number};
+      sheenColor?: {r: number; g: number; b: number} | number | string;
       sheenRoughness?: number;
       transmission?: number;
       thickness?: number;
       attenuationDistance?: number;
-      attenuationColor?: {r: number; g: number; b: number};
+      attenuationColor?: {r: number; g: number; b: number} | number | string;
       ior?: number;
       dispersion?: number;
       iridescence?: number;
       iridescenceIOR?: number;
       doubleSided?: boolean;
     };
-    const r = m.color?.r ?? 1.0;
-    const g = m.color?.g ?? 1.0;
-    const b = m.color?.b ?? 1.0;
-    const opacity = m.opacity ?? 1.0;
+    const [r, g, b] = parsePlainRgb(m.color, [1.0, 1.0, 1.0]);
+    const opacity = finUsd(m.opacity, 1.0);
     const pbr: Record<string, unknown> = {
       baseColorFactor: [r, g, b, opacity],
-      metallicFactor: m.metalness ?? 0.0,
-      roughnessFactor: m.roughness ?? 0.5,
+      metallicFactor: finUsd(m.metalness, 0.0),
+      roughnessFactor: finUsd(m.roughness, 0.5),
     };
     const matExtras: Record<string, unknown> = {};
     const addTex = (t: any): {index: number} | undefined => {
@@ -599,19 +793,116 @@ function serializeScene(
             : typeof t.image === 'string'
               ? t.image
               : '';
-      const s = raw.trim();
+      if (!raw) return undefined;
+      if (raw.length > 6 * 1024 * 1024) {
+        throw new Error(
+          `Texture URI length (${raw.length} bytes) exceeds maximum allowed (6 MB)`,
+        );
+      }
+      if (raw.includes('\0')) {
+        throw new Error('Texture URI contains null byte');
+      }
       if (
-        !s ||
-        /[\x00-\x1f\x7f\\]|\.\./.test(s) ||
-        !(/^data:image\/(png|jpeg|jpg|webp|ktx2|avif)(;|,)/i.test(s) ||
-          (!s.startsWith('//') && !/^[a-z][a-z0-9+.-]*:/i.test(s)))
+        typeof t === 'object' &&
+        t.image &&
+        typeof t.image === 'object' &&
+        ((typeof t.image.width === 'number' && t.image.width > 2048) ||
+          (typeof t.image.height === 'number' && t.image.height > 2048))
       ) {
-        return undefined;
+        throw new Error(
+          'Texture dimensions exceed SECURITY_3D_MAX_TEXTURE_DIMENSION (2048)',
+        );
+      }
+      const s = raw.trim();
+      if (!s) return undefined;
+      if (/^data:/i.test(s)) {
+        if (!/^data:image\/(png|jpeg|jpg|webp|ktx2|avif)(;|,)/i.test(s)) {
+          throw new Error('Data URI must be an image (data:image/*)');
+        }
+        if (/^data:image\/png;base64,/i.test(s)) {
+          const b64Head = s
+            .slice(s.indexOf(',') + 1, s.indexOf(',') + 64)
+            .replace(/\s+/g, '');
+          if (b64Head.length >= 32) {
+            const b64Val = (c: number) =>
+              c >= 65 && c <= 90
+                ? c - 65
+                : c >= 97 && c <= 122
+                  ? c - 71
+                  : c >= 48 && c <= 57
+                    ? c + 4
+                    : c === 43
+                      ? 62
+                      : c === 47
+                        ? 63
+                        : 0;
+            const hdr = new Uint8Array(24);
+            let hp = 0;
+            for (let bi = 0; bi + 3 < 32 && hp < 24; bi += 4) {
+              const v =
+                (b64Val(b64Head.charCodeAt(bi)) << 18) |
+                (b64Val(b64Head.charCodeAt(bi + 1)) << 12) |
+                (b64Val(b64Head.charCodeAt(bi + 2)) << 6) |
+                b64Val(b64Head.charCodeAt(bi + 3));
+              if (hp < 24) hdr[hp++] = (v >>> 16) & 255;
+              if (hp < 24) hdr[hp++] = (v >>> 8) & 255;
+              if (hp < 24) hdr[hp++] = v & 255;
+            }
+            if (
+              hdr[12] === 0x49 &&
+              hdr[13] === 0x48 &&
+              hdr[14] === 0x44 &&
+              hdr[15] === 0x52
+            ) {
+              const pw =
+                ((hdr[16] << 24) |
+                  (hdr[17] << 16) |
+                  (hdr[18] << 8) |
+                  hdr[19]) >>>
+                0;
+              const ph =
+                ((hdr[20] << 24) |
+                  (hdr[21] << 16) |
+                  (hdr[22] << 8) |
+                  hdr[23]) >>>
+                0;
+              if (pw > 2048 || ph > 2048) {
+                throw new Error(
+                  `PNG texture dimensions (${pw}x${ph}) exceed SECURITY_3D_MAX_TEXTURE_DIMENSION (2048)`,
+                );
+              }
+            }
+          }
+        }
+      } else if (
+        /[\x01-\x1f\x7f\\%]|\.\./.test(raw) ||
+        s.startsWith('//') ||
+        s.includes(':') ||
+        s.includes('@')
+      ) {
+        const preview = Array.from(raw).slice(0, 64).join('');
+        throw new Error(
+          `Disallowed texture URI scheme or path traversal: ${JSON.stringify(preview)}`,
+        );
       }
       let texIdx = textureLookup.get(s);
       if (texIdx === undefined) {
+        if (images.length >= MAX_TEXTURES) {
+          throw new Error(
+            `Scene exceeds SECURITY_3D_MAX_TEXTURES (${MAX_TEXTURES})`,
+          );
+        }
+        let packed = s;
+        if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+          const compressFn = (globalThis as Record<string, unknown>)[
+            '__three_live_native_compress_png_uri__'
+          ];
+          if (typeof compressFn === 'function') {
+            packed = (compressFn as (u: string) => string)(s) || s;
+          }
+        }
         const imgIdx = images.length;
-        images.push({uri: s});
+        images.push({uri: packed});
         if (samplers.length === 0) {
           samplers.push({
             magFilter: 9729,
@@ -637,17 +928,21 @@ function serializeScene(
     if (mrTex) pbr.metallicRoughnessTexture = mrTex;
     const avg = (m.map as any)?.avgColor;
     if (Array.isArray(avg) && avg.length >= 3) {
-      matExtras.avgColor = [avg[0], avg[1], avg[2]];
+      matExtras.avgColor = [
+        finUsd(avg[0], 1),
+        finUsd(avg[1], 1),
+        finUsd(avg[2], 1),
+      ];
     }
     const normTex: Record<string, unknown> | undefined = addTex(
       pk?.normUri || (m as any).normalMap,
     );
     const rawNs = (m as any).normalScale;
     const ns = pk?.normUri
-      ? (pk.normScale ?? 1)
+      ? finUsd(pk.normScale, 1)
       : typeof rawNs === 'number'
-          ? Math.max(0, finUsd(rawNs, 1))
-          : rawNs
+        ? Math.max(0, finUsd(rawNs, 1))
+        : rawNs
           ? Math.max(0, (finUsd(rawNs.x, 1) + finUsd(rawNs.y, 1)) * 0.5)
           : 1;
     if (normTex && ns !== 1) normTex.scale = ns;
@@ -675,53 +970,116 @@ function serializeScene(
       ...(Object.keys(matExtras).length > 0 ? {extras: matExtras} : {}),
     };
     const ei = Math.max(0, finUsd(m.emissiveIntensity, 1));
+    const emRgb =
+      m.emissive !== undefined ? parsePlainRgb(m.emissive, [0, 0, 0]) : null;
     const hasEm =
-      m.emissive && (m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0);
+      emRgb !== null && (emRgb[0] > 0 || emRgb[1] > 0 || emRgb[2] > 0);
     if (hasEm || (emTex && !(m as any)._em && ei > 0)) {
       matDef.emissiveFactor = hasEm
-        ? [m.emissive.r * ei, m.emissive.g * ei, m.emissive.b * ei]
+        ? [emRgb[0] * ei, emRgb[1] * ei, emRgb[2] * ei]
         : [ei, ei, ei];
     }
     const ext: Record<string, unknown> = {};
-    if (m.clearcoat && m.clearcoat > 0) {
+    const cc = finUsd(m.clearcoat, 0);
+    if (cc > 0) {
+      nodeExtensionsUsed.add('KHR_materials_clearcoat');
       ext.KHR_materials_clearcoat = {
-        clearcoatFactor: m.clearcoat,
-        clearcoatRoughnessFactor: m.clearcoatRoughness || 0,
+        clearcoatFactor: cc,
+        clearcoatRoughnessFactor: finUsd(m.clearcoatRoughness, 0),
       };
     }
-    if (m.sheen && m.sheen > 0) {
+    const sheen = finUsd(m.sheen, 0);
+    if (sheen > 0) {
+      nodeExtensionsUsed.add('KHR_materials_sheen');
       ext.KHR_materials_sheen = {
         sheenColorFactor: m.sheenColor
-          ? [m.sheenColor.r, m.sheenColor.g, m.sheenColor.b]
+          ? parsePlainRgb(m.sheenColor, [1, 1, 1])
           : [1, 1, 1],
-        sheenRoughnessFactor: m.sheenRoughness || 0,
+        sheenRoughnessFactor: finUsd(m.sheenRoughness, 0),
       };
     }
-    if (m.transmission && m.transmission > 0) {
+    const trans = finUsd(m.transmission, 0);
+    if (trans > 0) {
+      nodeExtensionsUsed.add('KHR_materials_transmission');
       ext.KHR_materials_transmission = {
-        transmissionFactor: m.transmission,
+        transmissionFactor: trans,
       };
     }
-    if (m.thickness && m.thickness > 0) {
+    const thick = finUsd(m.thickness, 0);
+    if (thick > 0) {
+      nodeExtensionsUsed.add('KHR_materials_volume');
+      const attDist = m.attenuationDistance;
       ext.KHR_materials_volume = {
-        thicknessFactor: m.thickness,
-        attenuationDistance: m.attenuationDistance ?? Infinity,
+        thicknessFactor: thick,
+        ...(typeof attDist === 'number' &&
+        Number.isFinite(attDist) &&
+        attDist > 0
+          ? {attenuationDistance: attDist}
+          : {}),
         attenuationColor: m.attenuationColor
-          ? [m.attenuationColor.r, m.attenuationColor.g, m.attenuationColor.b]
+          ? parsePlainRgb(m.attenuationColor, [1, 1, 1])
           : [1, 1, 1],
       };
     }
-    if (m.ior !== undefined && m.ior !== 1.5) {
-      ext.KHR_materials_ior = {ior: m.ior};
+    const ior = finUsd(m.ior, 1.5);
+    if (Math.abs(ior - 1.5) > 1e-4) {
+      nodeExtensionsUsed.add('KHR_materials_ior');
+      ext.KHR_materials_ior = {ior};
     }
-    if (m.dispersion && m.dispersion > 0) {
-      ext.KHR_materials_dispersion = {dispersion: m.dispersion};
+    const disp = finUsd(m.dispersion, 0);
+    if (disp > 0) {
+      nodeExtensionsUsed.add('KHR_materials_dispersion');
+      ext.KHR_materials_dispersion = {dispersion: disp};
     }
-    if (m.iridescence && m.iridescence > 0) {
+    const irid = finUsd(m.iridescence, 0);
+    if (irid > 0) {
+      nodeExtensionsUsed.add('KHR_materials_iridescence');
       ext.KHR_materials_iridescence = {
-        iridescenceFactor: m.iridescence,
-        iridescenceIor: m.iridescenceIOR ?? 1.3,
+        iridescenceFactor: irid,
+        iridescenceIor: finUsd(m.iridescenceIOR, 1.3),
       };
+    }
+    const mExt = m as unknown as Record<string, unknown>;
+    const aniso = finUsd(mExt.anisotropy, 0);
+    if (aniso > 0) {
+      nodeExtensionsUsed.add('KHR_materials_anisotropy');
+      const anisoRot = finUsd(mExt.anisotropyRotation, 0);
+      ext.KHR_materials_anisotropy = {
+        anisotropyStrength: Math.min(1, aniso),
+        ...(anisoRot !== 0 ? {anisotropyRotation: anisoRot} : {}),
+      };
+    }
+    if (
+      mExt.specularIntensity !== undefined ||
+      mExt.specularColor !== undefined
+    ) {
+      const specFactor = clampUsd(mExt.specularIntensity, 0, 1, 1);
+      const specColor = mExt.specularColor
+        ? parsePlainRgb(mExt.specularColor, [1, 1, 1])
+        : [1, 1, 1];
+      if (
+        Math.abs(specFactor - 1) > 1e-4 ||
+        specColor[0] !== 1 ||
+        specColor[1] !== 1 ||
+        specColor[2] !== 1
+      ) {
+        nodeExtensionsUsed.add('KHR_materials_specular');
+        ext.KHR_materials_specular = {
+          specularFactor: specFactor,
+          specularColorFactor: specColor,
+        };
+      }
+    }
+    if (typeof mExt.emissiveStrength === 'number') {
+      const emStr = Math.max(0, finUsd(mExt.emissiveStrength, 1));
+      if (Math.abs(emStr - 1) > 1e-4) {
+        nodeExtensionsUsed.add('KHR_materials_emissive_strength');
+        ext.KHR_materials_emissive_strength = {emissiveStrength: emStr};
+      }
+    }
+    if (mExt.unlit === true) {
+      nodeExtensionsUsed.add('KHR_materials_unlit');
+      ext.KHR_materials_unlit = {};
     }
     if (Object.keys(ext).length > 0) {
       matDef.extensions = ext;
@@ -822,16 +1180,41 @@ function serializeScene(
             Object.keys(obj.userData.interactivity).length > 0)),
     );
     const node: any = {
-      name:
-        obj.name || (hasInteractiveTraits ? `Node_${nodes.length}` : ''),
+      name: obj.name || (hasInteractiveTraits ? `Node_${nodes.length}` : ''),
     };
-    const px = finUsd(obj.position?.x, 0),
-      py = finUsd(obj.position?.y, 0),
-      pz = finUsd(obj.position?.z, 0);
-    const rx = finUsd(obj.quaternion?.x, 0),
-      ry = finUsd(obj.quaternion?.y, 0),
-      rz = finUsd(obj.quaternion?.z, 0),
-      rw = finUsd(obj.quaternion?.w, 1);
+    const px = finUsd(obj.position?.x, 0);
+    const py = finUsd(obj.position?.y, 0);
+    const pz = finUsd(obj.position?.z, 0);
+    let rx = Number(obj.quaternion?.x ?? 0);
+    let ry = Number(obj.quaternion?.y ?? 0);
+    let rz = Number(obj.quaternion?.z ?? 0);
+    let rw = Number(obj.quaternion?.w ?? 1);
+    if (
+      !Number.isFinite(rx) ||
+      !Number.isFinite(ry) ||
+      !Number.isFinite(rz) ||
+      !Number.isFinite(rw)
+    ) {
+      rx = 0;
+      ry = 0;
+      rz = 0;
+      rw = 1;
+    } else {
+      const qLen = Math.hypot(rx, ry, rz, rw);
+      if (qLen > 1e-8 && Number.isFinite(qLen)) {
+        if (Math.abs(qLen - 1) > 1e-5) {
+          rx /= qLen;
+          ry /= qLen;
+          rz /= qLen;
+          rw /= qLen;
+        }
+      } else {
+        rx = 0;
+        ry = 0;
+        rz = 0;
+        rw = 1;
+      }
+    }
     const sx = finUsd(obj.scale?.x, 1),
       sy = finUsd(obj.scale?.y, 1),
       sz = finUsd(obj.scale?.z, 1);
@@ -847,14 +1230,8 @@ function serializeScene(
     }
 
     if (obj.userData && Object.keys(obj.userData).length > 0) {
-      node.extras = JSON.parse(
-        JSON.stringify(obj.userData, (k, v) => {
-          if (k === '__proto__' || k === 'prototype' || k === 'constructor') {
-            return undefined;
-          }
-          return typeof v === 'function' ? undefined : v;
-        }),
-      );
+      const safeExtras = toSafeExtrasJson(obj.userData);
+      if (safeExtras) node.extras = safeExtras;
       if (obj.userData.xr) {
         const sceneCoreExt = buildSceneCoreExtension(obj.userData.xr);
         node.extensions = {
@@ -951,10 +1328,16 @@ function serializeScene(
       const dirDy = wpy - ty;
       const dirDz = wpz - tz;
       const dirLen = Math.hypot(dirDx, dirDy, dirDz);
+      const lightColor: [number, number, number] = [
+        finUsd(obj.color?.r, 1),
+        finUsd(obj.color?.g, 1),
+        finUsd(obj.color?.b, 1),
+      ];
+      const lightIntensity = finUsd(obj.intensity, 1);
       lights.push({
         type: obj.type,
-        color: [obj.color.r, obj.color.g, obj.color.b],
-        intensity: obj.intensity,
+        color: lightColor,
+        intensity: lightIntensity,
         position:
           obj.type === 'directional' ? [dirDx, dirDy, dirDz] : [wpx, wpy, wpz],
         ...(obj.type === 'directional'
@@ -977,13 +1360,13 @@ function serializeScene(
               : obj.type === 'hemisphere' && anyObj.groundColor
                 ? {
                     groundColor: [
-                      anyObj.groundColor.r,
-                      anyObj.groundColor.g,
-                      anyObj.groundColor.b,
+                      finUsd(anyObj.groundColor.r, 0),
+                      finUsd(anyObj.groundColor.g, 0),
+                      finUsd(anyObj.groundColor.b, 0),
                     ],
                   }
                 : {}),
-        ...(shadowSpec ? {shadow: shadowSpec} : {}),
+        ...(shadowSpec ? {nodeIndex: nodes.length, shadow: shadowSpec} : {}),
       });
       if (isPunctual) {
         pendingKhrLights.push({
@@ -1009,68 +1392,140 @@ function serializeScene(
 
     if ((obj as any).geometry) {
       const geo = (obj as any).geometry;
-      const posAttr = geo.attributes.position;
-      if (posAttr && posAttr.count > 0) {
-        let min = [Infinity, Infinity, Infinity],
-          max = [-Infinity, -Infinity, -Infinity];
-        for (let i = 0; i < posAttr.count; i++) {
-          const x = posAttr.getX(i),
-            y = posAttr.getY(i),
-            z = posAttr.getZ(i);
-          if (x < min[0]) min[0] = x;
-          if (x > max[0]) max[0] = x;
-          if (y < min[1]) min[1] = y;
-          if (y > max[1]) max[1] = y;
-          if (z < min[2]) min[2] = z;
-          if (z > max[2]) max[2] = z;
+      const posAttr = geo.attributes?.position;
+      if (posAttr?.array !== undefined) assertFloatAttr(posAttr.array);
+      const vertexCount =
+        posAttr && typeof posAttr.count === 'number' && posAttr.count > 0
+          ? Math.floor(posAttr.count)
+          : 0;
+      if (vertexCount <= 0) {
+        if (geo.index?.count > 0) {
+          throw new Error('Non-empty index buffer on mesh with 0 vertices');
         }
-
-        const posAcc = addAccessor(
-          posAttr.array,
-          'VEC3',
-          34962,
-          5126,
-          posAttr.count,
-          min,
-          max,
-        );
-        const primitive: any = {attributes: {POSITION: posAcc}};
-
-        if (geo.attributes.normal) {
-          primitive.attributes.NORMAL = addAccessor(
-            geo.attributes.normal.array,
-            'VEC3',
-            34962,
-            5126,
-            geo.attributes.normal.count,
+      } else {
+        if (++totalMeshes > MAX_MESHES) {
+          throw new Error(
+            `Scene exceeds maximum allowed meshes (${totalMeshes}/${MAX_MESHES})`,
           );
         }
-        if (geo.attributes.uv) {
-          primitive.attributes.TEXCOORD_0 = addAccessor(
-            geo.attributes.uv.array,
-            'VEC2',
-            34962,
-            5126,
-            geo.attributes.uv.count,
+        if ((totalVertices += vertexCount) > MAX_VERTICES) {
+          throw new Error(
+            `Scene exceeds maximum allowed vertices (${totalVertices}/${MAX_VERTICES})`,
           );
         }
-        if (geo.index) {
-          const isU32 = geo.index.array instanceof Uint32Array;
+
+        const posArr = sanitizeF32(posAttr.array, vertexCount, 3);
+        const min = [Infinity, Infinity, Infinity];
+        const max = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < vertexCount * 3; i++) {
+          const v = posArr[i];
+          const k = i % 3;
+          if (v < min[k]) min[k] = v;
+          if (v > max[k]) max[k] = v;
+        }
+        for (let k = 0; k < 3; k++) {
+          if (!Number.isFinite(min[k])) min[k] = max[k] = 0;
+        }
+
+        const primitive: {
+          attributes: Record<string, number>;
+          indices?: number;
+          material?: number;
+          extensions?: Record<string, unknown>;
+        } = {
+          attributes: {
+            POSITION: addAccessor(
+              posArr,
+              'VEC3',
+              34962,
+              5126,
+              vertexCount,
+              min,
+              max,
+            ),
+          },
+        };
+        const addFloatAttr = (
+          attr: {array?: unknown; count?: number} | undefined,
+          name: string,
+          comps: number,
+        ) => {
+          if (attr?.array !== undefined) {
+            assertFloatAttr(attr.array);
+            const cnt = Math.min(
+              (attr.count ?? 0) | 0,
+              ((attr.array as ArrayLike<number>).length / comps) | 0,
+            );
+            if (cnt >= vertexCount) {
+              primitive.attributes[name] = addAccessor(
+                sanitizeF32(attr.array, vertexCount, comps),
+                comps === 2 ? 'VEC2' : 'VEC3',
+                34962,
+                5126,
+                vertexCount,
+              );
+            }
+          }
+        };
+        addFloatAttr(geo.attributes.normal, 'NORMAL', 3);
+        addFloatAttr(geo.attributes.uv, 'TEXCOORD_0', 2);
+        if (geo.index && geo.index.array && Math.floor(geo.index.count) > 0) {
+          const idxCount = Math.floor(geo.index.count);
+          totalIndices += idxCount;
+          if (totalIndices > MAX_INDICES) {
+            throw new Error(
+              `Scene exceeds maximum allowed indices (${totalIndices}/${MAX_INDICES})`,
+            );
+          }
+          const rawIdx = geo.index.array as ArrayLike<number>;
+          for (let i = 0; i < idxCount; i++) {
+            const idx = rawIdx[i];
+            if (
+              typeof idx !== 'number' ||
+              !Number.isFinite(idx) ||
+              idx < 0 ||
+              idx >= vertexCount
+            ) {
+              throw new Error(
+                `Vertex index out of bounds: index ${idx} >= vertex_count ${vertexCount}`,
+              );
+            }
+          }
+          let idxTyped: Uint16Array | Uint32Array;
+          let idxCompType: 5123 | 5125;
+          if (rawIdx instanceof Uint32Array && rawIdx.length === idxCount) {
+            idxTyped = rawIdx;
+            idxCompType = 5125;
+          } else if (
+            rawIdx instanceof Uint16Array &&
+            rawIdx.length === idxCount
+          ) {
+            idxTyped = rawIdx;
+            idxCompType = 5123;
+          } else if (vertexCount > 65535 || rawIdx instanceof Uint32Array) {
+            idxTyped = new Uint32Array(idxCount);
+            for (let i = 0; i < idxCount; i++) idxTyped[i] = rawIdx[i];
+            idxCompType = 5125;
+          } else {
+            idxTyped = new Uint16Array(idxCount);
+            for (let i = 0; i < idxCount; i++) idxTyped[i] = rawIdx[i];
+            idxCompType = 5123;
+          }
           primitive.indices = addAccessor(
-            geo.index.array,
+            idxTyped,
             'SCALAR',
             34963,
-            isU32 ? 5125 : 5123,
-            geo.index.count,
+            idxCompType,
+            idxCount,
           );
         }
 
         const rawMat = Array.isArray(obj.material)
           ? obj.material[0]
           : obj.material;
-        if (rawMat) {
-          primitive.material = serializeMaterial(rawMat);
-        }
+        primitive.material = rawMat
+          ? serializeMaterial(rawMat)
+          : ensureDefaultMaterial();
 
         const rawVariants = obj.userData?.variants;
         let variantWantsVertexColors = false;
@@ -1121,8 +1576,8 @@ function serializeScene(
         const cStep = colAttr?.itemSize === 4 ? 4 : 3;
         if (
           colAttr?.array &&
-          colAttr.count >= posAttr.count &&
-          colAttr.array.length >= posAttr.count * cStep
+          colAttr.count >= vertexCount &&
+          colAttr.array.length >= vertexCount * cStep
         ) {
           const m = rawMat as
             | (Material & {vertexColors?: boolean; map?: unknown})
@@ -1146,8 +1601,8 @@ function serializeScene(
                 : cSrc instanceof Uint16Array
                   ? 1 / 65535
                   : 1;
-            const colorArr = new Float32Array(posAttr.count * 3);
-            for (let i = 0; i < posAttr.count; i++) {
+            const colorArr = new Float32Array(vertexCount * 3);
+            for (let i = 0; i < vertexCount; i++) {
               for (let k = 0; k < 3; k++) {
                 const v = cSrc[i * cStep + k]! * cNorm;
                 colorArr[i * 3 + k] = Number.isFinite(v) ? Math.max(0, v) : 1;
@@ -1158,7 +1613,7 @@ function serializeScene(
               'VEC3',
               34962,
               5126,
-              posAttr.count,
+              vertexCount,
             );
           }
         }
@@ -1170,7 +1625,12 @@ function serializeScene(
           maybeInst.count > 0 &&
           maybeInst.instanceMatrix?.array
         ) {
-          const instCount = Math.min(10000, Math.floor(maybeInst.count));
+          if (maybeInst.count > 10000) {
+            throw new Error(
+              `InstancedMesh count (${maybeInst.count}) exceeds SECURITY_3D_MAX_INSTANCES_PER_MESH (10000)`,
+            );
+          }
+          const instCount = Math.floor(maybeInst.count);
           const matArray = maybeInst.instanceMatrix.array as Float32Array;
           const tArr = new Float32Array(instCount * 3);
           const rArr = new Float32Array(instCount * 4);
@@ -1197,12 +1657,12 @@ function serializeScene(
             maybeInst.instanceColor?.array &&
             maybeInst.instanceColor.array.length >= instCount * 3
           ) {
-            const cArr = new Float32Array(
-              (maybeInst.instanceColor.array as Float32Array).subarray(
-                0,
-                instCount * 3,
-              ),
-            );
+            const cSrc = maybeInst.instanceColor.array as ArrayLike<number>;
+            const cArr = new Float32Array(instCount * 3);
+            for (let i = 0; i < instCount * 3; i++) {
+              const v = Number(cSrc[i]);
+              cArr[i] = Number.isFinite(v) ? v : 1;
+            }
             instAttrs._COLOR_0 = addAccessor(cArr, 'VEC3', 0, 5126, instCount);
           }
           node.extensions = {
@@ -1242,8 +1702,12 @@ function serializeScene(
       khrLights.push({
         name: p.obj.name || `Light_${khrIdx}`,
         type: p.obj.type,
-        color: [p.obj.color.r, p.obj.color.g, p.obj.color.b],
-        intensity: p.obj.intensity,
+        color: [
+          finUsd(p.obj.color?.r, 1),
+          finUsd(p.obj.color?.g, 1),
+          finUsd(p.obj.color?.b, 1),
+        ],
+        intensity: finUsd(p.obj.intensity, 1),
         ...(p.range > 0 && (p.obj.type === 'point' || p.obj.type === 'spot')
           ? {range: p.range}
           : {}),
@@ -1295,20 +1759,25 @@ function serializeScene(
 
   // Auto-bake procedural animate(time) function if provided on options, scene.userData, or globalThis
   const animateFn =
-    (options as any)?.animateCallback ||
-    options?.animateFn ||
-    (typeof (scene as any).userData?.animate === 'function'
-      ? (scene as any).userData.animate
-      : typeof (scene as any).__animateFn === 'function'
-        ? (scene as any).__animateFn
-        : typeof (globalThis as any).animate === 'function'
-          ? (globalThis as any).animate
-          : undefined);
+    options?.bakeAnimations === false
+      ? undefined
+      : options?.animateCallback ||
+        options?.animateFn ||
+        (typeof (scene as any).userData?.animate === 'function'
+          ? (scene as any).userData.animate
+          : typeof (scene as any).__animateFn === 'function'
+            ? (scene as any).__animateFn
+            : typeof (globalThis as any).animate === 'function'
+              ? (globalThis as any).animate
+              : undefined);
 
   const gltfAnimations: any[] = [];
   if (typeof animateFn === 'function' && nodeObjects.length > 0) {
-    const duration = options?.duration ?? 4.0;
-    const fps = options?.fps ?? 15;
+    const duration = Math.max(
+      0.01,
+      Math.min(60.0, finUsd(options?.duration, 4.0)),
+    );
+    const fps = Math.max(1, Math.min(120, finUsd(options?.fps, 15)));
     const numSteps = Math.max(2, Math.round(duration * fps) + 1);
     const times = new Float32Array(numSteps);
 
@@ -1438,6 +1907,12 @@ function serializeScene(
     meshes,
     scene.userData,
   );
+  if (
+    interactivityExt &&
+    JSON.stringify(interactivityExt).includes('KHR_node_visibility')
+  ) {
+    nodeExtensionsUsed.add('KHR_node_visibility');
+  }
 
   const audioClips: Array<{uri: string}> = [];
   const audioSources: Array<Record<string, unknown>> = [];
@@ -1498,26 +1973,31 @@ function serializeScene(
     nodeExtensionsUsed.add('KHR_audio_emitter');
   }
 
+  const envIntensity = finUsd(scene.environmentIntensity, 1);
   const gltf: any = {
     asset: {
       version: '2.0',
       generator: 'ThreeLiveConvert',
       extras: {
-        environmentIntensity: scene.environmentIntensity,
+        environmentIntensity: envIntensity,
         ...(lights.length > 0 ? {lights} : {}),
       },
     },
-    scenes: [{nodes: rootNodeIndices}],
+    scenes: [
+      rootNodeIndices.length > 0
+        ? {name: 'Scene', nodes: rootNodeIndices}
+        : {name: 'Scene'},
+    ],
     scene: 0,
-    nodes,
-    meshes,
-    materials,
+    ...(nodes.length > 0 ? {nodes} : {}),
+    ...(meshes.length > 0 ? {meshes} : {}),
+    ...(materials.length > 0 ? {materials} : {}),
     ...(images.length > 0 ? {images} : {}),
     ...(samplers.length > 0 ? {samplers} : {}),
     ...(textures.length > 0 ? {textures} : {}),
-    accessors,
-    bufferViews,
-    buffers: [{byteLength: byteOffset}],
+    ...(accessors.length > 0 ? {accessors} : {}),
+    ...(bufferViews.length > 0 ? {bufferViews} : {}),
+    ...(byteOffset > 0 ? {buffers: [{byteLength: byteOffset}]} : {}),
     ...(gltfAnimations.length > 0 ? {animations: gltfAnimations} : {}),
     ...(interactivityExt || nodeExtensionsUsed.size > 0
       ? {
@@ -1570,13 +2050,18 @@ function serializeScene(
       gltf,
       bin: bin.buffer,
       lights,
-      environmentIntensity: scene.environmentIntensity,
+      environmentIntensity: envIntensity,
     },
     nodeObjects,
   ];
 }
 
 export function encodeUtf8(str: string): Uint8Array {
+  if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+    // tslint:disable-next-line:no-any
+    const fn = (globalThis as any).__three_live_native_utf8_encode__;
+    if (typeof fn === 'function') return fn(str);
+  }
   return new TextEncoder().encode(str);
 }
 
@@ -1590,6 +2075,7 @@ export function sceneToGLB(
     animateCallback?: (time: number) => void;
     duration?: number;
     fps?: number;
+    bakeAnimations?: boolean;
   },
 ): Uint8Array {
   const {gltf, bin} = sceneToCanvas3D(scene, options);
@@ -1597,8 +2083,15 @@ export function sceneToGLB(
   const jsonBytes = encodeUtf8(jsonStr);
   const jsonPadding = (4 - (jsonBytes.byteLength % 4)) % 4;
   const jsonPaddedLength = jsonBytes.byteLength + jsonPadding;
+  const hasBin = bin.byteLength > 0;
 
-  const totalLength = 12 + 8 + jsonPaddedLength + 8 + bin.byteLength;
+  const totalLength =
+    12 + 8 + jsonPaddedLength + (hasBin ? 8 + bin.byteLength : 0);
+  if (totalLength > MAX_HEAP_BYTES) {
+    throw new Error(
+      `GLB output size (${totalLength} bytes) exceeds SECURITY_3D_MAX_HEAP_BYTES (${MAX_HEAP_BYTES})`,
+    );
+  }
   const glb = new Uint8Array(totalLength);
   const dv = new DataView(glb.buffer);
 
@@ -1614,11 +2107,22 @@ export function sceneToGLB(
   for (let i = 0; i < jsonPadding; i++)
     glb[20 + jsonBytes.byteLength + i] = 0x20;
 
-  // Chunk 1: BIN
-  const binHeaderOffset = 20 + jsonPaddedLength;
-  dv.setUint32(binHeaderOffset, bin.byteLength, true);
-  dv.setUint32(binHeaderOffset + 4, 0x004e4942, true); // "BIN\0"
-  glb.set(new Uint8Array(bin), binHeaderOffset + 8);
+  // Chunk 1: BIN (omitted when empty per glTF 2.0 buffer.byteLength >= 1)
+  if (hasBin) {
+    const binHeaderOffset = 20 + jsonPaddedLength;
+    dv.setUint32(binHeaderOffset, bin.byteLength, true);
+    dv.setUint32(binHeaderOffset + 4, 0x004e4942, true); // "BIN\0"
+    glb.set(new Uint8Array(bin), binHeaderOffset + 8);
+  }
+
+  if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+    const stashFn = (globalThis as Record<string, unknown>)[
+      '__three_live_native_stash_glb__'
+    ];
+    if (typeof stashFn === 'function') {
+      (stashFn as (buf: Uint8Array) => void)(glb);
+    }
+  }
 
   return glb;
 }
@@ -1669,6 +2173,24 @@ export function extractMeshesFromGLB(
   const gltfTextures = gltf.textures || [];
   const gltfImages = gltf.images || [];
   const gltfSamplers = gltf.samplers || [];
+  if (nodes.length > MAX_SCENE_NODES) {
+    throw new Error(
+      `GLB node count (${nodes.length}) exceeds MAX_SCENE_NODES (${MAX_SCENE_NODES})`,
+    );
+  }
+  if (meshes.length > MAX_MESHES) {
+    throw new Error(
+      `GLB mesh count (${meshes.length}) exceeds MAX_MESHES (${MAX_MESHES})`,
+    );
+  }
+  if (gltfImages.length > MAX_TEXTURES) {
+    throw new Error(
+      `GLB image count (${gltfImages.length}) exceeds MAX_TEXTURES (${MAX_TEXTURES})`,
+    );
+  }
+  let extractedMeshes = 0;
+  let extractedVertices = 0;
+  let extractedIndices = 0;
   const usedMatNames = new Set<string>();
   const matIdNames: string[] = materials.map((m: any, idx: number) =>
     uniqName(usedMatNames, sanitizeUsdIdentifier(m?.name, `Material_${idx}`)),
@@ -1708,7 +2230,10 @@ export function extractMeshesFromGLB(
     let p = 0;
     for (let i = 0; i < clean.length; i += 4) {
       const n =
-        (b64v(i) << 18) | (b64v(i + 1) << 12) | (b64v(i + 2) << 6) | b64v(i + 3);
+        (b64v(i) << 18) |
+        (b64v(i + 1) << 12) |
+        (b64v(i + 2) << 6) |
+        b64v(i + 3);
       out[p++] = (n >> 16) & 255;
       if (p < out.length) out[p++] = (n >> 8) & 255;
       if (p < out.length) out[p++] = n & 255;
@@ -1768,16 +2293,99 @@ export function extractMeshesFromGLB(
     };
   }
 
+  function compByteSize(componentType: number): number {
+    switch (componentType) {
+      case 5120:
+      case 5121:
+        return 1;
+      case 5122:
+      case 5123:
+        return 2;
+      case 5125:
+      case 5126:
+        return 4;
+      default:
+        throw new Error(
+          `Unsupported glTF accessor componentType ${componentType}`,
+        );
+    }
+  }
+
+  function typeComps(typeName: string | undefined): number {
+    switch (typeName) {
+      case 'SCALAR':
+        return 1;
+      case 'VEC2':
+        return 2;
+      case 'VEC3':
+        return 3;
+      case 'VEC4':
+      case 'MAT2':
+        return 4;
+      case 'MAT3':
+        return 9;
+      case 'MAT4':
+        return 16;
+      default:
+        return 1;
+    }
+  }
+
   function getBufferSlice(accessorIndex: number): {
     acc: any;
     buffer: ArrayBuffer;
   } {
     const acc = accessors[accessorIndex];
     if (!acc) throw new Error(`Accessor ${accessorIndex} not found`);
-    const bv = bufferViews[acc.bufferView || 0];
-    const byteOffset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-    const byteLength = bv.byteLength || 0;
-    return {acc, buffer: binBuffer.slice(byteOffset, byteOffset + byteLength)};
+    const count = Math.floor(Number(acc.count ?? 0));
+    if (!Number.isFinite(count) || count < 0 || count > MAX_INDICES) {
+      throw new Error(`Invalid accessor count ${acc.count}`);
+    }
+    const ct = Number(acc.componentType ?? 5126);
+    const elemSize = compByteSize(ct) * typeComps(acc.type);
+    const bv = bufferViews[acc.bufferView ?? 0];
+    if (!bv) {
+      throw new Error(
+        `BufferView ${acc.bufferView ?? 0} for accessor ${accessorIndex} not found`,
+      );
+    }
+    const bvOff = Number(bv.byteOffset ?? 0);
+    const bvLen = Number(bv.byteLength ?? 0);
+    const accOff = Number(acc.byteOffset ?? 0);
+    const stride = bv.byteStride ? Number(bv.byteStride) : elemSize;
+    if (stride < elemSize || bvOff < 0 || accOff < 0 || bvLen < 0) {
+      throw new Error(`Invalid bufferView bounds on accessor ${accessorIndex}`);
+    }
+    const needed = count === 0 ? 0 : (count - 1) * stride + elemSize;
+    if (
+      accOff + needed > bvLen ||
+      bvOff + accOff + needed > binBuffer.byteLength
+    ) {
+      throw new Error(
+        `Accessor ${accessorIndex} exceeds GLB BIN buffer bounds`,
+      );
+    }
+    if (count === 0) {
+      return {acc, buffer: new ArrayBuffer(0)};
+    }
+    if (stride !== elemSize) {
+      const packed = new Uint8Array(count * elemSize);
+      const src = new Uint8Array(binBuffer, bvOff + accOff, needed);
+      for (let i = 0; i < count; i++) {
+        packed.set(
+          src.subarray(i * stride, i * stride + elemSize),
+          i * elemSize,
+        );
+      }
+      return {acc, buffer: packed.buffer};
+    }
+    return {
+      acc,
+      buffer: binBuffer.slice(
+        bvOff + accOff,
+        bvOff + accOff + count * elemSize,
+      ),
+    };
   }
 
   function extractPrimitives(
@@ -1795,7 +2403,18 @@ export function extractMeshesFromGLB(
       const posAccIdx = prim.attributes?.POSITION;
       if (posAccIdx === undefined) continue;
 
+      if (++extractedMeshes > MAX_MESHES) {
+        throw new Error(
+          `GLB exceeds maximum allowed primitives (${extractedMeshes}/${MAX_MESHES})`,
+        );
+      }
       const {acc: posAcc, buffer: posBuf} = getBufferSlice(posAccIdx);
+      extractedVertices += posAcc.count;
+      if (extractedVertices > MAX_VERTICES) {
+        throw new Error(
+          `GLB exceeds maximum allowed vertices (${extractedVertices}/${MAX_VERTICES})`,
+        );
+      }
       const positions = new Float32Array(posBuf, 0, posAcc.count * 3);
 
       let normals: Float32Array | undefined;
@@ -1856,10 +2475,18 @@ export function extractMeshesFromGLB(
       let indices: Uint16Array | Uint32Array;
       if (prim.indices !== undefined) {
         const {acc: idxAcc, buffer: idxBuf} = getBufferSlice(prim.indices);
+        extractedIndices += idxAcc.count;
+        if (extractedIndices > MAX_INDICES) {
+          throw new Error(
+            `GLB exceeds maximum allowed indices (${extractedIndices}/${MAX_INDICES})`,
+          );
+        }
         indices =
           idxAcc.componentType === 5125
             ? new Uint32Array(idxBuf, 0, idxAcc.count)
-            : new Uint16Array(idxBuf, 0, idxAcc.count);
+            : idxAcc.componentType === 5121
+              ? Uint16Array.from(new Uint8Array(idxBuf, 0, idxAcc.count))
+              : new Uint16Array(idxBuf, 0, idxAcc.count);
         // Validate on the host: the sandbox worker's own index checks are not
         // a trust boundary, and out-of-range indices are invalid glTF that
         // would otherwise be written verbatim into USDA faceVertexIndices.
@@ -1978,7 +2605,8 @@ export function extractMeshesFromGLB(
           ior = ext.KHR_materials_ior.ior;
         }
         opacity =
-          baseOp * (1 - (ext.KHR_materials_transmission?.transmissionFactor ?? 0));
+          baseOp *
+          (1 - (ext.KHR_materials_transmission?.transmissionFactor ?? 0));
       }
 
       if (colors) {
@@ -2053,12 +2681,17 @@ export function extractMeshesFromGLB(
       {input: number; t?: number; r?: number; s?: number}
     >();
     const anim0 = gltf.animations?.[0];
-    if (anim0 && Array.isArray(anim0.channels) && Array.isArray(anim0.samplers)) {
+    if (
+      anim0 &&
+      Array.isArray(anim0.channels) &&
+      Array.isArray(anim0.samplers)
+    ) {
       for (const ch of anim0.channels) {
         const samp = anim0.samplers[ch?.sampler];
         const nIdx = ch?.target?.node;
         const p = ch?.target?.path;
-        if (!samp || typeof nIdx !== 'number' || samp.input === undefined) continue;
+        if (!samp || typeof nIdx !== 'number' || samp.input === undefined)
+          continue;
         let rec = animByNode.get(nIdx);
         if (!rec) {
           rec = {input: samp.input};
@@ -2070,8 +2703,7 @@ export function extractMeshesFromGLB(
       }
     }
 
-    let rootIndices: number[] =
-      gltf.scenes?.[gltf.scene ?? 0]?.nodes ?? [];
+    let rootIndices: number[] = gltf.scenes?.[gltf.scene ?? 0]?.nodes ?? [];
     if (!Array.isArray(rootIndices) || rootIndices.length === 0) {
       const childSet = new Set<number>();
       for (const n of nodes) {
@@ -2539,7 +3171,8 @@ ${rootAnchorAttrs}def Scope "Materials"
     const [er, eg, eb] = matProps.emissiveColor;
     const matPath = `/Root/Materials/${matName}`;
     const [dt, mrt, nt, et, ot] = matProps.textures || [];
-    const conn = (n: string, o: string) => `.connect = <${matPath}/${n}.outputs:${o}>`;
+    const conn = (n: string, o: string) =>
+      `.connect = <${matPath}/${n}.outputs:${o}>`;
     const useVCol = Boolean(matProps.useDisplayColor && !dt);
     const diffuseLine = dt
       ? `color3f inputs:diffuseColor${conn('DiffuseTexture', 'rgb')}`
@@ -2587,7 +3220,7 @@ ${rootAnchorAttrs}def Scope "Materials"
         const bi = tex.bias
           ? `float4 inputs:bias = ${f4(tex.bias[0], tex.bias[1], tex.bias[2], tex.bias[3])}\n`
           : '';
-        texShaders += `def Shader "${nodeName}"\n{\nuniform token info:id = "UsdUVTexture"\nasset inputs:file = @${sanitizeUsdStringLiteral(tex.file)}@\nfloat2 inputs:st${conn('PrimvarReader', 'result')}\ntoken inputs:sourceColorSpace = "${cs}"\ntoken inputs:wrapS = "${tex.wrapS || 'repeat'}"\ntoken inputs:wrapT = "${tex.wrapT || 'repeat'}"\n${sc}${bi}${outs}}\n`;
+        texShaders += `def Shader "${nodeName}"\n{\nuniform token info:id = "UsdUVTexture"\nasset inputs:file = @${sanitizeUsdStringLiteral(tex.file).replace(/@/g, '')}@\nfloat2 inputs:st${conn('PrimvarReader', 'result')}\ntoken inputs:sourceColorSpace = "${cs}"\ntoken inputs:wrapS = "${tex.wrapS || 'repeat'}"\ntoken inputs:wrapT = "${tex.wrapT || 'repeat'}"\n${sc}${bi}${outs}}\n`;
       };
       emitTex('DiffuseTexture', dt, 'sRGB', 'float3 outputs:rgb\n');
       emitTex(
@@ -2703,7 +3336,7 @@ def Scope "Meshes"
     const parsedAe = readAudioEmitter(xr);
     const tail =
       (parsedAe
-        ? `def SpatialAudio "AudioEmitter"\n{\n${parsedAe.src ? `asset inputs:file = @${sanitizeUsdStringLiteral(parsedAe.src)}@\n` : ''}uniform token inputs:auralMode = "${parsedAe.isGlobal ? 'nonSpatial' : 'spatial'}"\nuniform token inputs:playbackMode = "${parsedAe.loop ? 'loopFromStart' : 'onceFromStart'}"\ndouble gain = ${formatNum(parsedAe.volume)}\n}\n`
+        ? `def SpatialAudio "AudioEmitter"\n{\n${parsedAe.src ? `asset inputs:file = @${sanitizeUsdStringLiteral(parsedAe.src).replace(/@/g, '')}@\n` : ''}uniform token inputs:auralMode = "${parsedAe.isGlobal ? 'nonSpatial' : 'spatial'}"\nuniform token inputs:playbackMode = "${parsedAe.loop ? 'loopFromStart' : 'onceFromStart'}"\ndouble gain = ${formatNum(parsedAe.volume)}\n}\n`
         : '') + (xr ? (ser?.usdPrims?.(xr) ?? '') : '');
     return {header, body, tail};
   };
@@ -2711,11 +3344,7 @@ def Scope "Meshes"
   const formatXformOps = (node: USDAMeshData): string => {
     if (node.timeSamples && node.timeSamples.times.length > 0) {
       const ts = node.timeSamples;
-      const fmtTs = <T>(
-        arr: T[] | undefined,
-        fb: T,
-        fn: (v: T) => string,
-      ) =>
+      const fmtTs = <T>(arr: T[] | undefined, fb: T, fn: (v: T) => string) =>
         ts.times
           .map((t, idx) => `${formatNum(t)}: ${fn(arr?.[idx] || fb)}`)
           .join(', ');
@@ -2726,9 +3355,7 @@ def Scope "Meshes"
         const len = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
         return f4(q[3] / len, q[0] / len, q[1] / len, q[2] / len);
       });
-      const sSamples = fmtTs(ts.scales, [1, 1, 1], (s) =>
-        f3(s[0], s[1], s[2]),
-      );
+      const sSamples = fmtTs(ts.scales, [1, 1, 1], (s) => f3(s[0], s[1], s[2]));
       return `double3 xformOp:translate.timeSamples = { ${tSamples} }\nquatf xformOp:orient.timeSamples = { ${rSamples} }\ndouble3 xformOp:scale.timeSamples = { ${sSamples} }\nuniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]\n`;
     }
     const ops: string[] = [];

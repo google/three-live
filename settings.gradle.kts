@@ -36,6 +36,10 @@ dependencyResolutionManagement {
 
 rootProject.name = "three-live"
 
+include(":mobile:android-runtime")
+
+include(":mobile:android-kernels")
+
 include(":mobile:android")
 
 include(":mobile:android-filament")
