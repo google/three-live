@@ -416,7 +416,14 @@ export function launchSceneViewer(
 
 let activeWebXRManager: WebXRSessionManager | null = null;
 
-function createARReticleGpu(gl: WebGL2RenderingContext, color?: number[]): any {
+/**
+ * Builds the GPU mesh record for the `immersive-ar` hit-test surface reticle
+ * (`__xr_reticle__`) with complete `PrimitiveGpu` PBR and `BLEND` defaults.
+ */
+export function createARReticleGpu(
+  gl: WebGL2RenderingContext,
+  color?: number[],
+) {
   const segs = 24;
   const pos = new Float32Array(segs * 6);
   const norm = new Float32Array(segs * 6);
@@ -473,14 +480,20 @@ function createARReticleGpu(gl: WebGL2RenderingContext, color?: number[]): any {
           : [0.22, 0.74, 0.97, 0.95]) as [number, number, number, number],
         metallic: 0,
         roughness: 0.2,
+        clearcoat: 0,
+        clearcoatRoughness: 0.04,
         positions: pos,
         indices: idx,
         texture: null,
         metallicRoughnessTexture: null,
         normalTexture: null,
         occlusionTexture: null,
+        emissiveTexture: null,
+        emissiveFactor: [0, 0, 0] as [number, number, number],
         normalScale: 1,
         occlusionStrength: 1,
+        alphaMode: 'BLEND',
+        doubleSided: true,
         buffers,
       },
     ],

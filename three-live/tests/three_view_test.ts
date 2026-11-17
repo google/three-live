@@ -72,6 +72,7 @@ import {
   toneMappingShaderIndex,
   type ToneMappingMode,
 } from '../src/three-view';
+import {createARReticleGpu} from '../src/three-xr';
 import {
   parseBloomTrait,
   parseIKTrait,
@@ -3104,6 +3105,140 @@ async function runThreeViewTests() {
     assert(
       d2 !== undefined && d2.enabled === 0 && keptFraction(d2) === 1,
       'section-plane="none" restores the unclipped mesh (uSectionEnabled=0)',
+    );
+  }
+
+  // WebIDL-strict WebGL2 uniform validation: ThreeView.render must never pass
+  // undefined or malformed sequences to uniform*fv / uniformMatrix*fv on
+  // __xr_reticle__ or partial plugin-injected primitives.
+  {
+    const checkSeq = (fn: string, minLen: number, v: unknown) => {
+      if (
+        !(Array.isArray(v) || ArrayBuffer.isView(v)) ||
+        typeof (v as {length?: unknown}).length !== 'number' ||
+        (v as ArrayLike<number>).length < minLen
+      ) {
+        throw new TypeError(
+          `Failed to execute '${fn}' on 'WebGL2RenderingContext': The provided value cannot be converted to a sequence.`,
+        );
+      }
+      const seq = v as ArrayLike<number>;
+      for (let i = 0; i < minLen; i++) {
+        if (typeof seq[i] !== 'number' || !Number.isFinite(seq[i])) {
+          throw new TypeError(`${fn}[${i}] is non-finite: ${seq[i]}`);
+        }
+      }
+    };
+    const checkScalars = (fn: string, vals: number[]) => {
+      for (const x of vals) {
+        if (typeof x !== 'number' || !Number.isFinite(x)) {
+          throw new TypeError(`${fn} scalar is non-finite: ${x}`);
+        }
+      }
+    };
+    const emissiveCalls: number[][] = [];
+    let blendEnabled = false;
+    let blendedDraws = 0;
+    const glTarget: Record<string, unknown> = {
+      BLEND: 0x0be2,
+      TRIANGLES: 4,
+      UNSIGNED_SHORT: 5123,
+      FLOAT: 5126,
+      ARRAY_BUFFER: 34962,
+      ELEMENT_ARRAY_BUFFER: 34963,
+      STATIC_DRAW: 35044,
+      canvas: {width: 400, height: 400},
+      getShaderParameter: () => true,
+      getProgramParameter: () => true,
+      getUniformLocation: (_p: unknown, name: string) => ({name}),
+      createVertexArray: () => ({}),
+      createBuffer: () => ({}),
+      enable: (cap: number) => {
+        if (cap === 0x0be2) blendEnabled = true;
+      },
+      disable: (cap: number) => {
+        if (cap === 0x0be2) blendEnabled = false;
+      },
+      uniform1f: (_l: unknown, x: number) => checkScalars('uniform1f', [x]),
+      uniform2f: (_l: unknown, x: number, y: number) =>
+        checkScalars('uniform2f', [x, y]),
+      uniform3f: (_l: unknown, x: number, y: number, z: number) =>
+        checkScalars('uniform3f', [x, y, z]),
+      uniform4f: (_l: unknown, x: number, y: number, z: number, w: number) =>
+        checkScalars('uniform4f', [x, y, z, w]),
+      uniform2fv: (_l: unknown, v: unknown) => checkSeq('uniform2fv', 2, v),
+      uniform3fv: (loc: {name?: string} | null, v: unknown) => {
+        checkSeq('uniform3fv', 3, v);
+        const seq = v as ArrayLike<number>;
+        if (loc?.name === 'uEmissiveFactor') {
+          emissiveCalls.push([seq[0], seq[1], seq[2]]);
+        }
+      },
+      uniform4fv: (_l: unknown, v: unknown) => checkSeq('uniform4fv', 4, v),
+      uniformMatrix3fv: (_l: unknown, _t: boolean, v: unknown) =>
+        checkSeq('uniformMatrix3fv', 9, v),
+      uniformMatrix4fv: (_l: unknown, _t: boolean, v: unknown) =>
+        checkSeq('uniformMatrix4fv', 16, v),
+      drawElements: () => {
+        if (blendEnabled) blendedDraws++;
+      },
+    };
+    const strictGl = new Proxy(glTarget, {
+      get(t, p: string) {
+        return p in t ? t[p] : () => ({});
+      },
+    }) as unknown as WebGL2RenderingContext;
+    const sCanvas = {
+      ...mockCanvas,
+      getContext: () => strictGl,
+    } as unknown as HTMLCanvasElement;
+    const sContainer = sCanvas as unknown as HTMLElement;
+    const sView = new ThreeView(sContainer, sCanvas, {autoStart: false});
+    const sScene = new THREE.Scene();
+    sScene.add(
+      new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({color: 0x4488ff}),
+      ),
+    );
+    sView.loadGLBData(parseGLB(sScene.toGLB()));
+
+    const reticle = createARReticleGpu(strictGl);
+    reticle.visible = true;
+    (sView.meshes as unknown[]).push(reticle);
+
+    // Also inject a bare minimal external plugin primitive missing optional PBR fields.
+    (sView.meshes as unknown[]).push({
+      name: '__legacy_plugin_mesh__',
+      nodeIndex: -1,
+      visible: true,
+      transform: mat4Create(),
+      normalMatrix: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      primitives: [
+        {
+          vao: {},
+          indexCount: 3,
+          indexType: 5123,
+          positions: new Float32Array(9),
+          indices: new Uint16Array([0, 1, 2]),
+          buffers: [],
+        },
+      ],
+    });
+
+    let renderErr: unknown = null;
+    try {
+      sView.render();
+    } catch (e) {
+      renderErr = e;
+    }
+    assert(
+      renderErr === null &&
+        emissiveCalls.length >= 3 &&
+        blendedDraws >= 1 &&
+        reticle.primitives[0].emissiveFactor.length === 3 &&
+        reticle.primitives[0].alphaMode === 'BLEND',
+      'ThreeView.render satisfies WebIDL uniform3fv/uniform4fv contracts for __xr_reticle__ and partial plugin primitives',
     );
   }
 

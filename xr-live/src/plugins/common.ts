@@ -445,8 +445,11 @@ export interface DynamicGeometry {
 export interface DynamicMeshOptions {
   readonly name: string;
   readonly color?: readonly [number, number, number, number];
+  readonly emissiveFactor?: readonly [number, number, number];
   readonly roughness?: number;
   readonly metallic?: number;
+  /** Routes the primitive through the two-pass `alphaMode: 'BLEND'` draw pass. */
+  readonly alphaBlend?: boolean;
   /** Excludes the mesh from ray hit-testing (e.g. particles, reticles). */
   readonly pickable?: boolean;
   /**
@@ -475,8 +478,12 @@ function uploadBuffers(
   const vao = existing?.vao ?? gl.createVertexArray();
   if (!vao) throw new Error('Dynamic mesh allocation failed');
   const buffers: WebGLBuffer[] = existing?.buffers ?? [];
-  const data = [geometry.positions, geometry.normals,
-    new Float32Array(geometry.positions.length / 3 * 2), geometry.indices];
+  const data = [
+    geometry.positions,
+    geometry.normals,
+    new Float32Array((geometry.positions.length / 3) * 2),
+    geometry.indices,
+  ];
   if (geometry.translations) data.push(geometry.translations);
   gl.bindVertexArray(vao);
   for (let i = 0; i < data.length; i++) {
@@ -489,7 +496,15 @@ function uploadBuffers(
     buffers[i] = buffer;
     const target = i === 3 ? ELEMENT_ARRAY_BUFFER : ARRAY_BUFFER;
     gl.bindBuffer(target, buffer);
-    gl.bufferData(target, data[i], existing || i === 4 ? DYNAMIC_DRAW : geometry.translations ? STATIC_DRAW : usage);
+    gl.bufferData(
+      target,
+      data[i],
+      existing || i === 4
+        ? DYNAMIC_DRAW
+        : geometry.translations
+          ? STATIC_DRAW
+          : usage,
+    );
     if (i !== 3) {
       const location = i === 4 ? 3 : i;
       gl.enableVertexAttribArray(location);
@@ -554,12 +569,18 @@ export function createDynamicMesh(
         baseColor: [...(options.color ?? [1, 1, 1, 1])],
         metallic: options.metallic ?? 0,
         roughness: options.roughness ?? 0.6,
+        clearcoat: 0,
+        clearcoatRoughness: 0.04,
         texture: null,
         metallicRoughnessTexture: null,
         normalTexture: null,
         occlusionTexture: null,
+        emissiveTexture: null,
+        emissiveFactor: [...(options.emissiveFactor ?? [0, 0, 0])],
         normalScale: 1,
         occlusionStrength: 1,
+        alphaMode: options.alphaBlend ? 'BLEND' : undefined,
+        doubleSided: true,
         buffers: uploaded.buffers,
       },
     ],
@@ -582,10 +603,14 @@ export function updateDynamicMesh(
   const prim = mesh?.primitives?.[0];
   if (!prim) return;
   const gl = viewer.gl;
-  const reusable = prim.vao && prim.buffers?.length === (geometry.translations ? 5 : 4);
+  const reusable =
+    prim.vao && prim.buffers?.length === (geometry.translations ? 5 : 4);
   if (!gl || !reusable) releaseBuffers(gl, prim);
   if (gl && (reusable || typeof gl.createVertexArray === 'function')) {
-    Object.assign(prim, uploadBuffers(gl, geometry, DYNAMIC_DRAW, reusable ? prim : undefined));
+    Object.assign(
+      prim,
+      uploadBuffers(gl, geometry, DYNAMIC_DRAW, reusable ? prim : undefined),
+    );
   }
   Object.assign(prim, dynamicGeometryProperties(geometry));
   // Invalidate the ray-cast bounding sphere cached by `raycastGpuMeshes`.
@@ -599,9 +624,12 @@ function dynamicGeometryProperties(geometry: DynamicGeometry) {
     normals: geometry.normals,
     indices: geometry.indices,
     translations: geometry.translations,
-    instanceCount: geometry.translations ? geometry.translations.length / 3 : undefined,
+    instanceCount: geometry.translations
+      ? geometry.translations.length / 3
+      : undefined,
     indexCount: geometry.indices.length,
-    indexType: geometry.indices instanceof Uint32Array ? UNSIGNED_INT : UNSIGNED_SHORT,
+    indexType:
+      geometry.indices instanceof Uint32Array ? UNSIGNED_INT : UNSIGNED_SHORT,
   };
 }
 

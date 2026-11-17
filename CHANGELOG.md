@@ -182,6 +182,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+-   **WebGL2 `uniform3fv` Crash & `alphaBlend` Routing on `<xr-live>` Dynamic
+    Meshes, Spatial Slots & AR Reticles:** Populated complete `PrimitiveGpu` PBR
+    defaults (`emissiveFactor: [0, 0, 0]`, `emissiveTexture: null`, `clearcoat`,
+    `doubleSided`, and `alphaMode: 'BLEND'` when `alphaBlend` is requested)
+    across `createDynamicMesh`, `XRSpatialSlotManager`, and `__xr_reticle__`,
+    hardened `ThreeView.render()` against partial plugin primitives, and fixed
+    teleport arc `baseColor` updates in `spatial-locomotion`.
+
 -   **Opaque-Origin Static HTML Hosting (`file://` & Sandboxed `<iframe>`):**
     Web scene compilation automatically falls back from `blob:` Workers to an
     isolated `<iframe sandbox="allow-scripts">` (`connect-src 'none'`) when

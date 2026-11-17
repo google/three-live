@@ -804,8 +804,11 @@ export class XRSpatialLocomotionController {
     } else {
       reattachDynamicMesh(viewer, this.arcMesh);
       updateDynamicMesh(viewer, this.arcMesh, arcGeo);
-      if (this.arcMesh.primitives?.[0]?.material) {
-        this.arcMesh.primitives[0].material.baseColorFactor = color;
+      if (this.arcMesh.primitives?.[0]) {
+        this.arcMesh.primitives[0].baseColor = [...color];
+        if (this.arcMesh.primitives[0].material) {
+          this.arcMesh.primitives[0].material.baseColorFactor = color;
+        }
       }
       applyWorldMatrix(viewer, this.arcMesh);
     }

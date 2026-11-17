@@ -1035,6 +1035,9 @@ interface GpuBuildTrack {
   buffers: WebGLBuffer[];
 }
 
+const DEFAULT_BASE_COLOR: [number, number, number, number] = [1, 1, 1, 1];
+const ZERO_EMISSIVE: [number, number, number] = [0, 0, 0];
+
 function drawPrim(
   gl: WebGL2RenderingContext,
   prim: PrimitiveGpu,
@@ -4165,9 +4168,13 @@ export class ThreeView {
             );
           }
 
-          gl.uniform4fv(u.uBaseColor, prim.baseColor);
-          gl.uniform1f(u.uMetallic, prim.metallic);
-          gl.uniform1f(u.uRoughness, prim.roughness);
+          const bc = prim.baseColor;
+          gl.uniform4fv(
+            u.uBaseColor,
+            bc && bc.length >= 4 ? bc : DEFAULT_BASE_COLOR,
+          );
+          gl.uniform1f(u.uMetallic, prim.metallic ?? 0);
+          gl.uniform1f(u.uRoughness, prim.roughness ?? 0.5);
           if (u.uClearcoat) {
             gl.uniform2f(
               u.uClearcoat,
@@ -4190,7 +4197,7 @@ export class ThreeView {
             u.uHasNormalTexture,
           );
           if (prim.normalTexture) {
-            gl.uniform1f(u.uNormalScale, prim.normalScale);
+            gl.uniform1f(u.uNormalScale, prim.normalScale ?? 1);
           }
           bindTex2D(
             3,
@@ -4199,9 +4206,13 @@ export class ThreeView {
             u.uHasOcclusionTexture,
           );
           if (prim.occlusionTexture) {
-            gl.uniform1f(u.uOcclusionStrength, prim.occlusionStrength);
+            gl.uniform1f(u.uOcclusionStrength, prim.occlusionStrength ?? 1);
           }
-          gl.uniform3fv(u.uEmissiveFactor, prim.emissiveFactor);
+          const ef = prim.emissiveFactor;
+          gl.uniform3fv(
+            u.uEmissiveFactor,
+            ef && ef.length >= 3 ? ef : ZERO_EMISSIVE,
+          );
           bindTex2D(
             8,
             prim.emissiveTexture,
@@ -4264,7 +4275,10 @@ export class ThreeView {
               gl.uniformMatrix4fv(u.uModel, false, instModel);
               gl.uniformMatrix3fv(u.uNormalMatrix, false, instNormal);
               if (instColors) {
-                const b = prim.baseColor;
+                const b =
+                  prim.baseColor && prim.baseColor.length >= 4
+                    ? prim.baseColor
+                    : DEFAULT_BASE_COLOR;
                 const k = inst * 3;
                 gl.uniform4fv(u.uBaseColor, [
                   b[0] * instColors[k],
