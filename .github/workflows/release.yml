@@ -420,11 +420,16 @@ jobs:
           cp xr-live/dist/xr-live.min.js xr-live/dist/xr-live-viewer.min.js xr-live/dist/xr-live-sensors.min.js xr-live/dist/xr-live-spatial.min.js xr-live/dist/xr-live-sim.min.js xr-live/dist/xr-live-webgpu.min.js xr-live/dist/xr-live-full.min.js dist-release/
           ls -la dist-release
 
+      - name: Extract current version release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/extract_release_notes.js CHANGELOG.md "${TAG}" release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist-release/*
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

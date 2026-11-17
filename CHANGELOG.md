@@ -58,13 +58,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
         `TL403` warnings whenever HTML attributes or inline `userData.xr.*`
         traits use capabilities omitted from the host element.
 
--   **Self-contained Apple framework:** `ThreeLiveCompiler.xcframework` exports
-    only the C ABI (`three_live_*`). Rust's standard library, compiler-rt and
-    the compiler's crates are hidden (`scripts/build_ios_xcframework.sh`
-    pre-links each slice with `mobile/ios/exported_symbols.txt`;
-    `scripts/verify_xcframework.sh` rejects any other exported symbol), so the
-    framework links into apps that already carry another Rust library without
-    duplicate symbols.
+-   **TSL node-graph glTF payload moved to `gltf.materials[i].extras.tsl`:**
+    Replaces the `1.4.0` `extensions.GOOGLE_material_tsl` wrapper across Web,
+    Rust, Android, and iOS so procedural `THREE.TSL` shader graphs serialize as
+    standard glTF material `extras` without custom `extensionsUsed` entries.
+
+-   **Self-contained Apple XCFrameworks & static musl Linux CLI binaries:**
+    `ThreeLiveCompiler.xcframework` and `ThreeLiveKernels.xcframework` pre-link
+    every slice with explicit exported C ABI symbol lists
+    (`scripts/verify_xcframework.sh`), hiding Rust stdlib, `compiler-rt`, and
+    crate symbols so host apps that already link another Rust library never hit
+    duplicate symbols. Prebuilt Linux `three-live-cli` binaries now link
+    statically against musl for zero-GLIBC compatibility on minimal Debian
+    (`bookworm-slim` / `trixie-slim`), Alpine, and Docker MCP containers.
 
 ### Added
 
@@ -97,13 +103,115 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     -   **Boa-Free Native Kernels C ABI
         (`compiler/include/three_live_kernels.h`):** Cargo feature split
         (`kernels`, `boa`, `cli`, `wasm`, `jni`) exposing 24 self-describing
-        geometry, CSG, procedural PBR texture, PNG/DEFLATE, UTF-8, and USDZ
-        kernels via `three_live_kernels_table(&count)` +
-        `three_live_kernel_free`, with GLB serialization unified on
-        `three-convert.ts::sceneToGLB`.
+        geometry, CSG, procedural PBR texture, PNG/JPEG decode, and USDZ kernels
+        via `three_live_kernels_table(&count)` + `three_live_kernel_free`, with
+        GLB serialization unified on `three-convert.ts::sceneToGLB`.
+
+-   **Five A-la-Carte Parametric Domain Kits (`three-live-kit-*` &
+    `three-live-kits.min.js`, 57 2-manifold constructors):** Opt-in domain kits
+    (intentionally excluded from `three-live-full.min.js`) available
+    individually (`12 to 30 KB gz` each) or combined in `three-live-kits.min.js`
+    (`< 82 KB gz`), built into the native compiler, and showcased in the
+    153-variant Domain Kits Visual Catalog (`examples/kits/`,
+    `docs/kits-gallery.md`):
+
+    -   **`THREE.Mechanical` (`three-live-kit-mechanical.min.js`, 15 parts):**
+        `SpurGearGeometry`, `BevelGearGeometry`, `InternalRingGearGeometry`,
+        `RackGeometry`, `PulleyGeometry`, `BoltGeometry`, `NutGeometry`,
+        `WasherGeometry`, `ShaftGeometry`, `ShaftCouplerGeometry`,
+        `BearingGeometry`, `PillowBlockGeometry`, `HelicalSpringGeometry`,
+        `FlangePlateGeometry`, `ProfileExtrusionGeometry`, `metricFastener`, and
+        `gearMeshDistance`.
+    -   **`THREE.Architecture` (`three-live-kit-architecture.min.js`, 9
+        parts):** `WallGeometry`, `SlabGeometry`, `StaircaseGeometry`,
+        `RoofGeometry`, `DoorGeometry`, `WindowGeometry`, `RailingGeometry`,
+        `ColumnGeometry`, `ArchwayGeometry`, and IBC `codeStairSpec`.
+    -   **`THREE.Industrial` (`three-live-kit-industrial.min.js`, 10 parts):**
+        `PipeRunGeometry`, `PipeFittingGeometry`, `ValveGeometry`,
+        `CentrifugalPumpGeometry`, `PalletRackGeometry`, `ConveyorGeometry`,
+        `IndustrialLadderGeometry`, `CatwalkPlatformGeometry`,
+        `SafetyBarrierGeometry`, `StorageTankGeometry`, and ASME
+        `nominalPipeSpec`.
+    -   **`THREE.Science` (`three-live-kit-science.min.js`, 14 parts):**
+        `MoleculeGeometry`, `RibbonGeometry` + `ribbonColorMap`,
+        `CrystalLatticeGeometry`, `AtomicOrbitalGeometry`,
+        `OpticalElementGeometry`, `SurfacePlotGeometry`,
+        `ParametricSurfaceGeometry`, `VectorFieldGeometry`,
+        `IsoSurfaceGeometry`, `StreamlineGeometry`, `Axes3DGeometry`,
+        `DoubleHelixGeometry`, `DashedLineGeometry`, `AngleArcGeometry`,
+        `sampleColormap` / `colormapTexture` / `applyVertexColormap`, and
+        44-element IUPAC `elementSpec`.
+    -   **`THREE.Electronics` (`three-live-kit-electronics.min.js`, 9 parts):**
+        `PcbBoardGeometry`, `EnclosureGeometry`, `HeatsinkGeometry`,
+        `DinRailGeometry`, `IcPackageGeometry`, `PinHeaderGeometry`,
+        `ConnectorGeometry`, `StandoffSpacerGeometry`,
+        `DiscreteComponentGeometry`, and `jedecPackageSpec`.
+
+-   **3D CAD Sweeps, Helices, Multi-Profile Lofts & `PatternInstancer`
+    (`three-live-cad`):** Added Bishop-frame `SweepGeometry`, `HelixGeometry`
+    (`HelixCurve3`), 3D `extrudePath` support on `ExtrudeGeometry`,
+    multi-profile `LoftGeometry` (including hollow-vessel `wallThickness`,
+    crease-aware normals, and closed-loop seam welding), and declarative
+    `PatternInstancer` (`linear`, `grid`, `circular`, `alongCurve`,
+    `toGeometry`, plus `InstancedMesh` operands in `CSG`).
+
+-   **Core `<three-live section-plane>` CAD Cutaways:**
+    `<three-live section-plane="y:0.0">` (`el.sectionPlane`, `"-z:0.5"`,
+    `"none"`) clips WebGL2 color, WebGPU, and shadow-depth passes directly on
+    `<three-live>` without requiring `<xr-live>`.
+
+-   **End-to-End Per-Vertex Colors (`COLOR_0` & USDZ `primvars:displayColor`):**
+    Preserves `geometry.setAttribute('color', ...)` across `.glb` (`COLOR_0`),
+    WebGL2, WebGPU, the native software rasterizer, and `.usdz`
+    (`primvars:displayColor`).
+
+-   **Closed-Loop Visual AI Refinement (`--visual-turns N` / `visualTurns`) &
+    Live Playground AI Editing:** Multi-turn multimodal render-critique-repair
+    loop across `three-live-cli from-image --visual-turns N`, MCP
+    `three_live_from_image`, and Web
+    `el.compileFromImage(..., { visualTurns })`, plus BYOA live AI editing, 6
+    curated studio presets with instant Sample AI Edit chips across Web, Android
+    Compose, and iOS SwiftUI examples, and `docs/why-three-live.md`.
+
+-   **Built-In 3D/XR Accessibility Linter (`TL601`–`TL606`):** Static WCAG
+    2.1/2.2 & W3C XAUR accessibility diagnostics in `three-live-cli validate` /
+    `compile` and MCP tools covering non-text luminance contrast (`>= 3.0:1`),
+    vestibular motion / reduced-motion safety, interactive target sizing, and
+    spatial accessibility metadata, alongside contrast-verified kit catalog
+    palettes.
+
+### Fixed
+
+-   **Opaque-Origin Static HTML Hosting (`file://` & Sandboxed `<iframe>`):**
+    Web scene compilation automatically falls back from `blob:` Workers to an
+    isolated `<iframe sandbox="allow-scripts">` (`connect-src 'none'`) when
+    served from opaque (`null`) origins.
+
+-   **Shadow-Caster Normal Bias on Flush Stacked Geometry:** WebGL2 and WebGPU
+    shadow depth passes now shrink casters inward along `-N` while applying full
+    receiver normal bias (`SHADOW_RECEIVER_NORMAL_BIAS_SCALE = 1.0`), removing
+    false overhang shadow bands at flush multi-story wall joints while keeping
+    grazing and convex edges acne-free.
+
+-   **iOS / visionOS `outline` Trait Rendering in `XRLiveRealityKitSession`:**
+    Applies inverted-hull `userData.xr.outline` shells when binding session
+    entities while excluding shells from hit-testing collisions, `recolor`, and
+    hit-flash material swaps.
+
+-   **Interior Turntable Camera, `FrontSide` Culling, Grazing Bump & WebGL2
+    Alpha Blending:** Fixed room-interior turntable orbits, `FrontSide`
+    back-face culling, grazing normal/bump attenuation, two-pass
+    `alphaMode: 'BLEND'` sorting, Web Worker `installTslExtension`
+    serialization, and 2-manifold edge cases across `THREE.Architecture`.
+
+--------------------------------------------------------------------------------
+
+## [1.4.0] - 2026-11-09 (Beta)
+
+### Added
 
 -   **Loop-Free Node Materials (`three-live-tsl` / `tslPlugin` /
-    `extras.tsl`):** Opt-in cross-platform procedural PBR shader graph
+    `GOOGLE_material_tsl`):** Opt-in cross-platform procedural PBR shader graph
     authoring via `THREE.MeshStandardNodeMaterial` (`MeshPhysicalNodeMaterial`)
     and `THREE.TSL` (`colorNode`, `opacityNode`, `emissiveNode`,
     `roughnessNode`, `metalnessNode`, `normalScaleNode`, `bumpNode`, and vertex
@@ -111,7 +219,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (`three-live/tsl`, `< 19 KB gz`, 0 B overhead on core viewer/author bundles)
     and built into `three-live-full.min.js` and `xr-live-full.min.js`.
     Deduplicates common subexpressions into a canonical, topologically sorted
-    SSA DAG (`gltf.materials[m].extras.tsl`, `<= 128` nodes,
+    SSA DAG (`gltf.materials[m].extensions.GOOGLE_material_tsl`, `<= 128` nodes,
     `<= 16` uniforms, 45
     math/vector/Fresnel/simplexNoise2D/3D/Voronoi/triplanar/bump ops) verified
     in `O(N)` with identical FNV-1a structural hashes and `TL501`–`TL504`
