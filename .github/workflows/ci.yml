@@ -333,6 +333,21 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+      - name: Build tvOS example app
+        working-directory: mobile/examples/ios_swiftui
+        run: |
+          # ThreeLiveDemoTV targets tvOS 26, so an older tvOS SDK skips instead of failing.
+          if [ -d ../../ios/ThreeLiveCompiler.xcframework/tvos-arm64 ] && xcodebuild -showsdks | grep -Eq -- '-sdk appletvos(2[6-9]|[3-9][0-9])'; then
+            xcodebuild -project ThreeLiveDemo.xcodeproj \
+              -scheme ThreeLiveDemoTV \
+              -destination 'generic/platform=tvOS' \
+              -derivedDataPath .build/xcodebuild-tvos \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+          else
+            echo "::warning::tvOS XCFramework slice or tvOS 26+ SDK unavailable on this runner; skipping tvOS example build"
+          fi
+
       - name: Check release checksum pin
         run: |
           if grep -q '^let releaseChecksum = "0\{64\}"$' Package.swift; then
