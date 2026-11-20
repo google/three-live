@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
-## [Unreleased]
+## [1.5.0] - 2026-11-20 (Beta)
 
 ### Changed
 
@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (`network`, `remote_content`, `camera`, `microphone`, `sensors`, `storage`,
     `ai`, and `external_handoff`) now default to **disabled** across Web
     (`<three-live>` and `<xr-live>`), Android
-    (`com.google.threelive.ThreeLiveCapabilities`), and iOS/visionOS
+    (`com.google.threelive.ThreeLiveCapabilities`), and iOS/visionOS/tvOS
     (`ThreeLiveCapabilities`).
 
     -   **Web (`CAPABILITIES_NONE` default):** Declare
@@ -164,6 +164,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     Preserves `geometry.setAttribute('color', ...)` across `.glb` (`COLOR_0`),
     WebGL2, WebGPU, the native software rasterizer, and `.usdz`
     (`primvars:displayColor`).
+
+-   **Multi-Material Meshes & `BufferGeometry.groups` (`Material[]` across Web,
+    USDZ & Native Rust):** Preserves `Material[]` arrays on `THREE.Mesh` and
+    `THREE.InstancedMesh` (including `Material({ visible })` and `clone()`) and
+    `BufferGeometry.groups` (`addGroup`, `clearGroups`, plus standard Three.js
+    face/cap/side groups on `BoxGeometry`, `CylinderGeometry` / `ConeGeometry`,
+    and `ExtrudeGeometry`), exporting shared-accessor multi-primitive `.glb` and
+    `.usdz` meshes while preserving per-group material bindings and
+    `vertexColors` decisions across `__three_live_extract_scene_raw__`,
+    `read_glb`, `spatial_lint`, and the headless Rust software rasterizer.
+
+-   **Optional Sub-Node Scene Editing & Constraint Add-On (`three-live/edits`,
+    `three-live-edits.min.js`, `< 11 KB gz`):** Opt-in, a la carte host plugin
+    (`0 B` core bundle overhead, excluded from `three-live-full`) providing
+    `SceneEditor`, `sceneEditsPlugin` (`previewNodeEdit`, `acceptNodeEdit`,
+    `rejectNodeEdit`, `undoNodeEdit`), `prepareSceneEdit`, and
+    `computeSubtreeBounds` for targeted glTF subtree replacement with
+    world-space geometric & PBR material constraint receipts (`preserveBounds`,
+    `preserveFootprint`, `preserveHeight`, `maxBounds`, `matchMaterialOf`,
+    `copyMaterialFrom`), detached asset compaction with fail-closed
+    `KHR_interactivity` / `KHR_animation_pointer` / `MSFT_lod` /
+    `EXT_meshopt_compression` remapping, fail-closed `remote_content` capability
+    checks with abortable bounded `fetch`, and bounded undo.
+
+-   **tvOS 26 RealityKit Support & Apple TV SwiftUI Demo:** Compiles
+    `XRLiveRealityKitSession` and the RealityKit rendering layer on tvOS 26
+    (`ThreeLiveCompiler.xcframework` `tvos-arm64` slice + CI `ThreeLiveDemoTV`
+    build) and adds the `ThreeLiveDemoTV` Apple TV target to
+    `mobile/examples/ios_swiftui` with Siri Remote orbit/select/reset/menu
+    controls and `XCUIRemote` UI tests.
 
 -   **Closed-Loop Visual AI Refinement (`--visual-turns N` / `visualTurns`) &
     Live Playground AI Editing:** Multi-turn multimodal render-critique-repair

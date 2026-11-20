@@ -27,9 +27,9 @@ Android Kotlin and Java bindings for `three-live-compiler`.
 ```kotlin
 dependencies {
     // Turnkey compiler (bundles Rust + Boa JS engine + runtime):
-    implementation("com.google.threelive:compiler:1.4.0")
+    implementation("com.google.threelive:compiler:1.5.0")
     // Optional: the Filament renderer (adds Filament + gltfio).
-    implementation("com.google.threelive:filament:1.4.0")
+    implementation("com.google.threelive:filament:1.5.0")
 }
 ```
 
