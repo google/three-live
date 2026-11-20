@@ -31,10 +31,7 @@ import {aiPlugin, editScene} from '../src/plugins/ai';
 import {compileFromImage} from '../src/plugins/ai-image';
 import {generateTextures} from '../src/plugins/ai-texture';
 import {connectVoice, selectByVoice} from '../src/plugins/ai-voice';
-import {
-  environmentMapPlugin,
-  loadEnvironmentTexture,
-} from '../src/plugins/envmap';
+import {environmentMapPlugin} from '../src/plugins/envmap';
 import {ThreeLiveElement} from '../src/three-live-element';
 import {ThreeView} from '../src/three-view';
 import {activateAR, launchQuickLook, launchSceneViewer} from '../src/three-xr';
@@ -42,6 +39,35 @@ import {activateAR, launchQuickLook, launchSceneViewer} from '../src/three-xr';
 ensureCapabilityChecker();
 ThreeView.registerPlugin(environmentMapPlugin);
 ThreeView.registerPlugin(aiPlugin);
+
+/** Headless canvas with a no-op WebGL2 context (mirrors three_view_test.ts). */
+function makeMockCanvas(): HTMLCanvasElement {
+  return {
+    width: 400,
+    height: 400,
+    clientWidth: 400,
+    clientHeight: 400,
+    style: {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    getBoundingClientRect: () => ({left: 0, top: 0, width: 400, height: 400}),
+    getContext: () =>
+      new Proxy(
+        {
+          canvas: {width: 400, height: 400},
+          getShaderParameter: () => true,
+          getProgramParameter: () => true,
+          getAttribLocation: () => 0,
+        },
+        {
+          get(target: Record<string, unknown>, prop: string) {
+            if (prop in target) return target[prop];
+            return () => ({});
+          },
+        },
+      ),
+  } as unknown as HTMLCanvasElement;
+}
 
 let passed = 0;
 let failed = 0;
@@ -252,9 +278,14 @@ async function runCapabilitiesTests(): Promise<void> {
   ThreeLiveElement.registerScriptRunner({
     execute: async (_script, _mode, callbacks) => {
       runnerInvocations++;
-      const fakeGlb = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
-      callbacks.onSuccess?.(fakeGlb.buffer);
-      return fakeGlb.buffer;
+      // `onModelReady` is the real ScriptExecutionCallbacks hook; calling a
+      // nonexistent callback left executeScript() pending forever, which
+      // silently ended this test file before the assertions below ran.
+      callbacks.onModelReady({
+        gltf: {asset: {version: '2.0'}, meshes: []},
+        bin: new ArrayBuffer(0),
+      } as never);
+      return undefined;
     },
   });
   let scriptRefused = false;
@@ -294,21 +325,31 @@ async function runCapabilitiesTests(): Promise<void> {
         this.denied.push(d);
       },
     };
-    const view = new ThreeView(viewHost as unknown as HTMLElement);
+    const view = new ThreeView(
+      viewHost as unknown as HTMLElement,
+      makeMockCanvas(),
+    );
+    // Remote `.glb` URLs are fetched by the element (ThreeView only accepts
+    // bytes), so gate them there.
+    const remoteEl = new TestThreeLiveElement();
+    remoteEl.capabilities = 'scripts';
+    const remoteDenied: CapabilityDeniedDetail[] = [];
+    remoteEl.onCapabilityDenied = (d) => remoteDenied.push(d);
+    (remoteEl as unknown as {viewer: unknown}).viewer = {loadGLBData() {}};
     let loadFailed = false;
     try {
-      await view.loadModel('https://cdn.example.com/model.glb?sig=SECRET');
+      await remoteEl.loadModel('https://cdn.example.com/model.glb?sig=SECRET');
     } catch {
       loadFailed = true;
     }
     assert(
       loadFailed &&
         fetchCount === 0 &&
-        viewHost.denied.some(
+        remoteDenied.some(
           (d) =>
             d.capability === 'remote_content' && !d.url?.includes('SECRET'),
         ),
-      'ThreeView.loadModel blocks remote .glb before fetch and sanitizes diagnostic URL',
+      'loadModel blocks remote .glb before fetch and sanitizes diagnostic URL',
     );
 
     // Inline data: URI is local/non-network and does not require `remote_content`,
@@ -326,6 +367,7 @@ async function runCapabilitiesTests(): Promise<void> {
         scenes: [{nodes: [0]}],
         nodes: [{name: 'Box'}],
         images: [{uri: 'https://evil.example.com/exfil.png?cookie=123'}],
+        textures: [{source: 0}],
       });
       const jsonBytes = new TextEncoder().encode(gltfJson);
       const paddedLen = (jsonBytes.length + 3) & ~3;
@@ -338,12 +380,12 @@ async function runCapabilitiesTests(): Promise<void> {
       dv.setUint32(16, 0x4e4f534a, true);
       glb.set(jsonBytes, 20);
       for (let i = 20 + jsonBytes.length; i < glb.length; i++) glb[i] = 0x20;
-      await view.loadGlbBytes(glb);
+      view.loadModel(glb);
       assert(
         !imageSrcAssigned &&
           viewHost.denied.some(
             (d) =>
-              d.feature === 'gltfExternalImage' &&
+              d.feature === 'gltfImageUri' &&
               d.capability === 'remote_content',
           ),
         'Embedded glTF external images[].uri is blocked without remote_content capability',
@@ -352,19 +394,25 @@ async function runCapabilitiesTests(): Promise<void> {
       (globalThis as {Image?: unknown}).Image = origImage;
     }
 
-    // Environment HDRI (`loadEnvironmentTexture`) gated on `remote_content`
-    let envDenied = false;
-    try {
-      await loadEnvironmentTexture(
-        'https://cdn.example.com/studio.hdr',
-        viewHost,
-      );
-    } catch {
-      envDenied = true;
-    }
+    // Environment HDRI (`environment-image`) gated on `remote_content`
+    const envViewer = {
+      container: viewHost,
+      gl: makeMockCanvas().getContext('webgl2'),
+      environmentTexture: null as unknown,
+    };
+    await environmentMapPlugin.setEnvironmentImage?.(
+      envViewer,
+      'https://cdn.example.com/studio.hdr',
+    );
     assert(
-      envDenied && fetchCount === 0,
-      'loadEnvironmentTexture refuses remote HDRI without remote_content',
+      envViewer.environmentTexture === null &&
+        fetchCount === 0 &&
+        viewHost.denied.some(
+          (d) =>
+            d.capability === 'remote_content' &&
+            d.feature === 'environmentTexture',
+        ),
+      'environment-image refuses remote HDRI without remote_content',
     );
   } finally {
     globalThis.fetch = origFetch;
@@ -376,47 +424,75 @@ async function runCapabilitiesTests(): Promise<void> {
   const aiDenied: CapabilityDeniedDetail[] = [];
   aiHost.onCapabilityDenied = (d) => aiDenied.push(d);
 
-  const editRes = await editScene(aiHost, 'make it gold', {
-    provider: async () => 'scene.add(new THREE.Mesh());',
-  });
+  // A gated AI call either throws or reports `applied: false`; either way the
+  // provider must never be called.
+  const refuses = async (run: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      const res = (await run()) as {applied?: boolean} | undefined;
+      return res?.applied !== true;
+    } catch {
+      return true;
+    }
+  };
+  let llmCalls = 0;
+  const fakeLlm = {
+    complete: async () => {
+      llmCalls++;
+      return 'scene.add(new THREE.Mesh());';
+    },
+  };
+
+  const editRefused = await refuses(() =>
+    editScene(aiHost, 'make it gold', {
+      source: 'scene.add(new THREE.Mesh());',
+      provider: fakeLlm,
+    } as Parameters<typeof editScene>[2]),
+  );
   assert(
-    !editRes.applied && aiDenied.some((d) => d.capability === 'ai'),
+    editRefused &&
+      llmCalls === 0 &&
+      aiDenied.some((d) => d.capability === 'ai'),
     'editScene refuses LLM call without ai capability',
   );
 
-  const imgRes = await compileFromImage(
-    aiHost,
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
-    {provider: async () => 'scene.add(new THREE.Mesh());'},
+  const imgRefused = await refuses(() =>
+    compileFromImage(
+      aiHost,
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
+      {provider: fakeLlm} as Parameters<typeof compileFromImage>[2],
+    ),
   );
   assert(
-    !imgRes.applied,
+    imgRefused && llmCalls === 0,
     'compileFromImage refuses LLM call without ai capability',
   );
 
-  const texRes = await generateTextures(aiHost, {
-    source:
-      "const m = new THREE.Mesh(); m.userData.xr = {material: {prompt: 'stone'}}; scene.add(m);",
-    imageProvider: {
-      name: 'fake',
-      generate: async () => new Uint8Array([1, 2, 3]),
-    },
-  });
+  let imageCalls = 0;
+  await refuses(() =>
+    generateTextures(aiHost, {
+      provider: {
+        generateImage: async () => {
+          imageCalls++;
+          return new Uint8Array([1, 2, 3]);
+        },
+      },
+    } as Parameters<typeof generateTextures>[1]),
+  );
   assert(
-    Object.keys(texRes.generated).length === 0,
+    imageCalls === 0,
     'generateTextures refuses image generation without ai capability',
   );
 
   let voiceDenied = false;
   try {
-    connectVoice(aiHost, {
+    await connectVoice(aiHost, {
       transport: {
         send: () => {},
         close: () => {},
         onMessage: null,
         onClose: null,
       },
-    });
+    } as unknown as Parameters<typeof connectVoice>[1]);
   } catch {
     voiceDenied = true;
   }
@@ -425,15 +501,43 @@ async function runCapabilitiesTests(): Promise<void> {
     'connectVoice refuses session without ai + microphone capabilities',
   );
 
-  // External handoff (`launchQuickLook`, `launchSceneViewer`, `activateAR`)
-  assert(
-    !launchQuickLook('https://cdn.example.com/model.usdz', {host: aiHost}),
-    'launchQuickLook refuses external AR handoff without external_handoff capability',
-  );
-  assert(
-    !launchSceneViewer('https://cdn.example.com/model.glb', {host: aiHost}),
-    'launchSceneViewer refuses external AR handoff without external_handoff capability',
-  );
+  // External handoff (`launchQuickLook`, `launchSceneViewer`, `activateAR`).
+  // The capability check runs before any DOM use, so empty DOM stand-ins are
+  // enough to reach it.
+  const g = globalThis as Record<string, unknown>;
+  const hadDocument = 'document' in g;
+  const hadWindow = 'window' in g;
+  const prevDocument = g['document'];
+  const prevWindow = g['window'];
+  if (!hadDocument) g['document'] = {};
+  if (!hadWindow) g['window'] = {};
+  const handoffDenied = (launch: () => void): boolean => {
+    try {
+      launch();
+      return false;
+    } catch (e) {
+      return /external_handoff/.test(String((e as Error)?.message ?? e));
+    }
+  };
+  try {
+    assert(
+      handoffDenied(() =>
+        launchQuickLook('https://cdn.example.com/model.usdz', {host: aiHost}),
+      ),
+      'launchQuickLook refuses external AR handoff without external_handoff capability',
+    );
+    assert(
+      handoffDenied(() =>
+        launchSceneViewer('https://cdn.example.com/model.glb', {host: aiHost}),
+      ),
+      'launchSceneViewer refuses external AR handoff without external_handoff capability',
+    );
+  } finally {
+    if (hadDocument) g['document'] = prevDocument;
+    else delete g['document'];
+    if (hadWindow) g['window'] = prevWindow;
+    else delete g['window'];
+  }
   const arRes = await activateAR({
     glbUrl: 'https://cdn.example.com/model.glb',
     preferredModes: ['scene-viewer'],
@@ -471,10 +575,11 @@ async function runCapabilitiesTests(): Promise<void> {
     lockHost.hasCapability('scripts'),
     'allow-client-scripts enables scripts when no capabilities override negates it',
   );
-  lockHost.setAttribute('capabilities', 'ai');
+  // `ai` also needs `network` (the provider endpoint is a network request).
+  lockHost.setAttribute('capabilities', 'ai network');
   assert(
     lockHost.hasCapability('scripts') && lockHost.hasCapability('ai'),
-    'allow-client-scripts composes additively with capabilities="ai"',
+    'allow-client-scripts composes additively with capabilities="ai network"',
   );
   lockHost.setAttribute('capabilities', 'viewer -scripts');
   assert(
@@ -529,15 +634,18 @@ async function runCapabilitiesTests(): Promise<void> {
   imgBypassHost.capabilities = 'scripts ai network';
   const imgBypassDenied: CapabilityDeniedDetail[] = [];
   imgBypassHost.onCapabilityDenied = (d) => imgBypassDenied.push(d);
-  const drawableRes = await compileFromImage(
-    imgBypassHost,
-    {
-      src: 'https://untrusted.example.com/ref.png',
-    } as unknown as HTMLImageElement,
-    {provider: async () => 'scene.add(new THREE.Mesh());'},
+  const drawableRefused = await refuses(() =>
+    compileFromImage(
+      imgBypassHost,
+      {
+        src: 'https://untrusted.example.com/ref.png',
+      } as unknown as HTMLImageElement,
+      {provider: fakeLlm} as Parameters<typeof compileFromImage>[2],
+    ),
   );
   assert(
-    !drawableRes.applied &&
+    drawableRefused &&
+      llmCalls === 0 &&
       imgBypassDenied.some((d) => d.capability === 'remote_content'),
     'compileFromImage blocks {src: "https://..."} drawable fallback without remote_content',
   );
@@ -547,7 +655,17 @@ async function runCapabilitiesTests(): Promise<void> {
   voiceLocalHost.capabilities = 'scripts';
   voiceLocalHost.setAttribute('ai-endpoint', 'https://llm.example.com/v1/chat');
   (voiceLocalHost as unknown as {viewer: unknown}).viewer = {
-    meshes: [{name: 'SolarPanel', visible: true, primitives: []}],
+    setSelectedMesh() {},
+    // The matcher indexes meshes with world bounds, so give it one primitive.
+    meshes: [
+      {
+        name: 'SolarPanel',
+        visible: true,
+        primitives: [
+          {positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0])},
+        ],
+      },
+    ],
   };
   aiPlugin.onElementConnected?.(voiceLocalHost);
   const spuriousDenied: CapabilityDeniedDetail[] = [];
