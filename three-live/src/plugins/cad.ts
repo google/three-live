@@ -2653,6 +2653,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const normals: number[] = [];
       const uvs: number[] = [];
       const indices: number[] = [];
+      const groups: Array<{start: number; count: number; materialIndex: number}> = [];
 
       for (const shape of shapeList) {
         if (!(shape instanceof Path)) continue;
@@ -2685,6 +2686,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         }
 
         const [minX, minY, spanX, spanY] = bounds2D(allVertices);
+        const capStart = indices.length;
 
         // 1. Back cap (-Z) and 2. Front cap (+Z)
         for (const [zCap, nz] of [
@@ -2709,6 +2711,14 @@ export function installCadExtension(threeNs: any, reg?: any): any {
             );
           }
         }
+        if (indices.length > capStart) {
+          groups.push({
+            start: capStart,
+            count: indices.length - capStart,
+            materialIndex: 0,
+          });
+        }
+        const sideStart = indices.length;
 
         // 3. Z-layer profile (back bevel -> body steps -> front bevel)
         const layers: Array<{z: number; expand: number}> = [];
@@ -2809,9 +2819,17 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           }
           globalRingOffset += rLen;
         }
+        if (indices.length > sideStart) {
+          groups.push({
+            start: sideStart,
+            count: indices.length - sideStart,
+            materialIndex: 1,
+          });
+        }
       }
 
       setGeoBuffers(this, positions, normals, uvs, indices);
+      this.groups = groups;
     }
   }
 
@@ -3594,7 +3612,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       }
     }
     const resultGeo = csgToGeometry(geomA, geomB, op, null, relMatrixB);
-    const mat = isMeshA ? targetA.material : new MeshStandardMaterial();
+    const rawMatA = isMeshA
+      ? Array.isArray(targetA.material)
+        ? targetA.material[0]
+        : targetA.material
+      : null;
+    const mat =
+      rawMatA instanceof Material ? rawMatA : new MeshStandardMaterial();
     const out = new Mesh(resultGeo, mat);
     if (isMeshA) {
       out.position.copy(targetA.position);

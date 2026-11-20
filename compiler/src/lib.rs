@@ -84,7 +84,7 @@ mod boa_api {
         ReferenceMetrics,
     };
     pub use crate::render::*;
-    pub use crate::scene::{CameraConfig, Diagnostic, SceneGraph};
+    pub use crate::scene::{CameraConfig, Diagnostic, MeshMaterialGroup, SceneGraph};
     pub use crate::sim::*;
     pub use crate::spatial_lint::*;
     pub use crate::tsl::*;

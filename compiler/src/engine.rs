@@ -22,7 +22,9 @@
 use crate::constants::*;
 use crate::geometry::register_native_geometry_callables;
 use crate::material_preset::register_native_material_callables;
-use crate::scene::{CameraConfig, Diagnostic, Light3D, Material3D, Mesh3D, SceneGraph, SceneNode};
+use crate::scene::{
+    CameraConfig, Diagnostic, Light3D, Material3D, Mesh3D, MeshMaterialGroup, SceneGraph, SceneNode,
+};
 use crate::time::Stopwatch;
 use crate::usdz::register_native_usdz_callables;
 use boa_engine::{
@@ -738,7 +740,32 @@ impl ThreeEngine {
                     }
                 })?;
 
-            total_indices = total_indices.saturating_add(indices.len());
+            let raw_groups_val = mesh_obj
+                .get(js_string!("raw_groups"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let raw_groups_u32 = extract_raw_u32_slice(&raw_groups_val, &mut self.context)
+                .map_err(|e| {
+                    if e.contains("SECURITY_3D") || e.contains("exceeds") {
+                        RawExtractionError::Quota(e)
+                    } else {
+                        RawExtractionError::Format(e)
+                    }
+                })?;
+            let mut groups = Vec::with_capacity(raw_groups_u32.len() / 4);
+            let mut group_index_sum = 0usize;
+            for chunk in raw_groups_u32.as_chunks::<4>().0 {
+                let start = (chunk[0] as usize).min(indices.len());
+                let count = (chunk[1] as usize).min(indices.len().saturating_sub(start));
+                if count == 0 {
+                    continue;
+                }
+                group_index_sum = group_index_sum.saturating_add(count);
+                let material_index = (chunk[2] != u32::MAX).then_some(chunk[2] as usize);
+                let use_vertex_colors = chunk[3] != 0;
+                groups.push(MeshMaterialGroup { start, count, material_index, use_vertex_colors });
+            }
+
+            total_indices = total_indices.saturating_add(indices.len().max(group_index_sum));
             if total_indices > SECURITY_3D_MAX_INDICES {
                 return Err(RawExtractionError::Quota(format!(
                     "Scene exceeds maximum allowed indices ({}/{})",
@@ -788,6 +815,7 @@ impl ThreeEngine {
                 colors,
                 indices,
                 material_index,
+                groups,
                 variant_mappings,
                 xr_traits,
                 xr_normalized,
@@ -1792,6 +1820,46 @@ fn extract_u32_buffer(
     }
 
     Ok(indices)
+}
+
+fn extract_raw_u32_slice(val: &JsValue, context: &mut Context) -> Result<Vec<u32>, String> {
+    let Some(obj) = val.as_object() else {
+        return Ok(Vec::new());
+    };
+    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+        let buf_val =
+            typed_arr.buffer(context).map_err(|e| format!("Buffer access error: {}", e))?;
+        let Some(buf_obj) = buf_val.as_object() else {
+            return Ok(Vec::new());
+        };
+        let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj.clone()) else {
+            return Ok(Vec::new());
+        };
+        let Some(data) = arr_buf.data() else {
+            return Ok(Vec::new());
+        };
+        let offset = typed_arr.byte_offset(context).unwrap_or(0);
+        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
+        let end = offset.saturating_add(len).min(data.len());
+        let start = offset.min(end);
+        let slice = &data[start..end];
+        if slice.len() > SECURITY_3D_MAX_HEAP_BYTES {
+            return Err(format!(
+                "Group TypedArray byte length ({}) exceeds SECURITY_3D_MAX_HEAP_BYTES ({})",
+                slice.len(),
+                SECURITY_3D_MAX_HEAP_BYTES
+            ));
+        }
+        if typed_arr.kind() == Some(TypedArrayKind::Uint32) {
+            return Ok(slice
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                .collect());
+        }
+    }
+    Ok(Vec::new())
 }
 
 fn extract_f32_3(val: &JsValue, default: [f32; 3], context: &mut Context) -> [f32; 3] {

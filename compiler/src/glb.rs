@@ -119,7 +119,7 @@ fn decompose_mat4(m: &[f32]) -> ([f32; 3], [f32; 4], [f32; 3]) {
 /// Parses a binary glTF 2.0 (`.glb`) container into a [`SceneGraph`] for spatial linting
 /// and headless rasterization.
 pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
-    use crate::scene::{Material3D, Mesh3D, SceneNode};
+    use crate::scene::{Material3D, Mesh3D, MeshMaterialGroup, SceneNode};
 
     if glb.len() < 20 {
         return Err("GLB buffer too short (< 20 bytes)".to_string());
@@ -372,7 +372,8 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
         for (i, gm) in gltf_meshes.iter().enumerate() {
             let name =
                 gm["name"].as_str().map(|s| s.to_string()).unwrap_or_else(|| format!("Mesh_{}", i));
-            let Some(prim) = gm["primitives"].as_array().and_then(|p| p.first()) else {
+            let prims = gm["primitives"].as_array().map(|p| p.as_slice()).unwrap_or(&[]);
+            if prims.is_empty() {
                 meshes.push(Mesh3D {
                     name,
                     positions: Vec::new(),
@@ -381,6 +382,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                     colors: Vec::new(),
                     indices: Vec::new(),
                     material_index: None,
+                    groups: Vec::new(),
                     variant_mappings: None,
                     xr_traits: None,
                     xr_normalized: None,
@@ -390,49 +392,159 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                     scale: [1.0; 3],
                 });
                 continue;
-            };
-            let pos_flat = prim["attributes"]["POSITION"]
-                .as_u64()
-                .map(|idx| read_acc_f32(idx as usize, 3))
-                .unwrap_or_default();
-            let mut positions = Vec::with_capacity(pos_flat.len() / 3);
-            for chunk in pos_flat.as_chunks::<3>().0 {
-                positions.push([chunk[0], chunk[1], chunk[2]]);
             }
 
-            let norm_flat = prim["attributes"]["NORMAL"]
-                .as_u64()
-                .map(|idx| read_acc_f32(idx as usize, 3))
-                .unwrap_or_default();
-            let mut normals = Vec::with_capacity(norm_flat.len() / 3);
-            for chunk in norm_flat.as_chunks::<3>().0 {
-                normals.push([chunk[0], chunk[1], chunk[2]]);
+            let any_norm = prims.iter().any(|p| p["attributes"]["NORMAL"].as_u64().is_some());
+            let any_uv = prims.iter().any(|p| p["attributes"]["TEXCOORD_0"].as_u64().is_some());
+            let any_col = prims.iter().any(|p| p["attributes"]["COLOR_0"].as_u64().is_some());
+
+            let mut positions: Vec<[f32; 3]> = Vec::new();
+            let mut normals: Vec<[f32; 3]> = Vec::new();
+            let mut uvs: Vec<[f32; 2]> = Vec::new();
+            let mut colors: Vec<[f32; 3]> = Vec::new();
+            let mut indices: Vec<u32> = Vec::new();
+            let mut groups: Vec<MeshMaterialGroup> = Vec::new();
+            let mut attr_cache: Vec<(
+                Option<u64>,
+                Option<u64>,
+                Option<u64>,
+                Option<u64>,
+                usize,
+                usize,
+            )> = Vec::new();
+
+            for prim in prims {
+                let pos_acc = prim["attributes"]["POSITION"].as_u64();
+                let norm_acc = prim["attributes"]["NORMAL"].as_u64();
+                let uv_acc = prim["attributes"]["TEXCOORD_0"].as_u64();
+                let prim_col_acc = prim["attributes"]["COLOR_0"].as_u64();
+                let col_acc = prim_col_acc.or_else(|| {
+                    let mut shared: Option<u64> = None;
+                    for p in prims {
+                        if p["attributes"]["POSITION"].as_u64() == pos_acc
+                            && p["attributes"]["NORMAL"].as_u64() == norm_acc
+                            && p["attributes"]["TEXCOORD_0"].as_u64() == uv_acc
+                        {
+                            if let Some(ca) = p["attributes"]["COLOR_0"].as_u64() {
+                                if shared.is_some_and(|prev| prev != ca) {
+                                    return None;
+                                }
+                                shared = Some(ca);
+                            }
+                        }
+                    }
+                    shared
+                });
+                let key = (pos_acc, norm_acc, uv_acc, col_acc);
+
+                let (v_offset, v_count) = if let Some(&(_, _, _, _, off, cnt)) =
+                    attr_cache.iter().find(|&&(pa, na, ua, ca, _, _)| (pa, na, ua, ca) == key)
+                {
+                    (off, cnt)
+                } else {
+                    let pos_flat =
+                        pos_acc.map(|idx| read_acc_f32(idx as usize, 3)).unwrap_or_default();
+                    let cnt = pos_flat.len() / 3;
+                    if cnt == 0
+                        || positions.len().saturating_add(cnt)
+                            > crate::constants::SECURITY_3D_MAX_VERTICES
+                    {
+                        continue;
+                    }
+                    let off = positions.len();
+                    for chunk in pos_flat.as_chunks::<3>().0 {
+                        positions.push([chunk[0], chunk[1], chunk[2]]);
+                    }
+
+                    if any_norm {
+                        let norm_flat =
+                            norm_acc.map(|idx| read_acc_f32(idx as usize, 3)).unwrap_or_default();
+                        let mut added = 0usize;
+                        for chunk in norm_flat.as_chunks::<3>().0.iter().take(cnt) {
+                            normals.push([chunk[0], chunk[1], chunk[2]]);
+                            added += 1;
+                        }
+                        normals.resize(normals.len() + cnt.saturating_sub(added), [0.0, 1.0, 0.0]);
+                    }
+
+                    if any_uv {
+                        let uv_flat =
+                            uv_acc.map(|idx| read_acc_f32(idx as usize, 2)).unwrap_or_default();
+                        let mut added = 0usize;
+                        for chunk in uv_flat.as_chunks::<2>().0.iter().take(cnt) {
+                            uvs.push([chunk[0], chunk[1]]);
+                            added += 1;
+                        }
+                        uvs.resize(uvs.len() + cnt.saturating_sub(added), [0.0, 0.0]);
+                    }
+
+                    if any_col {
+                        let col_acc_usize = col_acc.map(|idx| idx as usize);
+                        let col_comps = col_acc_usize
+                            .and_then(|idx| accessors.get(idx))
+                            .and_then(|a| a["type"].as_str())
+                            .map(|t| if t == "VEC4" { 4 } else { 3 })
+                            .unwrap_or(3);
+                        let col_flat = col_acc_usize
+                            .map(|idx| read_acc_f32(idx, col_comps))
+                            .unwrap_or_default();
+                        let mut added = 0usize;
+                        for chunk in col_flat.chunks_exact(col_comps).take(cnt) {
+                            colors.push([chunk[0], chunk[1], chunk[2]]);
+                            added += 1;
+                        }
+                        colors.resize(colors.len() + cnt.saturating_sub(added), [1.0, 1.0, 1.0]);
+                    }
+
+                    attr_cache.push((pos_acc, norm_acc, uv_acc, col_acc, off, cnt));
+                    (off, cnt)
+                };
+
+                let prim_indices: Vec<u32> = if let Some(idx_acc) = prim["indices"].as_u64() {
+                    read_acc_u32(idx_acc as usize)
+                } else if prims.len() > 1 {
+                    (0..v_count as u32).collect()
+                } else {
+                    Vec::new()
+                };
+
+                let material_index = prim["material"].as_u64().map(|idx| idx as usize);
+                let use_vertex_colors = prim_col_acc.is_some();
+                if prims.len() == 1 {
+                    indices = prim_indices;
+                    groups.push(MeshMaterialGroup {
+                        start: 0,
+                        count: indices.len(),
+                        material_index,
+                        use_vertex_colors,
+                    });
+                } else {
+                    if indices.len().saturating_add(prim_indices.len())
+                        > crate::constants::SECURITY_3D_MAX_INDICES
+                    {
+                        break;
+                    }
+                    let start = indices.len();
+                    let count = prim_indices.len();
+                    if count == 0 {
+                        continue;
+                    }
+                    for raw_i in prim_indices {
+                        indices.push((v_offset as u32).saturating_add(raw_i));
+                    }
+                    groups.push(MeshMaterialGroup {
+                        start,
+                        count,
+                        material_index,
+                        use_vertex_colors,
+                    });
+                }
             }
 
-            let uv_flat = prim["attributes"]["TEXCOORD_0"]
-                .as_u64()
-                .map(|idx| read_acc_f32(idx as usize, 2))
-                .unwrap_or_default();
-            let mut uvs = Vec::with_capacity(uv_flat.len() / 2);
-            for chunk in uv_flat.as_chunks::<2>().0 {
-                uvs.push([chunk[0], chunk[1]]);
+            let material_index = groups.first().and_then(|g| g.material_index);
+            if prims.len() <= 1 {
+                groups.clear();
             }
-
-            let col_acc_idx = prim["attributes"]["COLOR_0"].as_u64().map(|idx| idx as usize);
-            let col_comps = col_acc_idx
-                .and_then(|idx| accessors.get(idx))
-                .and_then(|a| a["type"].as_str())
-                .map(|t| if t == "VEC4" { 4 } else { 3 })
-                .unwrap_or(3);
-            let col_flat = col_acc_idx.map(|idx| read_acc_f32(idx, col_comps)).unwrap_or_default();
-            let mut colors = Vec::with_capacity(col_flat.len() / col_comps);
-            for chunk in col_flat.chunks_exact(col_comps) {
-                colors.push([chunk[0], chunk[1], chunk[2]]);
-            }
-
-            let indices =
-                prim["indices"].as_u64().map(|idx| read_acc_u32(idx as usize)).unwrap_or_default();
-            let material_index = prim["material"].as_u64().map(|idx| idx as usize);
 
             meshes.push(Mesh3D {
                 name,
@@ -442,6 +554,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 colors,
                 indices,
                 material_index,
+                groups,
                 variant_mappings: None,
                 xr_traits: None,
                 xr_normalized: None,

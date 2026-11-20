@@ -1286,15 +1286,21 @@ pub fn build_validation_report(
     if scene.lights.is_empty() && !scene.meshes.is_empty() {
         let mut dark_or_metallic_mesh: Option<String> = None;
         for m in &scene.meshes {
-            let mat = m
-                .material_index
-                .and_then(|idx| scene.materials.get(idx))
-                .cloned()
-                .unwrap_or_default();
-            let lum = 0.2126 * mat.base_color[0]
-                + 0.7152 * mat.base_color[1]
-                + 0.0722 * mat.base_color[2];
-            if mat.metallic > 0.5 || lum < 0.18 {
+            let mat_indices = m.material_indices();
+            let check_mats: Vec<crate::scene::Material3D> = if mat_indices.is_empty() {
+                vec![crate::scene::Material3D::default()]
+            } else {
+                mat_indices
+                    .into_iter()
+                    .map(|idx| scene.materials.get(idx).cloned().unwrap_or_default())
+                    .collect()
+            };
+            if check_mats.iter().any(|mat| {
+                let lum = 0.2126 * mat.base_color[0]
+                    + 0.7152 * mat.base_color[1]
+                    + 0.0722 * mat.base_color[2];
+                mat.metallic > 0.5 || lum < 0.18
+            }) {
                 dark_or_metallic_mesh = Some(m.name.clone());
                 break;
             }

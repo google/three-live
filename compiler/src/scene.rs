@@ -137,6 +137,15 @@ fn identity_rotation() -> [f32; 4] {
     [0.0, 0.0, 0.0, 1.0]
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeshMaterialGroup {
+    pub start: usize,
+    pub count: usize,
+    pub material_index: Option<usize>,
+    #[serde(default = "default_true")]
+    pub use_vertex_colors: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mesh3D {
     pub name: String,
@@ -147,6 +156,8 @@ pub struct Mesh3D {
     pub colors: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub material_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<MeshMaterialGroup>,
     #[serde(default)]
     pub variant_mappings: Option<serde_json::Value>,
     #[serde(default)]
@@ -168,6 +179,26 @@ pub struct Mesh3D {
     /// Legacy flat layout only; ignored when `SceneGraph::nodes` is non-empty.
     #[serde(default = "unit_scale")]
     pub scale: [f32; 3],
+}
+
+impl Mesh3D {
+    /// Returns all distinct material indices bound by this mesh (via `groups` when present, or
+    /// `material_index` otherwise).
+    pub fn material_indices(&self) -> Vec<usize> {
+        if !self.groups.is_empty() {
+            let mut out = Vec::with_capacity(self.groups.len());
+            for g in &self.groups {
+                if let Some(mi) = g.material_index {
+                    if !out.contains(&mi) {
+                        out.push(mi);
+                    }
+                }
+            }
+            out
+        } else {
+            self.material_index.into_iter().collect()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

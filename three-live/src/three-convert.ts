@@ -646,7 +646,7 @@ function readAudioEmitter(xr: any): {
  */
 // tslint:disable-next-line:no-any Dynamic Object3D.
 export function aiTextureKeyOf(obj: any): string | null {
-  const mat = obj?.material;
+  const mat = Array.isArray(obj?.material) ? obj.material[0] : obj?.material;
   const map = mat?._presetMaps?.map;
   if (!map || map !== mat.map) return null;
   const m = /^ai_([0-9a-f]{16})_albedo$/.exec(String(map.name ?? ''));
@@ -1427,13 +1427,22 @@ function serializeScene(
           if (!Number.isFinite(min[k])) min[k] = max[k] = 0;
         }
 
-        const primitive: {
+        type GltfPrimitive = {
           attributes: Record<string, number>;
           indices?: number;
           material?: number;
           extensions?: Record<string, unknown>;
-        } = {
-          attributes: {
+        };
+        if (geo.attributes.normal?.array !== undefined) {
+          assertFloatAttr(geo.attributes.normal.array);
+        }
+        if (geo.attributes.uv?.array !== undefined) {
+          assertFloatAttr(geo.attributes.uv.array);
+        }
+        let baseAttributes: Record<string, number> | null = null;
+        const ensureBaseAttributes = (): Record<string, number> => {
+          if (baseAttributes) return baseAttributes;
+          baseAttributes = {
             POSITION: addAccessor(
               posArr,
               'VEC3',
@@ -1443,41 +1452,42 @@ function serializeScene(
               min,
               max,
             ),
-          },
-        };
-        const addFloatAttr = (
-          attr: {array?: unknown; count?: number} | undefined,
-          name: string,
-          comps: number,
-        ) => {
-          if (attr?.array !== undefined) {
-            assertFloatAttr(attr.array);
-            const cnt = Math.min(
-              (attr.count ?? 0) | 0,
-              ((attr.array as ArrayLike<number>).length / comps) | 0,
-            );
-            if (cnt >= vertexCount) {
-              primitive.attributes[name] = addAccessor(
-                sanitizeF32(attr.array, vertexCount, comps),
-                comps === 2 ? 'VEC2' : 'VEC3',
-                34962,
-                5126,
-                vertexCount,
+          };
+          const addFloatAttr = (
+            attr: {array?: unknown; count?: number} | undefined,
+            name: string,
+            comps: number,
+          ) => {
+            if (attr?.array !== undefined) {
+              const cnt = Math.min(
+                (attr.count ?? 0) | 0,
+                ((attr.array as ArrayLike<number>).length / comps) | 0,
               );
+              if (cnt >= vertexCount) {
+                baseAttributes![name] = addAccessor(
+                  sanitizeF32(attr.array, vertexCount, comps),
+                  comps === 2 ? 'VEC2' : 'VEC3',
+                  34962,
+                  5126,
+                  vertexCount,
+                );
+              }
             }
-          }
+          };
+          addFloatAttr(geo.attributes.normal, 'NORMAL', 3);
+          addFloatAttr(geo.attributes.uv, 'TEXCOORD_0', 2);
+          return baseAttributes;
         };
-        addFloatAttr(geo.attributes.normal, 'NORMAL', 3);
-        addFloatAttr(geo.attributes.uv, 'TEXCOORD_0', 2);
-        if (geo.index && geo.index.array && Math.floor(geo.index.count) > 0) {
-          const idxCount = Math.floor(geo.index.count);
-          totalIndices += idxCount;
-          if (totalIndices > MAX_INDICES) {
-            throw new Error(
-              `Scene exceeds maximum allowed indices (${totalIndices}/${MAX_INDICES})`,
-            );
-          }
-          const rawIdx = geo.index.array as ArrayLike<number>;
+
+        const hasIndices = Boolean(
+          geo.index && geo.index.array && Math.floor(geo.index.count) > 0,
+        );
+        let idxCount = 0;
+        let idxTyped: Uint16Array | Uint32Array | null = null;
+        let idxCompType: 5123 | 5125 = vertexCount > 65535 ? 5125 : 5123;
+        if (hasIndices) {
+          idxCount = Math.floor(geo.index!.count);
+          const rawIdx = geo.index!.array as ArrayLike<number>;
           for (let i = 0; i < idxCount; i++) {
             const idx = rawIdx[i];
             if (
@@ -1491,8 +1501,6 @@ function serializeScene(
               );
             }
           }
-          let idxTyped: Uint16Array | Uint32Array;
-          let idxCompType: 5123 | 5125;
           if (rawIdx instanceof Uint32Array && rawIdx.length === idxCount) {
             idxTyped = rawIdx;
             idxCompType = 5125;
@@ -1511,24 +1519,13 @@ function serializeScene(
             for (let i = 0; i < idxCount; i++) idxTyped[i] = rawIdx[i];
             idxCompType = 5123;
           }
-          primitive.indices = addAccessor(
-            idxTyped,
-            'SCALAR',
-            34963,
-            idxCompType,
-            idxCount,
-          );
         }
-
-        const rawMat = Array.isArray(obj.material)
-          ? obj.material[0]
-          : obj.material;
-        primitive.material = rawMat
-          ? serializeMaterial(rawMat)
-          : ensureDefaultMaterial();
 
         const rawVariants = obj.userData?.variants;
         let variantWantsVertexColors = false;
+        let variantExtension: {
+          mappings: Array<{material: number; variants: number[]}>;
+        } | null = null;
         if (rawVariants && typeof rawVariants === 'object') {
           const matToVarIndices = new Map<number, number[]>();
           for (const k of Object.keys(rawVariants)) {
@@ -1564,62 +1561,159 @@ function serializeScene(
             for (const [mIdx, vIndices] of matToVarIndices.entries()) {
               mappings.push({material: mIdx, variants: vIndices});
             }
-            primitive.extensions = {
-              ...(primitive.extensions || {}),
-              KHR_materials_variants: {mappings},
-            };
+            variantExtension = {mappings};
             nodeExtensionsUsed.add('KHR_materials_variants');
           }
         }
 
         const colAttr = geo.attributes.color;
         const cStep = colAttr?.itemSize === 4 ? 4 : 3;
-        if (
+        const canExportColors = Boolean(
           colAttr?.array &&
-          colAttr.count >= vertexCount &&
-          colAttr.array.length >= vertexCount * cStep
-        ) {
-          const m = rawMat as
-            | (Material & {vertexColors?: boolean; map?: unknown})
-            | undefined;
-          const mc = m?.color;
-          if (
-            variantWantsVertexColors ||
-            !m ||
-            m.vertexColors === true ||
-            (m.vertexColors !== false &&
-              !m.map &&
-              (!mc ||
-                ((mc.r ?? 1) >= 0.999 &&
-                  (mc.g ?? 1) >= 0.999 &&
-                  (mc.b ?? 1) >= 0.999)))
-          ) {
-            const cSrc = colAttr.array as ArrayLike<number>;
-            const cNorm =
-              cSrc instanceof Uint8Array
-                ? 1 / 255
-                : cSrc instanceof Uint16Array
-                  ? 1 / 65535
-                  : 1;
-            const colorArr = new Float32Array(vertexCount * 3);
-            for (let i = 0; i < vertexCount; i++) {
-              for (let k = 0; k < 3; k++) {
-                const v = cSrc[i * cStep + k]! * cNorm;
-                colorArr[i * 3 + k] = Number.isFinite(v) ? Math.max(0, v) : 1;
-              }
+            colAttr.count >= vertexCount &&
+            colAttr.array.length >= vertexCount * cStep,
+        );
+        let sharedColorAcc: number | null = null;
+        const ensureColorAcc = (): number => {
+          if (sharedColorAcc !== null) return sharedColorAcc;
+          const cSrc = colAttr!.array as ArrayLike<number>;
+          const cNorm =
+            cSrc instanceof Uint8Array
+              ? 1 / 255
+              : cSrc instanceof Uint16Array
+                ? 1 / 65535
+                : 1;
+          const colorArr = new Float32Array(vertexCount * 3);
+          for (let i = 0; i < vertexCount; i++) {
+            for (let k = 0; k < 3; k++) {
+              const v = cSrc[i * cStep + k]! * cNorm;
+              colorArr[i * 3 + k] = Number.isFinite(v) ? Math.max(0, v) : 1;
             }
-            primitive.attributes.COLOR_0 = addAccessor(
-              colorArr,
-              'VEC3',
-              34962,
-              5126,
-              vertexCount,
+          }
+          sharedColorAcc = addAccessor(
+            colorArr,
+            'VEC3',
+            34962,
+            5126,
+            vertexCount,
+          );
+          return sharedColorAcc;
+        };
+        const buildPrimAttributes = (
+          matRef: Material | null | undefined,
+        ): Record<string, number> => {
+          const attrs = {...ensureBaseAttributes()};
+          if (canExportColors) {
+            const m = matRef as
+              | (Material & {vertexColors?: boolean; map?: unknown})
+              | null
+              | undefined;
+            const mc = m?.color;
+            if (
+              variantWantsVertexColors ||
+              !m ||
+              m.vertexColors === true ||
+              (m.vertexColors !== false &&
+                !m.map &&
+                (!mc ||
+                  ((mc.r ?? 1) >= 0.999 &&
+                    (mc.g ?? 1) >= 0.999 &&
+                    (mc.b ?? 1) >= 0.999)))
+            ) {
+              attrs.COLOR_0 = ensureColorAcc();
+            }
+          }
+          return attrs;
+        };
+
+        const objMat = (obj as {material?: Material | Material[]}).material;
+        const isMatArray = Array.isArray(objMat);
+        const useGroups =
+          isMatArray && Array.isArray(geo.groups) && geo.groups.length > 0;
+        const primitives: GltfPrimitive[] = [];
+        const addIdxAcc = (arr: Uint16Array | Uint32Array) =>
+          addAccessor(arr, 'SCALAR', 34963, idxCompType, arr.length);
+        const checkIdxQuota = (n: number) => {
+          totalIndices += n;
+          if (totalIndices > MAX_INDICES) {
+            throw new Error(
+              `Scene exceeds maximum allowed indices (${totalIndices}/${MAX_INDICES})`,
+            );
+          }
+        };
+        const pushPrim = (
+          m: Material | undefined,
+          indices?: number,
+        ): void => {
+          const prim: GltfPrimitive = {
+            attributes: buildPrimAttributes(m),
+            material: m ? serializeMaterial(m) : ensureDefaultMaterial(),
+            ...(indices !== undefined ? {indices} : {}),
+            ...(variantExtension
+              ? {extensions: {KHR_materials_variants: variantExtension}}
+              : {}),
+          };
+          primitives.push(prim);
+        };
+
+        if (useGroups) {
+          const matArr = objMat as Material[];
+          const drawLimit = hasIndices ? idxCount : vertexCount;
+          for (const g of geo.groups) {
+            if (!g || typeof g !== 'object') continue;
+            const start = Math.max(0, Math.floor(Number(g.start) || 0));
+            if (start >= drawLimit) continue;
+            const rawCount =
+              g.count === undefined || g.count === Infinity
+                ? drawLimit - start
+                : Math.floor(Number(g.count) || 0);
+            const count = Math.min(drawLimit - start, rawCount);
+            if (count <= 0) continue;
+
+            const mIdx =
+              g.materialIndex === undefined
+                ? 0
+                : Math.floor(Number(g.materialIndex));
+            if (!Number.isFinite(mIdx) || mIdx < 0 || mIdx >= matArr.length) {
+              continue;
+            }
+            const gMat = matArr[mIdx];
+            if (!gMat || gMat.visible === false) continue;
+
+            checkIdxQuota(count);
+            let primIndicesAcc: number;
+            if (hasIndices && idxTyped) {
+              primIndicesAcc = addIdxAcc(
+                start === 0 && count === idxCount
+                  ? idxTyped
+                  : idxTyped.subarray(start, start + count),
+              );
+            } else {
+              const seq =
+                vertexCount > 65535
+                  ? new Uint32Array(count)
+                  : new Uint16Array(count);
+              for (let i = 0; i < count; i++) seq[i] = start + i;
+              primIndicesAcc = addIdxAcc(seq);
+            }
+            pushPrim(gMat, primIndicesAcc);
+          }
+        } else {
+          if (hasIndices && idxTyped) checkIdxQuota(idxCount);
+          const rawMat = isMatArray
+            ? (objMat as Material[])[0]
+            : (objMat as Material | undefined);
+          if (!(isMatArray && !rawMat) && rawMat?.visible !== false) {
+            pushPrim(
+              rawMat,
+              hasIndices && idxTyped ? addIdxAcc(idxTyped) : undefined,
             );
           }
         }
 
         const maybeInst = obj as Partial<InstancedMesh>;
         if (
+          primitives.length > 0 &&
           maybeInst.isInstancedMesh &&
           typeof maybeInst.count === 'number' &&
           maybeInst.count > 0 &&
@@ -1672,13 +1766,15 @@ function serializeScene(
           nodeExtensionsUsed.add('EXT_mesh_gpu_instancing');
         }
 
-        const meshIdx = meshes.length;
-        meshes.push({
-          primitives: [primitive],
-          name: obj.name,
-          ...(node.extras ? {extras: node.extras} : {}),
-        });
-        node.mesh = meshIdx;
+        if (primitives.length > 0) {
+          const meshIdx = meshes.length;
+          meshes.push({
+            primitives,
+            name: obj.name,
+            ...(node.extras ? {extras: node.extras} : {}),
+          });
+          node.mesh = meshIdx;
+        }
       }
     }
 

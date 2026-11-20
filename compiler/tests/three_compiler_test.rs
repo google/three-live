@@ -5885,3 +5885,357 @@ fn test_a11y_linter_tl601_to_tl606() {
         );
     }
 }
+
+#[test]
+fn test_multi_material_box_native_extract_glb_and_render() {
+    use three_live_compiler::{
+        read_glb, render_viewport_rgba_with_mask, CameraConfig, RenderViewMode, ThreeEngine,
+    };
+
+    let script = r#"
+        const mats = [
+            new THREE.MeshBasicMaterial({ color: 0xff0000 }), // 0: +X Red
+            new THREE.MeshBasicMaterial({ color: 0x00ff00 }), // 1: -X Green
+            new THREE.MeshBasicMaterial({ color: 0x0000ff }), // 2: +Y Blue
+            new THREE.MeshBasicMaterial({ color: 0xffff00 }), // 3: -Y Yellow
+            new THREE.MeshBasicMaterial({ color: 0x00ffff }), // 4: +Z Cyan
+            new THREE.MeshBasicMaterial({ color: 0xff00ff }), // 5: -Z Magenta
+        ];
+        const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mats);
+        box.name = 'SixColorBox';
+        scene.add(box);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+    "#;
+
+    let expected_faces: [([f32; 3], [f32; 3], [f32; 3]); 6] = [
+        ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [4.0, 0.0, 0.0]),
+        ([0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [-4.0, 0.0, 0.0]),
+        ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [0.0, 4.0, 0.01]),
+        ([1.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -4.0, 0.01]),
+        ([0.0, 1.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 4.0]),
+        ([1.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -4.0]),
+    ];
+
+    let mut engine = ThreeEngine::new().expect("ThreeEngine::new");
+
+    // 1. Raw native extraction (`__three_live_extract_scene_raw__` -> `SceneGraph`)
+    let raw_scene = engine.execute(script).expect("execute");
+    assert_eq!(raw_scene.materials.len(), 6, "Raw extractor must preserve all 6 materials");
+    assert_eq!(raw_scene.meshes.len(), 1, "Six-color box must remain 1 Mesh3D");
+    let raw_mesh = &raw_scene.meshes[0];
+    assert_eq!(raw_mesh.groups.len(), 6, "Raw Mesh3D must carry all 6 face material groups");
+    assert_eq!(raw_mesh.indices.len(), 36, "Raw Mesh3D must retain all 36 indices");
+
+    // 2. Native GLB compilation (`compile_glb`) + `read_glb` round-trip
+    let glb_bytes = engine.compile_glb(script).expect("compile_glb");
+    let glb_scene = read_glb(&glb_bytes).expect("read_glb");
+    assert_eq!(glb_scene.materials.len(), 6, "GLB round-trip must preserve all 6 materials");
+    assert_eq!(glb_scene.meshes.len(), 1, "GLB round-trip must preserve 1 Mesh3D");
+    let glb_mesh = &glb_scene.meshes[0];
+    assert_eq!(
+        glb_mesh.positions.len(),
+        24,
+        "Shared POSITION accessor must not duplicate vertices"
+    );
+    assert_eq!(glb_mesh.groups.len(), 6, "read_glb must populate all 6 primitive groups");
+    assert_eq!(
+        glb_mesh.indices.len(),
+        36,
+        "read_glb must retain all 36 indices across 6 primitives"
+    );
+
+    for (slot, (expected_rgb, expected_normal, cam_pos)) in expected_faces.iter().enumerate() {
+        for (label, sg) in [("raw_scene", &raw_scene), ("glb_scene", &glb_scene)] {
+            let mesh = &sg.meshes[0];
+            let grp = &mesh.groups[slot];
+            assert_eq!(grp.count, 6, "{} slot {} must have 6 indices", label, slot);
+            let mat_idx = grp.material_index.expect("group material_index");
+            let mat = &sg.materials[mat_idx];
+            for c in 0..3 {
+                assert!(
+                    (mat.base_color[c] - expected_rgb[c]).abs() < 1e-3,
+                    "{} slot {} base_color mismatch: {:?} vs {:?}",
+                    label,
+                    slot,
+                    mat.base_color,
+                    expected_rgb
+                );
+            }
+            for k in 0..grp.count {
+                let vi = mesh.indices[grp.start + k] as usize;
+                let n = mesh.normals[vi];
+                assert!(
+                    (n[0] - expected_normal[0]).abs() < 1e-3
+                        && (n[1] - expected_normal[1]).abs() < 1e-3
+                        && (n[2] - expected_normal[2]).abs() < 1e-3,
+                    "{} slot {} normal mismatch: {:?} vs {:?}",
+                    label,
+                    slot,
+                    n,
+                    expected_normal
+                );
+            }
+
+            // 3. Native CPU rasterizer (`render.rs`) renders each face's bound material
+            let mut view_scene = sg.clone();
+            view_scene.camera =
+                Some(CameraConfig { fov: 45.0, position: *cam_pos, target: [0.0, 0.0, 0.0] });
+            let (rgba, _mask) = render_viewport_rgba_with_mask(
+                &view_scene,
+                64,
+                64,
+                RenderViewMode::Camera,
+                false,
+                false,
+                None,
+            );
+            let center_off = (32 * 64 + 32) * 4;
+            let px = [rgba[center_off], rgba[center_off + 1], rgba[center_off + 2]];
+            for c in 0..3 {
+                if expected_rgb[c] > 0.5 {
+                    assert!(
+                        px[c] >= 120,
+                        "{} slot {} channel {} expected bright (>120), got {:?}",
+                        label,
+                        slot,
+                        c,
+                        px
+                    );
+                } else {
+                    assert!(
+                        px[c] <= 40,
+                        "{} slot {} channel {} expected dark (<=40), got {:?}",
+                        label,
+                        slot,
+                        c,
+                        px
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_single_material_explicit_group_preserves_full_geometry() {
+    use three_live_compiler::{read_glb, ThreeEngine};
+
+    let script = r#"
+        const geo = new THREE.BoxGeometry(2, 2, 2);
+        geo.clearGroups();
+        geo.addGroup(0, 6, 0);
+        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x336699 }));
+        scene.add(mesh);
+    "#;
+
+    let mut engine = ThreeEngine::new().expect("ThreeEngine::new");
+    let raw_scene = engine.execute(script).expect("execute");
+    assert_eq!(raw_scene.meshes.len(), 1);
+    assert!(raw_scene.meshes[0].groups.is_empty(), "Single-material mesh must not split by groups");
+    assert_eq!(
+        raw_scene.meshes[0].indices.len(),
+        36,
+        "Single-material mesh with 1 explicit 6-index group must retain all 36 indices in raw extract"
+    );
+
+    let glb_bytes = engine.compile_glb(script).expect("compile_glb");
+    let glb_scene = read_glb(&glb_bytes).expect("read_glb");
+    assert_eq!(glb_scene.meshes.len(), 1);
+    assert!(glb_scene.meshes[0].groups.is_empty());
+    assert_eq!(
+        glb_scene.meshes[0].indices.len(),
+        36,
+        "Single-material mesh with 1 explicit 6-index group must export all 36 indices to GLB"
+    );
+}
+
+#[test]
+fn test_multi_material_box_mixed_vertex_colors_parity() {
+    use three_live_compiler::{
+        read_glb, render_viewport_rgba_with_mask, CameraConfig, RenderViewMode, ThreeEngine,
+    };
+
+    // Cyan [0, 1, 1] vertex colors on all 24 vertices (zero Red channel).
+    // Face 0 (+X): white + vertexColors: true -> Cyan [0, 1, 1]
+    // Face 1 (-X): red + vertexColors: false  -> Red [1, 0, 0] (would be Black if VC leaked)
+    // Face 2 (+Y): red (default vertexColors) -> Red [1, 0, 0] (web exporter omits COLOR_0)
+    // Face 3 (-Y): white + vertexColors: false -> White [1, 1, 1]
+    // Face 4 (+Z): white (default vertexColors) -> Cyan [0, 1, 1] (white unmapped exports COLOR_0)
+    // Face 5 (-Z): green (default vertexColors) -> Green [0, 1, 0]
+    let script = r#"
+        const geo = new THREE.BoxGeometry(2, 2, 2);
+        const vc = new Float32Array(24 * 3);
+        for (let i = 0; i < 24; i++) {
+            vc[i * 3] = 0.0;
+            vc[i * 3 + 1] = 1.0;
+            vc[i * 3 + 2] = 1.0;
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(vc, 3));
+        const box = new THREE.Mesh(geo, [
+            new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true }),
+            new THREE.MeshBasicMaterial({ color: 0xff0000, vertexColors: false }),
+            new THREE.MeshBasicMaterial({ color: 0xff0000 }),
+            new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: false }),
+            new THREE.MeshBasicMaterial({ color: 0xffffff }),
+            new THREE.MeshBasicMaterial({ color: 0x00ff00 }),
+        ]);
+        scene.add(box);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+    "#;
+
+    let expected: [(bool, [f32; 3], [f32; 3]); 6] = [
+        (true, [0.0, 1.0, 1.0], [4.0, 0.0, 0.0]),
+        (false, [1.0, 0.0, 0.0], [-4.0, 0.0, 0.0]),
+        (false, [1.0, 0.0, 0.0], [0.0, 4.0, 0.01]),
+        (false, [1.0, 1.0, 1.0], [0.0, -4.0, 0.01]),
+        (true, [0.0, 1.0, 1.0], [0.0, 0.0, 4.0]),
+        (false, [0.0, 1.0, 0.0], [0.0, 0.0, -4.0]),
+    ];
+
+    let mut engine = ThreeEngine::new().expect("ThreeEngine::new");
+    let raw_scene = engine.execute(script).expect("execute");
+    let glb_bytes = engine.compile_glb(script).expect("compile_glb");
+    let glb_scene = read_glb(&glb_bytes).expect("read_glb");
+
+    assert_eq!(
+        glb_scene.meshes[0].positions.len(),
+        24,
+        "Mixed COLOR_0 primitives must share 24 vertices"
+    );
+
+    for (slot, (want_vc, want_rgb, cam_pos)) in expected.iter().enumerate() {
+        for (label, sg) in [("raw_scene", &raw_scene), ("glb_scene", &glb_scene)] {
+            let grp = &sg.meshes[0].groups[slot];
+            assert_eq!(
+                grp.use_vertex_colors, *want_vc,
+                "{} slot {} use_vertex_colors mismatch",
+                label, slot
+            );
+
+            let mut view_scene = sg.clone();
+            view_scene.camera =
+                Some(CameraConfig { fov: 45.0, position: *cam_pos, target: [0.0, 0.0, 0.0] });
+            let (rgba, _mask) = render_viewport_rgba_with_mask(
+                &view_scene,
+                64,
+                64,
+                RenderViewMode::Camera,
+                false,
+                false,
+                None,
+            );
+            let center_off = (32 * 64 + 32) * 4;
+            let px = [rgba[center_off], rgba[center_off + 1], rgba[center_off + 2]];
+            for c in 0..3 {
+                if want_rgb[c] > 0.5 {
+                    assert!(
+                        px[c] >= 120,
+                        "{} slot {} channel {} expected bright (>120), got {:?}",
+                        label,
+                        slot,
+                        c,
+                        px
+                    );
+                } else {
+                    assert!(
+                        px[c] <= 40,
+                        "{} slot {} channel {} expected dark (<=40), got {:?}",
+                        label,
+                        slot,
+                        c,
+                        px
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_material_visibility_constructor_and_single_vs_multi_parity() {
+    use three_live_compiler::{read_glb, ThreeEngine};
+
+    let mut engine = ThreeEngine::new().expect("ThreeEngine::new");
+
+    // 1. Single-material mesh with `material.visible = false` and `new MeshStandardMaterial({ visible: false })`
+    for script in [
+        r#"
+            const mat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            mat.visible = false;
+            scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mat));
+        "#,
+        r#"
+            const mat = new THREE.MeshStandardMaterial({ color: 0xff0000, visible: false });
+            scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mat));
+        "#,
+        r#"
+            const mats = Array.from({ length: 6 }, () => new THREE.MeshStandardMaterial({ visible: false }));
+            scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), mats));
+        "#,
+    ] {
+        let raw_scene = engine.execute(script).expect("execute hidden material");
+        assert_eq!(
+            raw_scene.meshes.len(),
+            0,
+            "Hidden material must omit mesh in native raw extractor: {script}"
+        );
+        assert_eq!(raw_scene.nodes.len(), 1);
+        assert!(raw_scene.nodes[0].mesh.is_none());
+
+        let glb_bytes = engine.compile_glb(script).expect("compile_glb hidden material");
+        let glb_scene = read_glb(&glb_bytes).expect("read_glb hidden material");
+        assert_eq!(
+            glb_scene.meshes.len(),
+            0,
+            "Hidden material must omit mesh in GLB export: {script}"
+        );
+    }
+
+    // 2. Six-material box with constructor `{ visible: false }` on 2 faces emits 4 groups / 4 primitives
+    let partial_script = r#"
+        const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), [
+            new THREE.MeshStandardMaterial({ color: 0xff0000, visible: false }),
+            new THREE.MeshStandardMaterial({ color: 0x00ff00 }),
+            new THREE.MeshStandardMaterial({ color: 0x0000ff, visible: false }),
+            new THREE.MeshStandardMaterial({ color: 0xffff00 }),
+            new THREE.MeshStandardMaterial({ color: 0x00ffff }),
+            new THREE.MeshStandardMaterial({ color: 0xff00ff }),
+        ]);
+        scene.add(box);
+    "#;
+    let raw_partial = engine.execute(partial_script).expect("execute partial hidden");
+    assert_eq!(raw_partial.meshes.len(), 1);
+    assert_eq!(raw_partial.meshes[0].groups.len(), 4);
+    assert_eq!(raw_partial.materials.len(), 4);
+
+    let glb_partial =
+        read_glb(&engine.compile_glb(partial_script).expect("compile_glb partial hidden"))
+            .expect("read_glb partial hidden");
+    assert_eq!(glb_partial.meshes.len(), 1);
+    assert_eq!(glb_partial.meshes[0].groups.len(), 4);
+    assert_eq!(glb_partial.meshes[0].indices.len(), 24);
+    assert_eq!(glb_partial.materials.len(), 4);
+
+    // 3. Native CylinderGeometry clamps radialSegments to 2048 for material groups too
+    let cyl_clamp_script = r#"
+        const cyl = new THREE.Mesh(
+            new THREE.CylinderGeometry(1, 1, 2, 4096),
+            [
+                new THREE.MeshStandardMaterial({ color: 0xff0000 }),
+                new THREE.MeshStandardMaterial({ color: 0x00ff00 }),
+                new THREE.MeshStandardMaterial({ color: 0x0000ff }),
+            ],
+        );
+        scene.add(cyl);
+    "#;
+    let raw_cyl = engine.execute(cyl_clamp_script).expect("execute clamped cylinder");
+    assert_eq!(raw_cyl.meshes.len(), 1);
+    assert_eq!(raw_cyl.meshes[0].indices.len(), 2048 * 12);
+    assert_eq!(raw_cyl.meshes[0].groups.len(), 3);
+    assert_eq!(raw_cyl.meshes[0].groups[0].start, 0);
+    assert_eq!(raw_cyl.meshes[0].groups[0].count, 2048 * 6);
+    assert_eq!(raw_cyl.meshes[0].groups[1].start, 2048 * 6);
+    assert_eq!(raw_cyl.meshes[0].groups[1].count, 2048 * 3);
+    assert_eq!(raw_cyl.meshes[0].groups[2].start, 2048 * 9);
+    assert_eq!(raw_cyl.meshes[0].groups[2].count, 2048 * 3);
+}

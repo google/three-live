@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {
+import THREE, {
   BoxGeometry,
+  BufferGeometry,
   Color,
+  ConeGeometry,
+  CylinderGeometry,
   DataTexture,
   DirectionalLight,
+  Float32BufferAttribute,
   Group,
+  InstancedMesh,
   Mesh,
   MeshStandardMaterial,
   Scene,
   SphereGeometry,
 } from '../src/three-author';
+import {registerPlugin} from '../src/plugin';
+import {cadPlugin} from '../src/plugins/cad';
+import {parseGLB} from '../src/three-view';
 import {
   buildUSDZZip,
   calculateCRC32,
@@ -696,6 +704,316 @@ async function runTests() {
       dtUsdaStr.includes('NormalTexture.outputs:rgb'),
     'Issue #16: sceneToUSDZ with THREE.DataTexture wires DiffuseTexture and NormalTexture shaders',
   );
+
+  // 17. Multi-material Mesh & BufferGeometry.groups (six-color BoxGeometry, Cylinder/Cone/Extrude, custom indexed & non-indexed groups)
+  registerPlugin(cadPlugin);
+  {
+    const faceSpecs: Array<{
+      hex: number;
+      expectedRgb: [number, number, number];
+      normal: [number, number, number];
+      label: string;
+    }> = [
+      {hex: 0xff0000, expectedRgb: [1, 0, 0], normal: [1, 0, 0], label: '+X'},
+      {hex: 0x00ff00, expectedRgb: [0, 1, 0], normal: [-1, 0, 0], label: '-X'},
+      {hex: 0x0000ff, expectedRgb: [0, 0, 1], normal: [0, 1, 0], label: '+Y'},
+      {hex: 0xffff00, expectedRgb: [1, 1, 0], normal: [0, -1, 0], label: '-Y'},
+      {hex: 0x00ffff, expectedRgb: [0, 1, 1], normal: [0, 0, 1], label: '+Z'},
+      {hex: 0xff00ff, expectedRgb: [1, 0, 1], normal: [0, 0, -1], label: '-Z'},
+    ];
+    const boxMaterials = faceSpecs.map(
+      (f, idx) =>
+        new MeshStandardMaterial({
+          name: `Face_${idx}_${f.label}`,
+          color: f.hex,
+          roughness: 0.4,
+          metalness: 0.0,
+        }),
+    );
+    const sixBoxGeo = new BoxGeometry(2, 2, 2);
+    assert(
+      sixBoxGeo.groups.length === 6,
+      'BoxGeometry populates 6 Three.js face groups',
+    );
+    const sixBox = new Mesh(sixBoxGeo, boxMaterials);
+    sixBox.name = 'SixColorBox';
+    assert(
+      Array.isArray(sixBox.material) && sixBox.material.length === 6,
+      'Mesh constructor preserves full Material[] array instead of collapsing to material[0]',
+    );
+    const clonedBox = sixBox.clone() as Mesh;
+    assert(
+      Array.isArray(clonedBox.material) &&
+        clonedBox.material.length === 6 &&
+        clonedBox.material !== sixBox.material &&
+        clonedBox.geometry.groups.length === 6,
+      'Mesh.clone() and BufferGeometry.clone() preserve Material[] and groups',
+    );
+
+    const sixScene = new Scene();
+    sixScene.add(sixBox);
+    const sixGlbBytes = sceneToGLB(sixScene);
+    const parsedSix = parseGLB(sixGlbBytes);
+    const sixGltf = parsedSix.gltf;
+    const sixBin = parsedSix.bin;
+    assert(
+      sixGltf.meshes?.length === 1 &&
+        sixGltf.meshes[0].primitives?.length === 6 &&
+        sixGltf.materials?.length === 6,
+      'Six-color BoxGeometry serializes to 1 glTF mesh with 6 primitives and 6 materials',
+    );
+
+    const prims = sixGltf.meshes[0].primitives;
+    const sharedPosAcc = prims[0].attributes.POSITION;
+    const sharedNormAcc = prims[0].attributes.NORMAL;
+    const sharedUvAcc = prims[0].attributes.TEXCOORD_0;
+    assert(
+      prims.every(
+        (p: any) =>
+          p.attributes.POSITION === sharedPosAcc &&
+          p.attributes.NORMAL === sharedNormAcc &&
+          p.attributes.TEXCOORD_0 === sharedUvAcc,
+      ),
+      'All 6 primitives share a single POSITION/NORMAL/TEXCOORD_0 vertex buffer without duplication',
+    );
+
+    const normAcc = sixGltf.accessors[sharedNormAcc];
+    const normBv = sixGltf.bufferViews[normAcc.bufferView];
+    const normFloats = new Float32Array(
+      sixBin,
+      (normBv.byteOffset ?? 0) + (normAcc.byteOffset ?? 0),
+      normAcc.count * 3,
+    );
+
+    for (let i = 0; i < 6; i++) {
+      const prim = prims[i];
+      const mat = sixGltf.materials[prim.material];
+      const bc = mat?.pbrMetallicRoughness?.baseColorFactor;
+      const [er, eg, eb] = faceSpecs[i].expectedRgb;
+      const colorOk =
+        Array.isArray(bc) &&
+        Math.abs(bc[0] - er) < 1e-4 &&
+        Math.abs(bc[1] - eg) < 1e-4 &&
+        Math.abs(bc[2] - eb) < 1e-4;
+
+      const idxAcc = sixGltf.accessors[prim.indices];
+      const idxBv = sixGltf.bufferViews[idxAcc.bufferView];
+      const byteOff = (idxBv.byteOffset ?? 0) + (idxAcc.byteOffset ?? 0);
+      const triIndices =
+        idxAcc.componentType === 5125
+          ? new Uint32Array(sixBin, byteOff, idxAcc.count)
+          : new Uint16Array(sixBin, byteOff, idxAcc.count);
+      const [enx, eny, enz] = faceSpecs[i].normal;
+      let normalsMatch = idxAcc.count === 6;
+      for (let k = 0; k < triIndices.length; k++) {
+        const vi = triIndices[k] * 3;
+        if (
+          Math.abs(normFloats[vi] - enx) > 1e-4 ||
+          Math.abs(normFloats[vi + 1] - eny) > 1e-4 ||
+          Math.abs(normFloats[vi + 2] - enz) > 1e-4
+        ) {
+          normalsMatch = false;
+        }
+      }
+      assert(
+        colorOk && normalsMatch,
+        `Six-color BoxGeometry primitive ${i} (${faceSpecs[i].label}) binds material ${i} and exact face normal`,
+      );
+    }
+
+    // USDZ export preserves all 6 materials and 64-byte alignment
+    const sixUsdz = glbToUSDZ(sixGlbBytes);
+    assert(
+      verifyUSDZAlignment(sixUsdz, 'Six-color BoxGeometry glbToUSDZ'),
+      'Six-color BoxGeometry USDZ maintains 64-byte alignment',
+    );
+    const sixUsda = new TextDecoder().decode(parseZipEntries(sixUsdz)[0].data);
+    assert(
+      (sixUsda.match(/rel material:binding =/g) || []).length === 6,
+      'Six-color BoxGeometry USDZ binds all 6 primitives to their per-face materials',
+    );
+
+    // Single-material BoxGeometry keeps emitting a single primitive (zero draw-call regression)
+    const singleBoxScene = new Scene();
+    singleBoxScene.add(
+      new Mesh(
+        new BoxGeometry(1, 1, 1),
+        new MeshStandardMaterial({color: 0x336699}),
+      ),
+    );
+    const singleBoxGltf = sceneToCanvas3D(singleBoxScene).gltf;
+    assert(
+      singleBoxGltf.meshes[0].primitives.length === 1 &&
+        singleBoxGltf.accessors[singleBoxGltf.meshes[0].primitives[0].indices]
+          .count === 36,
+      'Single-material BoxGeometry still emits 1 unified 36-index primitive',
+    );
+
+    // Single-material mesh with an explicit partial group still exports full geometry
+    const explicitGroupBoxGeo = new BoxGeometry(1, 1, 1);
+    explicitGroupBoxGeo.clearGroups();
+    explicitGroupBoxGeo.addGroup(0, 6, 0);
+    const explicitGroupSingleScene = new Scene();
+    explicitGroupSingleScene.add(
+      new Mesh(
+        explicitGroupBoxGeo,
+        new MeshStandardMaterial({color: 0x336699}),
+      ),
+    );
+    const explicitGroupSingleGltf = sceneToCanvas3D(
+      explicitGroupSingleScene,
+    ).gltf;
+    assert(
+      explicitGroupSingleGltf.meshes[0].primitives.length === 1 &&
+        explicitGroupSingleGltf.accessors[
+          explicitGroupSingleGltf.meshes[0].primitives[0].indices
+        ].count === 36,
+      'Single-material BoxGeometry with one explicit 6-index group preserves all 36 indices',
+    );
+
+    // CylinderGeometry (side=0, top=1, bottom=2), ConeGeometry (side=0, bottom=2), and ExtrudeGeometry (caps=0, sides=1)
+    const cylScene = new Scene();
+    const m0 = new MeshStandardMaterial({color: 0xff0000});
+    const m1 = new MeshStandardMaterial({color: 0x00ff00});
+    const m2 = new MeshStandardMaterial({color: 0x0000ff});
+    cylScene.add(new Mesh(new CylinderGeometry(1, 1, 2, 8), [m0, m1, m2]));
+    cylScene.add(new Mesh(new ConeGeometry(1, 2, 8), [m0, m1, m2]));
+    const sq = new (THREE as any).Shape();
+    sq.moveTo(0, 0);
+    sq.lineTo(1, 0);
+    sq.lineTo(1, 1);
+    sq.lineTo(0, 1);
+    sq.closePath();
+    cylScene.add(
+      new Mesh(
+        new (THREE as any).ExtrudeGeometry(sq, {depth: 1, bevelEnabled: false}),
+        [m0, m1],
+      ),
+    );
+    const cylGltf = sceneToCanvas3D(cylScene).gltf;
+    assert(
+      cylGltf.meshes[0].primitives.length === 3 &&
+        cylGltf.meshes[1].primitives.length === 2 &&
+        cylGltf.meshes[1].primitives[1].material ===
+          cylGltf.meshes[0].primitives[2].material &&
+        cylGltf.meshes[2].primitives.length === 2,
+      'CylinderGeometry (3 groups), ConeGeometry (torso + bottom cap slot 2), and ExtrudeGeometry (caps + sides) emit exact multi-material primitives',
+    );
+
+    // Custom non-indexed BufferGeometry.addGroup + null/invisible material skipping
+    const customGeo = new BufferGeometry();
+    customGeo.setAttribute(
+      'position',
+      new Float32BufferAttribute(
+        [
+          0, 0, 0, 1, 0, 0, 0, 1, 0,
+          0, 0, 1, 1, 0, 1, 0, 1, 1,
+          0, 0, 2, 1, 0, 2, 0, 1, 2,
+        ],
+        3,
+      ),
+    );
+    customGeo.computeVertexNormals();
+    customGeo.addGroup(0, 3, 0);
+    customGeo.addGroup(3, 3, 1);
+    customGeo.addGroup(6, 3, 2);
+    const hiddenMat = new MeshStandardMaterial({color: 0xffffff});
+    hiddenMat.visible = false;
+    const customScene = new Scene();
+    customScene.add(new Mesh(customGeo, [m0, null as any, hiddenMat]));
+    const customGltf = sceneToCanvas3D(customScene).gltf;
+    assert(
+      customGltf.meshes[0].primitives.length === 1 &&
+        customGltf.accessors[customGltf.meshes[0].primitives[0].indices]
+          .count === 3,
+      'Custom non-indexed BufferGeometry.addGroup emits synthesized index ranges and skips null/invisible group materials',
+    );
+    customGeo.clearGroups();
+    assert(
+      customGeo.groups.length === 0,
+      'BufferGeometry.clearGroups() clears explicit groups',
+    );
+
+    // Material({ visible: false }) constructor + single- vs multi-material visibility parity
+    const ctorHidden = new MeshStandardMaterial({color: 0xff0000, visible: false});
+    const ctorVisible = new MeshStandardMaterial({color: 0x00ff00});
+    assert(
+      ctorHidden.visible === false && ctorVisible.visible === true,
+      'Material constructor initializes visible from params (default true)',
+    );
+    const singleHiddenScene = new Scene();
+    singleHiddenScene.add(new Mesh(new BoxGeometry(1, 1, 1), ctorHidden));
+    const singleHiddenGltf = sceneToCanvas3D(singleHiddenScene).gltf;
+    assert(
+      !singleHiddenGltf.meshes &&
+        !singleHiddenGltf.materials &&
+        !singleHiddenGltf.accessors &&
+        singleHiddenGltf.nodes?.length === 1 &&
+        singleHiddenGltf.nodes[0].mesh === undefined,
+      'Single-material Mesh with Material({visible: false}) omits mesh, materials, and orphaned accessors',
+    );
+    const partialHiddenScene = new Scene();
+    partialHiddenScene.add(
+      new Mesh(new BoxGeometry(1, 1, 1), [
+        new MeshStandardMaterial({color: 0xff0000, visible: false}),
+        new MeshStandardMaterial({color: 0x00ff00}),
+        new MeshStandardMaterial({color: 0x0000ff, visible: false}),
+        new MeshStandardMaterial({color: 0xffff00}),
+        new MeshStandardMaterial({color: 0x00ffff}),
+        new MeshStandardMaterial({color: 0xff00ff}),
+      ]),
+    );
+    const partialHiddenGltf = sceneToCanvas3D(partialHiddenScene).gltf;
+    assert(
+      partialHiddenGltf.meshes[0].primitives.length === 4 &&
+        partialHiddenGltf.materials.length === 4,
+      'Multi-material BoxGeometry omits groups whose Material({visible: false}) was set via constructor',
+    );
+    const allHiddenScene = new Scene();
+    allHiddenScene.add(
+      new Mesh(
+        new BoxGeometry(1, 1, 1),
+        Array.from({length: 6}, () => new MeshStandardMaterial({visible: false})),
+      ),
+    );
+    const allHiddenGltf = sceneToCanvas3D(allHiddenScene).gltf;
+    assert(
+      !allHiddenGltf.meshes && !allHiddenGltf.accessors,
+      'Multi-material BoxGeometry with all 6 faces {visible: false} omits mesh and accessors',
+    );
+
+    const instMulti = new InstancedMesh(
+      new CylinderGeometry(1, 1, 2, 16),
+      [
+        new MeshStandardMaterial({color: 0xff0000}),
+        new MeshStandardMaterial({color: 0x00ff00}),
+        new MeshStandardMaterial({color: 0x0000ff}),
+      ],
+      3,
+    );
+    const instMultiScene = new Scene();
+    instMultiScene.add(instMulti);
+    const instMultiGltf = sceneToCanvas3D(instMultiScene).gltf;
+    assert(
+      instMultiGltf.meshes[0].primitives.length === 3 &&
+        Boolean(instMultiGltf.nodes[0].extensions?.EXT_mesh_gpu_instancing),
+      'InstancedMesh accepts Material[] and exports 3 primitives with EXT_mesh_gpu_instancing',
+    );
+
+    const instHidden = new InstancedMesh(
+      new BoxGeometry(1, 1, 1),
+      Array.from({length: 6}, () => new MeshStandardMaterial({visible: false})),
+      2,
+    );
+    const instHiddenScene = new Scene();
+    instHiddenScene.add(instHidden);
+    const instHiddenGltf = sceneToCanvas3D(instHiddenScene).gltf;
+    assert(
+      !instHiddenGltf.meshes &&
+        !instHiddenGltf.nodes[0].extensions?.EXT_mesh_gpu_instancing,
+      'Hidden InstancedMesh omits both mesh and EXT_mesh_gpu_instancing',
+    );
+  }
 
   // Summary
   console.log(`\n========================================`);

@@ -1074,19 +1074,19 @@ fn render_viewport_impl(
         if mesh.positions.is_empty() {
             continue;
         }
-        let mat =
-            mesh.material_index.and_then(|mi| scene.materials.get(mi)).unwrap_or(&default_mat);
-        let maps = mesh.material_index.and_then(|mi| decoded_maps.get(mi)).unwrap_or(&default_maps);
-        let tex_opt = maps.base_color.as_ref();
+        let draw_limit =
+            if !mesh.indices.is_empty() { mesh.indices.len() } else { mesh.positions.len() };
+        let fallback_group = [crate::scene::MeshMaterialGroup {
+            start: 0,
+            count: draw_limit,
+            material_index: mesh.material_index,
+            use_vertex_colors: !mesh.colors.is_empty(),
+        }];
+        let active_groups: &[crate::scene::MeshMaterialGroup] =
+            if mesh.groups.is_empty() { &fallback_group } else { &mesh.groups };
         let has_uvs = !mesh.uvs.is_empty();
-        let tsl_opt = maps.tsl.as_ref();
-        let has_tsl_frag = tsl_opt.is_some_and(|tg| tg.fragment_reachable.iter().any(|&r| r));
-        let has_pbr_maps = has_tsl_frag
-            || (has_uvs
-                && (maps.metallic_roughness.is_some()
-                    || maps.normal.is_some()
-                    || maps.emissive.is_some()
-                    || maps.occlusion.is_some()));
+        let tri_count: usize =
+            active_groups.iter().map(|g| g.count.min(draw_limit.saturating_sub(g.start)) / 3).sum();
 
         let inst_count = (inst_matrices.len() / 16).max(1);
         let has_inst = inst_matrices.len() >= 16;
@@ -1106,21 +1106,46 @@ fn render_viewport_impl(
                 None
             };
 
-            let tri_count = if !mesh.indices.is_empty() {
-                mesh.indices.len() / 3
-            } else {
-                mesh.positions.len() / 3
-            };
+            let mut grp_idx = 0usize;
+            let mut grp_tri_start = 0usize;
 
             for t_idx in 0..tri_count {
+                while grp_idx < active_groups.len() {
+                    let g = &active_groups[grp_idx];
+                    let g_tris = g.count.min(draw_limit.saturating_sub(g.start)) / 3;
+                    if t_idx < grp_tri_start + g_tris {
+                        break;
+                    }
+                    grp_tri_start += g_tris;
+                    grp_idx += 1;
+                }
+                let grp = &active_groups[grp_idx];
+                let base_elem = grp.start + (t_idx - grp_tri_start) * 3;
+                let mat = grp
+                    .material_index
+                    .and_then(|mi| scene.materials.get(mi))
+                    .unwrap_or(&default_mat);
+                let maps =
+                    grp.material_index.and_then(|mi| decoded_maps.get(mi)).unwrap_or(&default_maps);
+                let tex_opt = maps.base_color.as_ref();
+                let tsl_opt = maps.tsl.as_ref();
+                let has_tsl_frag =
+                    tsl_opt.is_some_and(|tg| tg.fragment_reachable.iter().any(|&r| r));
+                let has_pbr_maps = has_tsl_frag
+                    || (has_uvs
+                        && (maps.metallic_roughness.is_some()
+                            || maps.normal.is_some()
+                            || maps.emissive.is_some()
+                            || maps.occlusion.is_some()));
+
                 let (i0, i1, i2) = if !mesh.indices.is_empty() {
                     (
-                        mesh.indices[t_idx * 3] as usize,
-                        mesh.indices[t_idx * 3 + 1] as usize,
-                        mesh.indices[t_idx * 3 + 2] as usize,
+                        mesh.indices[base_elem] as usize,
+                        mesh.indices[base_elem + 1] as usize,
+                        mesh.indices[base_elem + 2] as usize,
                     )
                 } else {
-                    (t_idx * 3, t_idx * 3 + 1, t_idx * 3 + 2)
+                    (base_elem, base_elem + 1, base_elem + 2)
                 };
                 if i0 >= mesh.positions.len()
                     || i1 >= mesh.positions.len()
@@ -1137,9 +1162,14 @@ fn render_viewport_impl(
                 let ln1_raw = mesh.normals.get(i1).copied().unwrap_or([0.0, 1.0, 0.0]);
                 let ln2_raw = mesh.normals.get(i2).copied().unwrap_or([0.0, 1.0, 0.0]);
 
+                let use_vc = grp.use_vertex_colors && !mesh.colors.is_empty();
                 let it = inst_tint.unwrap_or([1.0, 1.0, 1.0]);
                 let vtx_col = |vi: usize| -> [f32; 3] {
-                    let c = mesh.colors.get(vi).copied().unwrap_or([1.0, 1.0, 1.0]);
+                    let c = if use_vc {
+                        mesh.colors.get(vi).copied().unwrap_or([1.0, 1.0, 1.0])
+                    } else {
+                        [1.0, 1.0, 1.0]
+                    };
                     [c[0] * it[0], c[1] * it[1], c[2] * it[2]]
                 };
                 let vc0 = vtx_col(i0);

@@ -958,11 +958,37 @@ export class Uint32BufferAttribute extends BufferAttribute {
   }
 }
 
+export interface GeometryGroup {
+  start: number;
+  count: number;
+  materialIndex?: number;
+}
+
 export class BufferGeometry {
   public name: string = '';
   public attributes: Record<string, BufferAttribute> = {};
   public index: BufferAttribute | null = null;
+  public groups: GeometryGroup[] = [];
   public boundingBox: {min: Vector3; max: Vector3} | null = null;
+
+  public addGroup(
+    start: number,
+    count: number,
+    materialIndex: number = 0,
+  ): void {
+    this.groups.push({
+      start: Math.max(0, Math.floor(Number(start) || 0)),
+      count:
+        count === Infinity
+          ? Infinity
+          : Math.max(0, Math.floor(Number(count) || 0)),
+      materialIndex: Math.max(0, Math.floor(Number(materialIndex) || 0)),
+    });
+  }
+
+  public clearGroups(): void {
+    this.groups = [];
+  }
 
   public setAttribute(name: string, attribute: BufferAttribute): this {
     this.attributes[name] = attribute;
@@ -1195,6 +1221,9 @@ export class BufferGeometry {
       c.attributes[k] = this.attributes[k].clone();
     }
     if (this.index) c.index = this.index.clone();
+    if (this.groups.length) {
+      c.groups = this.groups.map((g) => ({...g}));
+    }
     return c;
   }
 
@@ -1204,6 +1233,18 @@ export class BufferGeometry {
 // =========================================================================
 // 3. Procedural Geometries
 // =========================================================================
+
+function setBoxMaterialGroups(geo: BufferGeometry): void {
+  // Face buffer order is [+Z, -Z, +Y, -Y, +X, -X]; Three.js material slots are [+X, -X, +Y, -Y, +Z, -Z].
+  geo.groups = [
+    {start: 24, count: 6, materialIndex: 0},
+    {start: 30, count: 6, materialIndex: 1},
+    {start: 12, count: 6, materialIndex: 2},
+    {start: 18, count: 6, materialIndex: 3},
+    {start: 0, count: 6, materialIndex: 4},
+    {start: 6, count: 6, materialIndex: 5},
+  ];
+}
 
 export class BoxGeometry extends BufferGeometry {
   constructor(width: number = 1, height: number = 1, depth: number = 1) {
@@ -1218,6 +1259,7 @@ export class BoxGeometry extends BufferGeometry {
           native.uvs,
           native.indices,
         );
+        setBoxMaterialGroups(this);
         return;
       }
     }
@@ -1312,6 +1354,7 @@ export class BoxGeometry extends BufferGeometry {
       indices.push(o, o + 1, o + 2, o, o + 2, o + 3);
     }
     this.setFromBuffers(positions, normals, uvs, indices);
+    setBoxMaterialGroups(this);
   }
 }
 
@@ -1428,6 +1471,30 @@ export class SphereGeometry extends BufferGeometry {
   }
 }
 
+function setCylinderMaterialGroups(
+  geo: BufferGeometry,
+  radialSegments: number,
+  heightSegments: number,
+  openEnded: boolean,
+  radiusTop: number,
+  radiusBottom: number,
+): void {
+  const torsoCount = radialSegments * heightSegments * 6;
+  const capCount = radialSegments * 3;
+  const groups: GeometryGroup[] = [
+    {start: 0, count: torsoCount, materialIndex: 0},
+  ];
+  let offset = torsoCount;
+  if (!openEnded && radiusTop > 0) {
+    groups.push({start: offset, count: capCount, materialIndex: 1});
+    offset += capCount;
+  }
+  if (!openEnded && radiusBottom > 0) {
+    groups.push({start: offset, count: capCount, materialIndex: 2});
+  }
+  geo.groups = groups;
+}
+
 export class CylinderGeometry extends BufferGeometry {
   constructor(
     radiusTop: number = 1,
@@ -1463,6 +1530,14 @@ export class CylinderGeometry extends BufferGeometry {
           native.normals,
           native.uvs,
           native.indices,
+        );
+        setCylinderMaterialGroups(
+          this,
+          Math.min(radialSegments, 2048),
+          heightSegments,
+          openEnded,
+          radiusTop,
+          radiusBottom,
         );
         return;
       }
@@ -1524,6 +1599,14 @@ export class CylinderGeometry extends BufferGeometry {
     addCap(radiusBottom, -1);
 
     this.setFromBuffers(positions, normals, uvs, indices);
+    setCylinderMaterialGroups(
+      this,
+      radialSegments,
+      heightSegments,
+      openEnded,
+      radiusTop,
+      radiusBottom,
+    );
   }
 }
 
@@ -2184,6 +2267,7 @@ export class Material {
   public opacity: number;
   public transparent: boolean;
   public wireframe: boolean;
+  public visible: boolean;
   public side: number; // 0 = FrontSide, 1 = BackSide, 2 = DoubleSide
   public get doubleSided(): boolean {
     return this.side === 2;
@@ -2230,6 +2314,7 @@ export class Material {
     this.opacity = numberOr(params.opacity, 1);
     this.transparent = booleanOr(params.transparent, false);
     this.wireframe = booleanOr(params.wireframe, false);
+    this.visible = booleanOr(params.visible, true);
     this.side = numberOr(params.side, params.doubleSided === false ? 0 : 2);
     if (params.doubleSided !== undefined && params.side === undefined) {
       this.side = params.doubleSided ? 2 : 0;
@@ -2525,7 +2610,12 @@ export class Object3D {
               (this as any).material,
             )
           : this instanceof Mesh
-            ? new Mesh((this as any).geometry, (this as any).material)
+            ? new Mesh(
+                (this as any).geometry,
+                Array.isArray((this as any).material)
+                  ? [...(this as any).material]
+                  : (this as any).material,
+              )
             : new (this.constructor as any)();
     if (this instanceof Light) {
       c.color.copy(this.color);
@@ -2560,12 +2650,11 @@ export class Group extends Object3D {}
 
 export class Mesh extends Object3D {
   public geometry: BufferGeometry;
-  public material: Material;
+  public material: Material | Material[];
   public isMesh: boolean = true;
 
-  constructor(geometry?: BufferGeometry, material?: Material) {
+  constructor(geometry?: BufferGeometry, material?: Material | Material[]) {
     super();
-    const mat = Array.isArray(material) ? material[0] : material;
     this.geometry =
       geometry instanceof BufferGeometry
         ? geometry
@@ -2573,13 +2662,22 @@ export class Mesh extends Object3D {
           ? (warnUnsupported('unsupported geometry', 'BoxGeometry'),
             new BoxGeometry(0.5, 0.5, 0.5))
           : new BufferGeometry();
-    this.material =
-      mat instanceof Material
-        ? mat
-        : mat
-          ? (warnUnsupported('unsupported material', 'MeshStandardMaterial'),
-            new MeshStandardMaterial({color: 0xcccccc}))
-          : new MeshStandardMaterial();
+    if (Array.isArray(material)) {
+      this.material = material.map((m) =>
+        m instanceof Material || m == null
+          ? (m as Material)
+          : (warnUnsupported('unsupported material', 'MeshStandardMaterial'),
+            new MeshStandardMaterial({color: 0xcccccc})),
+      );
+    } else {
+      this.material =
+        material instanceof Material
+          ? material
+          : material
+            ? (warnUnsupported('unsupported material', 'MeshStandardMaterial'),
+              new MeshStandardMaterial({color: 0xcccccc}))
+            : new MeshStandardMaterial();
+    }
   }
 }
 
@@ -2607,7 +2705,11 @@ export class InstancedMesh extends Mesh {
   instanceColor: BufferAttribute | null = null;
   isInstancedMesh = true;
 
-  constructor(geometry?: BufferGeometry, material?: Material, count = 1) {
+  constructor(
+    geometry?: BufferGeometry,
+    material?: Material | Material[],
+    count = 1,
+  ) {
     super(geometry, material);
     const n = Number(count);
     if (!Number.isFinite(n) || n < 0 || n > MAX_INSTANCES_PER_MESH) {
@@ -2932,17 +3034,22 @@ export class SceneQuotaValidator {
           }
         }
         if (obj.material) {
-          const mat = obj.material as any;
-          for (const k of [
-            'map',
-            'normalMap',
-            'roughnessMap',
-            'metalnessMap',
-            'emissiveMap',
-            'aoMap',
-            'bumpMap',
-          ]) {
-            if (mat[k]) textures.add(mat[k]);
+          const matList = Array.isArray(obj.material)
+            ? obj.material
+            : [obj.material];
+          for (const mat of matList) {
+            if (!mat) continue;
+            for (const k of [
+              'map',
+              'normalMap',
+              'roughnessMap',
+              'metalnessMap',
+              'emissiveMap',
+              'aoMap',
+              'bumpMap',
+            ]) {
+              if ((mat as any)[k]) textures.add((mat as any)[k]);
+            }
           }
         }
       }
@@ -5207,12 +5314,15 @@ export class Line extends Mesh {
     const isPts = this._lineMode === 'points';
     if (isPts) {
       const colAttr = this._sourceGeo?.attributes?.color;
+      const mat0 = Array.isArray(this.material)
+        ? this.material[0]
+        : this.material;
       if (
         colAttr?.array &&
         colAttr.count > 0 &&
-        this.material?.color.r === 1 &&
-        this.material.color.g === 1 &&
-        this.material.color.b === 1
+        mat0?.color.r === 1 &&
+        mat0.color.g === 1 &&
+        mat0.color.b === 1
       ) {
         const cArr = colAttr.array as Float32Array,
           n = Math.min(colAttr.count, 64);
@@ -5224,7 +5334,7 @@ export class Line extends Mesh {
           gS += cArr[i * 3 + 1] || 0;
           bS += cArr[i * 3 + 2] || 0;
         }
-        this.material.color.setRGB(rS / n, gS / n, bS / n);
+        mat0.color.setRGB(rS / n, gS / n, bS / n);
       }
     }
     if (
@@ -5991,115 +6101,161 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       const geo = (node as any).geometry;
       const posAttr = geo?.attributes?.position;
       if (posAttr && posAttr.array && posAttr.count > 0) {
-        meshIdx = rawMeshes.length;
-        let variantMappingsJson: string | null = null;
-        let variantWantsVertexColors = false;
-        const rawVariants = node.userData?.variants;
-        if (rawVariants && typeof rawVariants === 'object') {
-          const matToVarIndices = new Map<number, number[]>();
-          for (const k of Object.keys(rawVariants)) {
-            if (
-              !k ||
-              k === '__proto__' ||
-              k === 'constructor' ||
-              k === 'prototype'
-            ) {
-              continue;
-            }
-            const vMat = rawVariants[k];
-            const matObj =
-              vMat instanceof Material
-                ? vMat
-                : vMat && typeof vMat === 'object'
-                  ? new MeshStandardMaterial(vMat)
-                  : null;
-            if (!matObj) continue;
-            if ((vMat as {vertexColors?: boolean})?.vertexColors === true) {
-              variantWantsVertexColors = true;
-            }
-            let vIdx = variantNames.indexOf(k);
-            if (vIdx === -1 && variantNames.length < 256) {
-              vIdx = variantNames.length;
-              variantNames.push(k);
-            }
-            if (vIdx === -1) continue;
-            const mIdx = getMaterialIndex(matObj);
-            if (mIdx !== null) {
-              let list = matToVarIndices.get(mIdx);
-              if (!list) {
-                list = [];
-                matToVarIndices.set(mIdx, list);
+        const matField = (node as any).material;
+        const isMatArray = Array.isArray(matField);
+        let rawGroups: Uint32Array | null = null;
+        let primaryMatIdx: number | null = null;
+        const activeMats: any[] = [];
+
+        if (isMatArray && geo.groups?.length) {
+          const lim = geo.index?.array ? geo.index.array.length : posAttr.count;
+          const triples: number[] = [];
+          for (const g of geo.groups) {
+            if (!g || typeof g !== 'object') continue;
+            const s = Math.max(0, Math.floor(Number(g.start) || 0));
+            const c = Math.min(
+              lim - s,
+              g.count === undefined || g.count === Infinity
+                ? lim - s
+                : Math.floor(Number(g.count) || 0),
+            );
+            const mi =
+              g.materialIndex === undefined
+                ? 0
+                : Math.floor(Number(g.materialIndex));
+            const gm =
+              c > 0 && mi >= 0 && mi < matField.length ? matField[mi] : null;
+            if (!gm || gm.visible === false) continue;
+            const ri = getMaterialIndex(gm instanceof Material ? gm : null);
+            triples.push(s, c, ri ?? 0xffffffff, 0);
+            activeMats.push(gm);
+          }
+          if (triples.length) {
+            rawGroups = new Uint32Array(triples);
+            primaryMatIdx = triples[2] === 0xffffffff ? null : triples[2]!;
+          }
+        } else {
+          const rawMat = isMatArray ? matField[0] : matField;
+          if (!(isMatArray && !rawMat) && rawMat?.visible !== false) {
+            primaryMatIdx = getMaterialIndex(
+              rawMat instanceof Material ? rawMat : null,
+            );
+            activeMats.push(rawMat);
+          }
+        }
+
+        if (activeMats.length) {
+          meshIdx = rawMeshes.length;
+          let variantMappingsJson: string | null = null;
+          let variantWantsVertexColors = false;
+          const rawVariants = node.userData?.variants;
+          if (rawVariants && typeof rawVariants === 'object') {
+            const matToVarIndices = new Map<number, number[]>();
+            for (const k of Object.keys(rawVariants)) {
+              if (
+                !k ||
+                k === '__proto__' ||
+                k === 'constructor' ||
+                k === 'prototype'
+              ) {
+                continue;
               }
-              list.push(vIdx);
+              const vMat = rawVariants[k];
+              const matObj =
+                vMat instanceof Material
+                  ? vMat
+                  : vMat && typeof vMat === 'object'
+                    ? new MeshStandardMaterial(vMat)
+                    : null;
+              if (!matObj) continue;
+              if ((vMat as {vertexColors?: boolean})?.vertexColors === true) {
+                variantWantsVertexColors = true;
+              }
+              let vIdx = variantNames.indexOf(k);
+              if (vIdx === -1 && variantNames.length < 256) {
+                vIdx = variantNames.length;
+                variantNames.push(k);
+              }
+              if (vIdx === -1) continue;
+              const mIdx = getMaterialIndex(matObj);
+              if (mIdx !== null) {
+                let list = matToVarIndices.get(mIdx);
+                if (!list) {
+                  list = [];
+                  matToVarIndices.set(mIdx, list);
+                }
+                list.push(vIdx);
+              }
+            }
+            if (matToVarIndices.size > 0) {
+              const mappings: Array<{material: number; variants: number[]}> =
+                [];
+              for (const [mIdx, vIndices] of matToVarIndices.entries()) {
+                mappings.push({material: mIdx, variants: vIndices});
+              }
+              variantMappingsJson = JSON.stringify({mappings});
             }
           }
-          if (matToVarIndices.size > 0) {
-            const mappings: Array<{material: number; variants: number[]}> = [];
-            for (const [mIdx, vIndices] of matToVarIndices.entries()) {
-              mappings.push({material: mIdx, variants: vIndices});
+          let rawColors: Float32Array | null = null;
+          const colAttr = geo.attributes.color;
+          const cStep = colAttr?.itemSize === 4 ? 4 : 3;
+          if (
+            colAttr?.array &&
+            colAttr.count >= posAttr.count &&
+            colAttr.array.length >= posAttr.count * cStep
+          ) {
+            let exportColor = false;
+            for (let gi = 0; gi < activeMats.length; gi++) {
+              const m = activeMats[gi];
+              if (
+                variantWantsVertexColors ||
+                !m ||
+                m.vertexColors === true ||
+                (m.vertexColors !== false &&
+                  !m.map &&
+                  (!m.color ||
+                    ((m.color.r ?? 1) >= 0.999 &&
+                      (m.color.g ?? 1) >= 0.999 &&
+                      (m.color.b ?? 1) >= 0.999)))
+              ) {
+                exportColor = true;
+                if (rawGroups) rawGroups[gi * 4 + 3] = 1;
+              }
             }
-            variantMappingsJson = JSON.stringify({mappings});
+            if (exportColor) {
+              const cSrc = colAttr.array as ArrayLike<number>;
+              const cNorm =
+                cSrc instanceof Uint8Array
+                  ? 1 / 255
+                  : cSrc instanceof Uint16Array
+                    ? 1 / 65535
+                    : 1;
+              rawColors = new Float32Array(posAttr.count * 3);
+              for (let i = 0; i < posAttr.count; i++) {
+                const si = i * cStep;
+                const di = i * 3;
+                for (let k = 0; k < 3; k++) {
+                  const v = cSrc[si + k]! * cNorm;
+                  rawColors[di + k] = Number.isFinite(v) ? Math.max(0, v) : 1;
+                }
+              }
+            }
           }
+          rawMeshes.push({
+            name: node.name || `Mesh_${rawMeshes.length}`,
+            raw_positions: posAttr.array,
+            raw_normals: geo.attributes.normal
+              ? geo.attributes.normal.array
+              : null,
+            raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
+            raw_colors: rawColors,
+            raw_indices: geo.index ? geo.index.array : null,
+            raw_groups: rawGroups,
+            vertex_count: posAttr.count,
+            material_index: primaryMatIdx,
+            variant_mappings_json: variantMappingsJson,
+          });
         }
-        const rawMat = Array.isArray((node as any).material)
-          ? (node as any).material[0]
-          : (node as any).material;
-        let rawColors: Float32Array | null = null;
-        const colAttr = geo.attributes.color;
-        if (
-          colAttr &&
-          colAttr.array &&
-          colAttr.count >= posAttr.count &&
-          colAttr.array.length >=
-            posAttr.count * (colAttr.itemSize === 4 ? 4 : 3)
-        ) {
-          const exportColor =
-            variantWantsVertexColors ||
-            !rawMat ||
-            rawMat.vertexColors === true ||
-            (rawMat.vertexColors !== false &&
-              !rawMat.map &&
-              (!rawMat.color ||
-                ((rawMat.color.r ?? 1) >= 0.999 &&
-                  (rawMat.color.g ?? 1) >= 0.999 &&
-                  (rawMat.color.b ?? 1) >= 0.999)));
-          if (exportColor) {
-            const cSrc = colAttr.array as ArrayLike<number>;
-            const cStep = colAttr.itemSize === 4 ? 4 : 3;
-            const cNorm =
-              cSrc instanceof Uint8Array
-                ? 1 / 255
-                : cSrc instanceof Uint16Array
-                  ? 1 / 65535
-                  : 1;
-            rawColors = new Float32Array(posAttr.count * 3);
-            for (let i = 0; i < posAttr.count; i++) {
-              const si = i * cStep;
-              const di = i * 3;
-              const r = cSrc[si]! * cNorm;
-              const g = cSrc[si + 1]! * cNorm;
-              const b = cSrc[si + 2]! * cNorm;
-              rawColors[di] = Number.isFinite(r) ? Math.max(0, r) : 1;
-              rawColors[di + 1] = Number.isFinite(g) ? Math.max(0, g) : 1;
-              rawColors[di + 2] = Number.isFinite(b) ? Math.max(0, b) : 1;
-            }
-          }
-        }
-        rawMeshes.push({
-          name: node.name || `Mesh_${rawMeshes.length}`,
-          raw_positions: posAttr.array,
-          raw_normals: geo.attributes.normal
-            ? geo.attributes.normal.array
-            : null,
-          raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
-          raw_colors: rawColors,
-          raw_indices: geo.index ? geo.index.array : null,
-          vertex_count: posAttr.count,
-          material_index: getMaterialIndex(
-            rawMat instanceof Material ? rawMat : null,
-          ),
-          variant_mappings_json: variantMappingsJson,
-        });
       }
 
       const safeXR = withAITextureKey(toSafeJson(node.userData?.xr), node);
@@ -6583,7 +6739,14 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             : undefined,
         })),
         rawMeshes.map((m) => ({
-          primitives: [{material: m.material_index ?? 0}],
+          primitives: m.raw_groups
+            ? Array.from({length: m.raw_groups.length / 4}, (_, k) => ({
+                material:
+                  m.raw_groups[k * 4 + 2] === 0xffffffff
+                    ? 0
+                    : m.raw_groups[k * 4 + 2]!,
+              }))
+            : [{material: m.material_index ?? 0}],
         })),
         sceneInteractivity ?? undefined,
       );
