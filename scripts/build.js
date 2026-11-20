@@ -1362,7 +1362,7 @@ function reportSizes() {
   console.log('------------------------------------------------------------------------------');
   const files = [
     {name: 'three-live-viewer.min.js', budgetKb: '35'},
-    {name: 'three-live.min.js', budgetKb: '86'},
+    {name: 'three-live.min.js', budgetKb: '88'},
     {name: 'three-live-studio.min.js', budgetKb: '36'},
     {name: 'three-live-cad.min.js', budgetKb: '20'},
     {name: 'three-live-kit-mechanical.min.js', budgetKb: '18'},
@@ -1378,9 +1378,9 @@ function reportSizes() {
     {name: 'three-live-webgpu.min.js', budgetKb: '23'},
     {name: 'three-live-tsl.min.js', budgetKb: '19'},
     {name: 'three-live-full.min.js', budgetKb: '242'},
-    {name: 'three-live-compiler-bundle.min.js', budgetKb: '260'},
+    {name: 'three-live-compiler-bundle.min.js', budgetKb: '262'},
     {name: 'xr-live-viewer.min.js', budgetKb: '62'},
-    {name: 'xr-live.min.js', budgetKb: '98'},
+    {name: 'xr-live.min.js', budgetKb: '100'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '65'},
     {name: 'xr-live-sim.min.js', budgetKb: '30'},

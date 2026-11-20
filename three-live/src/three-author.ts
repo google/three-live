@@ -3332,6 +3332,12 @@ export interface ScriptExecutionOptions {
   readonly allowClientScripts?: boolean;
   /** AI textures for `userData.xr.material.prompt` (B5). */
   readonly texturePack?: SandboxTexturePack | null;
+  /**
+   * A-la-carte domain kits (`mechanical`, `architecture`, `industrial`,
+   * `science`, `electronics`, or `all`) to load inside the sandbox before the
+   * scene script runs. Mirrors the `kits` attribute.
+   */
+  readonly kits?: readonly string[];
 }
 
 export interface ScriptRunner {
@@ -3581,6 +3587,94 @@ function resolveSandboxEngineSrc(): string {
   return resolveAllowedUrl(src, 'sandbox engine');
 }
 
+/** Domain kits loadable inside the sandbox via the `kits` attribute. */
+const SANDBOX_KIT_NAMES: readonly string[] = [
+  'mechanical',
+  'architecture',
+  'industrial',
+  'science',
+  'electronics',
+];
+
+/**
+ * Normalizes a `kits` attribute value (comma- or space-separated) or list into
+ * unique lowercase kit names. `all` subsumes every individual kit. Unknown
+ * names are kept so the sandbox can reject them with a clear error.
+ */
+export function parseSandboxKits(
+  raw: string | readonly string[] | null | undefined,
+): string[] {
+  const out: string[] = [];
+  for (const part of typeof raw === 'string' ? raw.split(/[\s,]+/) : raw || []) {
+    const name = String(part).trim().toLowerCase();
+    if (name && out.indexOf(name) < 0) out.push(name);
+  }
+  return out.indexOf('all') < 0
+    ? out
+    : ['all', ...out.filter((n) => n !== 'all' && SANDBOX_KIT_NAMES.indexOf(n) < 0)];
+}
+
+/**
+ * Overrides the IIFE bundle URL for one domain kit (`architecture`, ..., or
+ * `all`). Pass `null` to fall back to deriving it next to the engine bundle.
+ */
+export function setSandboxKitSrc(name: string, src: string | null): void {
+  const reg = getSharedRegistry();
+  const next = {...reg.sandboxKitSrcs};
+  const key = name.trim().toLowerCase();
+  if (src) next[key] = src;
+  else delete next[key];
+  reg.sandboxKitSrcs = next;
+}
+
+/** Returns the bundle URL the sandbox would load for kit `name`, or `null`. */
+export function getSandboxKitSrc(name: string): string | null {
+  const key = name.trim().toLowerCase();
+  if (key !== 'all' && SANDBOX_KIT_NAMES.indexOf(key) < 0) return null;
+  const configured = getSharedRegistry().sandboxKitSrcs?.[key];
+  if (configured) return configured;
+  const engineSrc = getSandboxEngineSrc();
+  if (!engineSrc || !isAllowedSandboxEngineUrl(engineSrc)) return null;
+  const engineUrl = new URL(engineSrc, getBaseHref());
+  if (engineUrl.protocol === 'blob:') return null;
+  return new URL(
+    key === 'all' ? 'three-live-kits.min.js' : `three-live-kit-${key}.min.js`,
+    engineUrl,
+  ).href;
+}
+
+/**
+ * Resolves requested kit names to allowlisted bundle URLs. Kits whose
+ * namespaces the host page already installed are skipped, because their
+ * self-contained installers are serialized into the worker anyway.
+ */
+function resolveSandboxKitSrcs(kits: readonly string[] | undefined): string[] {
+  const hostNs = getSharedRegistry().authorNamespace || {};
+  const srcs: string[] = [];
+  for (const name of parseSandboxKits(kits)) {
+    const isAll = name === 'all';
+    if (!isAll && SANDBOX_KIT_NAMES.indexOf(name) < 0) {
+      throw new Error(`SecurityError: Unknown domain kit "${name}".`);
+    }
+    // `architecture` -> `Architecture`, the namespace the kit installs.
+    if (
+      (isAll ? SANDBOX_KIT_NAMES : [name]).every(
+        (n) => hostNs[n[0].toUpperCase() + n.slice(1)],
+      )
+    ) {
+      continue;
+    }
+    const src = getSandboxKitSrc(name);
+    if (!src) {
+      throw new Error(
+        `SecurityError: Could not locate domain kit "${name}"; call setSandboxKitSrc() explicitly.`,
+      );
+    }
+    srcs.push(resolveAllowedUrl(src, 'domain kit'));
+  }
+  return srcs;
+}
+
 export function setSandboxIframeSrc(src: string | null): void {
   getSharedRegistry().sandboxIframeSrc = src;
 }
@@ -3627,6 +3721,8 @@ export interface SandboxWorkerSourceOptions {
   readonly allowClientScripts?: boolean;
   readonly allowedScriptUrl?: string | null;
   readonly inlineEngineSource?: string | null;
+  /** Allowlisted domain kit bundle URLs imported right after the engine. */
+  readonly kitSrcs?: readonly string[] | null;
 }
 
 /** Values baked into a generated sandbox worker. */
@@ -3637,6 +3733,7 @@ interface SandboxWorkerConfig {
   readonly allowClientScripts: boolean;
   readonly revoked: readonly string[];
   readonly inlineEngine?: boolean;
+  readonly kitSrcs?: readonly string[];
 }
 
 /**
@@ -3662,6 +3759,7 @@ function sandboxWorkerMain(
   const ALLOWED_SCRIPT_URL = cfg.allowedScriptUrl;
   const ALLOW_CLIENT_SCRIPTS = cfg.allowClientScripts;
   const REVOKED = cfg.revoked;
+  const KIT_SRCS: readonly string[] = cfg.kitSrcs || [];
 
   // Capture the channel back to the host before the author script can see it,
   // so it cannot forge a 3D_MODEL_READY message.
@@ -3697,6 +3795,7 @@ function sandboxWorkerMain(
   let sceneScriptUrlToLoad: unknown = ALLOWED_SCRIPT_URL;
   // tslint:disable-next-line:no-any
   let createClientScript: any = null;
+  let kitUrlsToLoad: unknown[] = KIT_SRCS.slice();
 
   try {
     let scriptUrlToLoad: unknown = ENGINE_SRC;
@@ -3711,7 +3810,8 @@ function sandboxWorkerMain(
           createScriptURL: function (u: string) {
             if (
               u !== ENGINE_SRC &&
-              (!ALLOWED_SCRIPT_URL || u !== ALLOWED_SCRIPT_URL)
+              (!ALLOWED_SCRIPT_URL || u !== ALLOWED_SCRIPT_URL) &&
+              KIT_SRCS.indexOf(u) === -1
             ) {
               throw new TypeError('Disallowed worker importScripts URL');
             }
@@ -3733,6 +3833,7 @@ function sandboxWorkerMain(
         if (ALLOWED_SCRIPT_URL) {
           sceneScriptUrlToLoad = bootPolicy.createScriptURL(ALLOWED_SCRIPT_URL);
         }
+        kitUrlsToLoad = KIT_SRCS.map((u) => bootPolicy.createScriptURL(u));
         if (
           ALLOW_CLIENT_SCRIPTS &&
           typeof bootPolicy.createScript === 'function'
@@ -3764,6 +3865,23 @@ function sandboxWorkerMain(
         '" did not install THREE; point sandboxEngineSrc at three-live.min.js.',
     );
     return;
+  }
+
+  // A-la-carte domain kits (`kits="architecture"`) register on the shared
+  // registry the engine just created, before ambient authority is revoked.
+  for (let k = 0; k < kitUrlsToLoad.length; k++) {
+    try {
+      if (!nativeImportScripts) throw new Error('importScripts unavailable');
+      nativeImportScripts(kitUrlsToLoad[k]);
+    } catch (kitErr) {
+      fail(
+        'Sandbox failed to load domain kit "' +
+          KIT_SRCS[k] +
+          '": ' +
+          ((kitErr && (kitErr as any).message) || kitErr),
+      );
+      return;
+    }
   }
 
   if (Array.isArray(extInstallers)) {
@@ -4038,6 +4156,7 @@ export function buildSandboxWorkerSource(
   const inlineSource = options?.inlineEngineSource ?? null;
   const hasInlineEngine =
     typeof inlineSource === 'string' && inlineSource.length > 0;
+  const kitSrcs = options?.kitSrcs ?? [];
   const cfg: SandboxWorkerConfig = {
     nonce,
     engineSrc,
@@ -4045,6 +4164,7 @@ export function buildSandboxWorkerSource(
     allowClientScripts,
     revoked: REVOKED_WORKER_GLOBALS,
     ...(hasInlineEngine ? {inlineEngine: true} : {}),
+    ...(kitSrcs.length > 0 ? {kitSrcs: [...kitSrcs]} : {}),
   };
   const installerExprs = (getSharedRegistry().workerExtensionInstallers ?? [])
     .map((fn) => `(${fn.toString()})`)
@@ -4266,13 +4386,17 @@ function dispatchValidatedSandboxMessage(
 type SandboxExecutionJob = (
   | {readonly kind: 'script'; readonly script: string}
   | {readonly kind: 'url'; readonly scriptUrl: string}
-) & {readonly texturePack?: SandboxTexturePack | null};
+) & {
+  readonly texturePack?: SandboxTexturePack | null;
+  readonly kits?: readonly string[];
+};
 
 function executeInSandboxIframe(
   job: SandboxExecutionJob,
   engineSrc: string,
   iframeSrc: string,
   callbacks: ScriptExecutionCallbacks,
+  kitSrcs: readonly string[] = [],
 ): ScriptExecutionHandle {
   const nonce = newSandboxNonce();
   const inlineEngineSource = getSandboxEngineSource();
@@ -4284,8 +4408,14 @@ function executeInSandboxIframe(
           allowClientScripts: false,
           allowedScriptUrl: job.scriptUrl,
           inlineEngineSource,
+          kitSrcs,
         }
-      : {allowClientScripts: true, allowedScriptUrl: null, inlineEngineSource},
+      : {
+          allowClientScripts: true,
+          allowedScriptUrl: null,
+          inlineEngineSource,
+          kitSrcs,
+        },
   );
   const iframe = document.createElement('iframe');
   // Omit `allow-same-origin` so the iframe and its Worker run in a unique
@@ -4451,6 +4581,14 @@ function runSandboxedJob(
     );
   }
 
+  let kitSrcs: string[];
+  try {
+    kitSrcs = resolveSandboxKitSrcs(job.kits);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return reject(message, 'Security Error: domain kit could not be loaded.');
+  }
+
   if (sandbox === 'iframe') {
     let iframeSrc: string;
     try {
@@ -4464,7 +4602,7 @@ function runSandboxedJob(
     }
     try {
       return Promise.resolve(
-        executeInSandboxIframe(job, engineSrc, iframeSrc, callbacks),
+        executeInSandboxIframe(job, engineSrc, iframeSrc, callbacks, kitSrcs),
       );
     } catch (error: unknown) {
       return Promise.reject(error);
@@ -4481,8 +4619,14 @@ function runSandboxedJob(
           allowClientScripts: false,
           allowedScriptUrl: job.scriptUrl,
           inlineEngineSource,
+          kitSrcs,
         }
-      : {allowClientScripts: true, allowedScriptUrl: null, inlineEngineSource},
+      : {
+          allowClientScripts: true,
+          allowedScriptUrl: null,
+          inlineEngineSource,
+          kitSrcs,
+        },
   );
   let worker: Worker;
   try {
@@ -4620,7 +4764,12 @@ export const authorScriptRunner: ScriptRunner = {
     }
 
     return runSandboxedJob(
-      {kind: 'script', script, texturePack: options?.texturePack},
+      {
+        kind: 'script',
+        script,
+        texturePack: options?.texturePack,
+        kits: options?.kits,
+      },
       sandbox,
       callbacks,
       reject,
@@ -4651,6 +4800,7 @@ export const authorScriptRunner: ScriptRunner = {
         kind: 'url',
         scriptUrl: resolvedScriptUrl,
         texturePack: options?.texturePack,
+        kits: options?.kits,
       },
       sandbox,
       callbacks,
@@ -5549,6 +5699,9 @@ const threeExports: Record<string, any> = {
   getSandboxEngineSrc,
   setSandboxEngineSource,
   getSandboxEngineSource,
+  setSandboxKitSrc,
+  getSandboxKitSrc,
+  parseSandboxKits,
   warnUnsupported,
   getAuthorWarnings,
   clearAuthorWarnings,

@@ -328,6 +328,29 @@ export function isNonNetworkUrl(url: string): boolean {
   return NON_NET_RE.test(url.trim());
 }
 
+/**
+ * Returns true when `raw` is a clean relative path (no scheme, protocol-relative
+ * `//`, `..`, `\`, `%`, or whitespace) that resolves to the document's own
+ * origin. Opaque-origin hosts (`location.origin === 'null'`) always return
+ * false. Used for host-authored attributes such as `poster`, where a
+ * same-origin fetch cannot exfiltrate data to a third party.
+ */
+export function isSameOriginRelativeUrl(raw: string): boolean {
+  const url = raw.trim();
+  if (!url || /[\x00-\x20\\%]/.test(url)) return false;
+  if (url.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(url)) return false;
+  if (url.split(/[/?#]/).includes('..')) return false;
+  const origin = typeof location !== 'undefined' ? location.origin : '';
+  if (!origin || origin === 'null') return false;
+  try {
+    const base =
+      (typeof document !== 'undefined' && document.baseURI) || location.href;
+    return new URL(url, base).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Checks whether `caps.network` permits connecting to `rawUrl`. */
 export function isNetworkUrlPermitted(
   caps: ThreeLiveCapabilities,

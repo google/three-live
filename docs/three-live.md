@@ -70,7 +70,8 @@ bundles and entry points.
 | `poster` | `string` | `three-live-viewer`+ | URL to a placeholder image shown before 3D rendering initializes. |
 | `scale` | `string` | `three-live-viewer`+ | Uniform or per-axis scale multiplier `"x y z"` (e.g. `"2 2 2"`). |
 | `camera-orbit` | `string` (str/JSON) | `three-live-viewer`+ | Initial camera orbit angles and distance (`"45deg 20deg 3m"` or `{"theta": 0.8, "phi": 0.35, "zoom": 3}`). |
-| `camera-target` | `string` | `three-live-viewer`+ | Orbit center coordinate `"x y z"` (e.g. `"0m 1.5m 0m"`, defaults to model bounding center). |
+| `camera-target` | `string` | `three-live-viewer`+ | Orbit center coordinate `"x y z"` (e.g. `"0m 1.5m 0m"`). `"auto"` or removing the attribute returns the pivot to the model bounding center (the default). |
+| `kits` | `string` | `three-live`+ | A-la-carte domain kits loaded inside the script sandbox before the scene runs: `mechanical`, `architecture`, `industrial`, `science`, `electronics`, or `all` (comma- or space-separated). Bundles are resolved next to `sandboxEngineSrc` (override with `ThreeLiveElement.sandboxKitSrcs`). |
 | `min-camera-orbit` | `string` | `three-live-viewer`+ | Lower bounds for camera orbit `"theta phi radius"` (e.g. `"-45deg 0deg 1m"` or `"auto 0deg auto"`). |
 | `max-camera-orbit` | `string` | `three-live-viewer`+ | Upper bounds for camera orbit (e.g. `"auto 90deg auto"` prevents orbiting beneath the ground plane). |
 | `field-of-view` | `string` | `three-live-viewer`+ | Vertical field of view angle (e.g. `"45deg"`, clamps between `10deg` and `90deg`). |
@@ -504,6 +505,21 @@ ThreeLiveElement.sandboxEngineSrc =
 ThreeLiveElement.sandboxIframeSrc =
     new URL('three-live/dist/three-live-sandbox.html', import.meta.url).href;
 ```
+
+Domain kits requested with `kits="architecture"` (or `kits="all"`) are loaded
+inside the sandbox from `three-live-kit-<name>.min.js` (or `three-live-kits.min.js`)
+next to the engine bundle. Override individual kit URLs when they live
+elsewhere:
+
+```js
+ThreeLiveElement.sandboxKitSrcs = {
+  architecture: new URL('three-live/dist/three-live-kit-architecture.min.js',
+                        import.meta.url).href,
+};
+```
+
+Kits already loaded on the host page (via `<script src="three-live-kit-*.min.js">`)
+are forwarded into the sandbox automatically and are not fetched twice.
 
 The URL must point at an **IIFE** build (`*.min.js`), be same-origin or
 CORS-enabled, and be permitted by your CSP `script-src`. If it cannot be

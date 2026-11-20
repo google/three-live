@@ -162,6 +162,8 @@ export interface EditSceneResult {
 export interface AIEditableElement {
   allowClientScripts?: boolean;
   sandbox?: string;
+  /** Domain kits requested by the host element's `kits` attribute. */
+  scriptKits?: readonly string[];
   selectedMesh?: string | null;
   selectedMeshes?: readonly string[];
   aiProvider?: ThreeLiveAIProvider;
@@ -756,7 +758,10 @@ export function dryRunCompile(
             if (warnings.length < 20) warnings.push(String(msg));
           },
         },
-        {allowClientScripts: true},
+        {
+          allowClientScripts: true,
+          kits: el.scriptKits?.length ? el.scriptKits : undefined,
+        },
       ),
     ).then(
       (h) => {
