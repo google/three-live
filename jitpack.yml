@@ -15,9 +15,8 @@
 jdk:
   - openjdk17
 
-before_install:
-  - npm install --no-audit --no-fund && npm run build
-  - THREE_LIVE_PREBUILT_JNI=1 bash scripts/build_android_aar.sh
-
+# Chain prebuilt JNI extraction with Gradle publishing inside `install:` so a
+# missing GitHub Release (e.g., JitPack polling a tag before release.yml
+# finishes) fails closed instead of publishing empty AARs without .so libs.
 install:
-  - ./gradlew :mobile:android:publishReleasePublicationToMavenLocal :mobile:android-filament:publishReleasePublicationToMavenLocal :mobile:android-firebase-ai:publishReleasePublicationToMavenLocal :mobile:android-detect-mlkit:publishReleasePublicationToMavenLocal :mobile:android-hands-androidxr:publishReleasePublicationToMavenLocal :mobile:android-hands-mediapipe:publishReleasePublicationToMavenLocal -x test --stacktrace
+  - THREE_LIVE_PREBUILT_JNI=1 bash scripts/build_android_aar.sh && ./gradlew :mobile:android-runtime:publishReleasePublicationToMavenLocal :mobile:android-kernels:publishReleasePublicationToMavenLocal :mobile:android:publishReleasePublicationToMavenLocal :mobile:android-filament:publishReleasePublicationToMavenLocal :mobile:android-firebase-ai:publishReleasePublicationToMavenLocal :mobile:android-detect-mlkit:publishReleasePublicationToMavenLocal :mobile:android-hands-androidxr:publishReleasePublicationToMavenLocal :mobile:android-hands-mediapipe:publishReleasePublicationToMavenLocal -x test --stacktrace
