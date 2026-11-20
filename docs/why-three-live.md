@@ -76,7 +76,8 @@ targets:
     and a CPU software rasterizer.
 *   **Consistent procedural and AI PBR textures:** Implements procedural PBR
     presets (`wood`, `marble`, `brick`, `concrete`, `brushedMetal`, `rust`,
-    `leather`, `fabric`, `carbonFiber`, `checkerboard`, and `grid`) plus
+    `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`, and the
+    architectural `clapboard`, `shiplap`, `stucco`, and `shingle`) plus
     on-device normal and occlusion-roughness-metalness (ORM) map generators in
     both TypeScript and Rust, verified by shared pixel-hash tests.
 *   **Single-binary CLI and MCP verification (`three-live-cli`):** Packages a

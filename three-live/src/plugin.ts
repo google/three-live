@@ -245,6 +245,19 @@ export interface SharedThreeLiveRegistry {
    */
   workerExtensionInstallers?: Array<(threeNs: unknown, reg: unknown) => void>;
   /**
+   * Shared RGBA8 -> PNG data URI encoder (`png-encode.ts`) installed by the
+   * three-author engine so serialized worker installers (`CanvasTexture`) can
+   * reuse it without bundling their own copy.
+   */
+  encodeRgbaPng?: (
+    srcData: ArrayLike<number>,
+    srcW: number,
+    srcH: number,
+    flipY: boolean,
+    isLinearColorSpace: boolean,
+    maxDim?: number,
+  ) => {uri: string; avgColor: [number, number, number, number]};
+  /**
    * Optional WebGPU Gaussian Splatting compute & render accelerator installed
    * by `xr-live-webgpu.min.js`. Pure TypeScript hook so core bundles add 0 B.
    */

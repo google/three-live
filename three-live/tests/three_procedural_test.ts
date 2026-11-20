@@ -1258,13 +1258,17 @@ function runProceduralTests(): void {
     'fabric',
     'leather',
     'rust',
+    'clapboard',
+    'shiplap',
+    'stucco',
+    'shingle',
   ];
   assert(
     Boolean(PT) &&
       Object.isFrozen(PT) &&
       JSON.stringify(PT.presets) === JSON.stringify(PRESETS) &&
       PRESETS.every((p) => typeof PT[p] === 'function'),
-    'THREE.ProceduralTexture exposes 11 frozen preset factories',
+    'THREE.ProceduralTexture exposes 15 frozen preset factories',
   );
 
   // Byte-identical parity with the Rust kernels (compiler/src/material_preset.rs
@@ -1289,8 +1293,12 @@ function runProceduralTests(): void {
     [2095234875, 3455663557, 2500509125],
     [716167143, 2720860795, 1956285490],
     [1433902205, 225922196, 1140331227],
+    [2879227610, 86556101, 3183034821],
+    [2228436477, 3962713919, 1688941221],
+    [2992030057, 328505037, 1497047177],
+    [99483332, 3581188677, 3709900229],
   ];
-  const PARITY_SCALES = [8, 8, 10, 3, 1, 8, 4, 8, 32, 12, 4];
+  const PARITY_SCALES = [8, 8, 10, 3, 1, 8, 4, 8, 32, 12, 4, 8, 8, 4, 8];
   PRESETS.forEach((name, kind) => {
     const r = PT[name]({
       size: 64,

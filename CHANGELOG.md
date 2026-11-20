@@ -42,6 +42,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `camera-target="auto"` (or removing the attribute) now returns the orbit
     pivot to the model's bounding-box center instead of keeping the last
     custom target.
+-   **Architectural `ProceduralTexture` presets:** `clapboard` (horizontally
+    lapped bevel siding), `shiplap` (staggered straight-grain boards with butt
+    joints), `stucco` (isotropic sand-float plaster), and `shingle`
+    (staggered roof shingle tabs) join the 11 existing presets in both the JS
+    kernels (`plugins/procedural.ts`) and the native Rust kernels
+    (`compiler/src/material_preset.rs`), byte-identical across Web workers,
+    the CLI / MCP server, Android, and iOS (pinned cross-language parity
+    hashes). They are appended at kernel indices 11–14, so the
+    `ThreeLiveKernels` ABI is unchanged.
+-   **World-meter UVs on `ExtrudeGeometry` (`uvGenerator: 'world'`):** Caps
+    use the shape's `x, y` in meters and side walls use perimeter length and
+    depth, so textures line up with `THREE.Architecture.WallGeometry`
+    (pediments, rakes, custom walls). The default `'bbox'` layout is
+    unchanged.
+
+### Changed
+
+-   **`THREE.DataTexture` resolution:** `DataTexture` now shares
+    `CanvasTexture`'s multi-block stored-DEFLATE PNG encoder (new
+    `png-encode.ts`, published to sandboxed add-ons through the shared
+    registry), so pixels round-trip 1:1 up to 2048 px per axis instead of
+    being downsampled to 64×64, and benefit from the native PNG encoder on
+    Android, iOS, and the CLI. `DataTexture.avgColor` is now averaged in
+    linear space per pixel.
 
 ### Fixed
 
