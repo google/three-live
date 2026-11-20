@@ -368,10 +368,10 @@
 
     @objc private func handleSelect() {
       let center = CGPoint(x: bounds.midX, y: bounds.midY)
-      // The session hit-tests and dispatches the select; the second hit test only names the
-      // entity for the HUD.
-      guard loaded?.live.handleTap(at: center, in: self) == true,
-        let hit = hitTest(center, query: .nearest, mask: .all).first
+      // Name the entity before the session dispatches the select: an `onSelect` behavior can
+      // hide or move it, and a later hit test would then miss it or find what is behind it.
+      guard let hit = hitTest(center, query: .nearest, mask: .all).first,
+        loaded?.live.handleTap(at: center, in: self) == true
       else {
         onSelect?(nil)
         return
