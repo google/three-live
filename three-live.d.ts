@@ -683,6 +683,12 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'explode-scale'?: number | string;
   /** Real-time cross-section clipping plane ("none", "x:0", "y:0.2", "-z:0", "interactive"). */
   'section-plane'?: string;
+  /**
+   * Dollhouse cutaway for meshes with a `userData.xr.cutaway` trait: they hide
+   * while the camera is on their outward side ("auto", default) or always
+   * render ("off"). Toggling needs no recompile.
+   */
+  'cutaway'?: 'auto' | 'off';
   /** Spatial plugin: persist manipulated anchor transforms under an optional storage namespace. */
   'persistent-anchors'?: boolean | string;
   /** Sync persisted anchor transforms into `#xr-state=<base64url>` for zero-backend link sharing. */
@@ -708,6 +714,12 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
     | 'top-down'
     | 'fixed-camera'
     | 'none';
+  /**
+   * xr-live-sim: when the follow camera engages. `on-input` keeps the initial
+   * orbit framing until the first movement or jump input (overrides the
+   * `character.cameraEngage` trait); `immediate` is the default.
+   */
+  'character-camera'?: 'immediate' | 'on-input';
   /** xr-live-sim: character speed override (m/s). */
   'character-speed'?: number | string;
   /** xr-live-sim: character jump velocity override (m/s). */

@@ -1131,6 +1131,26 @@ async function runElementTests() {
     'scriptKits is empty without a kits attribute',
   );
 
+  // `cutaway="off"` toggles dollhouse culling on the viewer without a reload.
+  {
+    let renders = 0;
+    (instance as any).viewer.cutawayEnabled = true;
+    (instance as any).viewer.render = () => renders++;
+    instance.setAttribute('cutaway', 'off');
+    const off = (instance as any).viewer.cutawayEnabled;
+    instance.setAttribute('cutaway', 'auto');
+    const on = (instance as any).viewer.cutawayEnabled;
+    instance.removeAttribute('cutaway');
+    assert(
+      off === false &&
+        on === true &&
+        (instance as any).viewer.cutawayEnabled === true &&
+        renders >= 3 &&
+        ThreeLiveElement.observedAttributes.includes('cutaway'),
+      'cutaway="off" disables and "auto"/removal re-enables viewer.cutawayEnabled',
+    );
+  }
+
   // Test three-context-lost and three-context-restored forwarding from canvas
   const canvasListeners = new Map<string, Function>();
   const mockCanvasForCtx: any = {

@@ -374,7 +374,9 @@ Trait clamping (defaults in parentheses):
 -   **`character`:** `speed` 0.1–20 (4), `runMultiplier` 1–4 (1.6),
     `jumpVelocity` 0–30 (5.5), `gravity` 0–50 (15), `radius` 0.05–5 (0.35),
     `height` ≥ 2 × radius (1.4), `cameraMode` (`third-person`), `cameraDistance`
-    0.5–50 (3.5), `cameraHeight` −10–50 (1.8).
+    0.5–50 (3.5), `cameraHeight` −10–50 (1.8), `cameraEngage` (`immediate`;
+    `on-input` waits for the first movement or jump before the follow camera
+    takes over, e.g. for spawn markers in architectural scenes).
 -   **`agent`:** `mode` (`wander`), `speed` 0.1–20 (2), `turnSpeed` 0.1–50 (6),
     `sightRadius` 0–100 (6), `stopDistance` 0.01–10 (0.6), `separationRadius`
     0–10 (0.8), up to 32 `waypoints`. `chase`, `flee`, and `follow` default

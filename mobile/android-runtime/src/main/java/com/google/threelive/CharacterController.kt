@@ -34,6 +34,8 @@ object CharacterController {
     var grounded = true
     var vy = 0.0
     var clip: String? = null
+    /** False until the first movement / jump input when `cameraEngage` is `on-input`. */
+    var cameraEngaged = false
   }
 
   /** Effective options after host overrides, or `null` when disabled. */
@@ -50,8 +52,15 @@ object CharacterController {
         "third-person" -> mode
         else -> base.cameraMode
       }
+    val engage =
+      when (world.characterCamera?.trim()?.lowercase()) {
+        "on-input" -> "on-input"
+        "immediate" -> "immediate"
+        else -> base.cameraEngage
+      }
     return base.copy(
       cameraMode = camera,
+      cameraEngage = engage,
       speed = XRSpatialMath.clampNum(world.characterSpeed ?: Double.NaN, 0.1, 20.0, base.speed),
       jumpVelocity =
         XRSpatialMath.clampNum(world.characterJump ?: Double.NaN, 0.0, 30.0, base.jumpVelocity),
@@ -97,8 +106,8 @@ object CharacterController {
   )
 
   /**
-   * The camera rig, or `null` when there is no visible character, the camera is `fixed`, or an XR
-   * session drives the camera.
+   * The camera rig, or `null` when there is no visible character, the camera is `fixed`, an XR
+   * session drives the camera, or `cameraEngage` is `on-input` and no input has arrived yet.
    */
   @JvmStatic
   fun cameraRig(world: XRSimWorld): CameraRig? {
@@ -107,6 +116,7 @@ object CharacterController {
     if (b.hidden || world.xrActive) return null
     val opts = resolve(world, b.traits.character ?: return null) ?: return null
     if (opts.cameraMode == "fixed") return null
+    if (opts.cameraEngage == "on-input" && !st.cameraEngaged) return null
     val feet = b.pos[1] + feetOffset(b)
     val mode = opts.cameraMode
     val fp = mode == "first-person"
@@ -237,6 +247,7 @@ object CharacterController {
     val mz = rz * x + fwd[2] * z
     val jump = world.jumpQueued
     world.jumpQueued = false
+    if (!st.cameraEngaged && (Math.hypot(x, z) > 0.05 || jump)) st.cameraEngaged = true
     stepCharacter(world, st, opts, mx, mz, world.sprint, jump, dt)
     val speed = Math.hypot(st.body.vel[0], st.body.vel[2])
     val clip = clipState(speed, opts.speed * opts.runMultiplier, st.grounded)
@@ -251,6 +262,7 @@ object CharacterController {
       it.grounded = true
       it.vy = 0.0
       it.clip = null
+      it.cameraEngaged = false
     }
   }
 }

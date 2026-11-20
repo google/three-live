@@ -823,6 +823,79 @@ interface MeshGpu {
   receiveShadow?: boolean;
 }
 
+/** Cached `cutaway` trait data: local outward normal and local AABB center. */
+interface CutawayCache {
+  readonly n: [number, number, number];
+  readonly c: [number, number, number];
+}
+
+/**
+ * Resolves a mesh's `userData.xr.cutaway` (`[nx, ny, nz]` or `{normal}`) into
+ * a unit local normal plus the local AABB center of its primitives, or `null`.
+ * Mirrors `parseCutaway()` in `xr-trait-schema.ts` without importing it into
+ * the viewer bundle.
+ */
+function resolveCutaway(mesh: MeshGpu): CutawayCache | null {
+  // tslint:disable-next-line:no-any Raw glTF extras / authoring userData.
+  const raw = mesh.extras?.xr?.cutaway ?? (mesh as any).userData?.xr?.cutaway;
+  if (!raw || raw.enabled === false) return null;
+  const v = Array.isArray(raw) ? raw : raw.normal;
+  if (!Array.isArray(v) || v.length < 3) return null;
+  const nx = Number(v[0]);
+  const ny = Number(v[1]);
+  const nz = Number(v[2]);
+  const len = Math.hypot(nx, ny, nz);
+  if (!Number.isFinite(len) || len < 1e-8) return null;
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const prim of mesh.primitives) {
+    const p = prim.positions;
+    if (!p) continue;
+    for (let i = 0; i + 2 < p.length; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        if (p[i + k] < min[k]) min[k] = p[i + k];
+        if (p[i + k] > max[k]) max[k] = p[i + k];
+      }
+    }
+  }
+  const c: [number, number, number] =
+    min[0] <= max[0]
+      ? [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]
+      : [0, 0, 0];
+  return {n: [nx / len, ny / len, nz / len], c};
+}
+
+/** Cached `resolveCutaway()` result (computed once per mesh). */
+function resolveCutawayCached(mesh: MeshGpu): CutawayCache | null {
+  const m = mesh as MeshGpu & {_cutaway?: CutawayCache | null};
+  if (m._cutaway === undefined) m._cutaway = resolveCutaway(mesh);
+  return m._cutaway;
+}
+
+/**
+ * True when `mesh` carries a `cutaway` trait and the eye is on the side its
+ * world-space outward normal points to (`model` is the mesh's world matrix).
+ */
+export function isMeshCutAway(
+  mesh: MeshGpu,
+  model: ArrayLike<number>,
+  eyeX: number,
+  eyeY: number,
+  eyeZ: number,
+): boolean {
+  const cut = resolveCutawayCached(mesh);
+  if (!cut) return false;
+  const [nx, ny, nz] = cut.n;
+  const [cx, cy, cz] = cut.c;
+  const wx = model[0] * nx + model[4] * ny + model[8] * nz;
+  const wy = model[1] * nx + model[5] * ny + model[9] * nz;
+  const wz = model[2] * nx + model[6] * ny + model[10] * nz;
+  const px = model[0] * cx + model[4] * cy + model[8] * cz + model[12];
+  const py = model[1] * cx + model[5] * cy + model[9] * cz + model[13];
+  const pz = model[2] * cx + model[6] * cy + model[10] * cz + model[14];
+  return wx * (eyeX - px) + wy * (eyeY - py) + wz * (eyeZ - pz) > 0;
+}
+
 /**
  * Validates and normalizes a glTF `images[].uri` value before assigning it to
  * `HTMLImageElement.src` (audit finding WEB-09 / P1-1).
@@ -1928,6 +2001,11 @@ export class ThreeView {
 
   // Active camera state
   customTarget: [number, number, number] | null = null;
+  /**
+   * Honors `userData.xr.cutaway` dollhouse culling (`cutaway="off"` on the
+   * element sets this to `false`). Toggling needs no recompile.
+   */
+  cutawayEnabled = true;
   private fov = Math.PI / 4;
   private minTheta = -Infinity;
   private maxTheta = Infinity;
@@ -3345,6 +3423,7 @@ export class ThreeView {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       gl.useProgram(this.pickProg);
+      const pickEye = getOrbitEye(this);
 
       for (let i = 0; i < this.meshes.length; i++) {
         const mesh = this.meshes[i] as any;
@@ -3357,6 +3436,13 @@ export class ThreeView {
         gl.uniform4f(this.uPick.uColorId, r, g, b, 1.0);
 
         mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);
+        // Cut-away walls are invisible, so taps pass through to the rooms.
+        if (
+          this.cutawayEnabled &&
+          isMeshCutAway(mesh, this.modelMatrix, pickEye[0], pickEye[1], pickEye[2])
+        ) {
+          continue;
+        }
         const instMats: Float32Array | undefined = mesh.instanceMatrices;
         if (instMats && instMats.length >= 16) {
           const instCount = instMats.length >> 4;
@@ -4006,6 +4092,7 @@ export class ThreeView {
     const clearPass = !xrOverride || xrOverride.clear !== false;
     if (
       !this.xrSessionActive &&
+      !(this.cutawayEnabled && this.meshes.some((m) => resolveCutawayCached(m))) &&
       reg.gpuSceneAccelerator?.renderScene(
         this,
         vp,
@@ -4104,6 +4191,16 @@ export class ThreeView {
                   ],
             );
           }
+        }
+        // Dollhouse cutaway: hide camera-facing walls from the color pass only
+        // (the shadow pass below still draws them, so exterior light and
+        // shadows are unchanged).
+        if (
+          this.cutawayEnabled &&
+          i >= numBackdrop &&
+          isMeshCutAway(mesh, this.modelMatrix, eyeX, eyeY, eyeZ)
+        ) {
+          continue;
         }
         mat4Multiply(this.mvpMatrix, vp, this.modelMatrix);
         mat3NormalFromMat4(mesh.normalMatrix, this.modelMatrix);

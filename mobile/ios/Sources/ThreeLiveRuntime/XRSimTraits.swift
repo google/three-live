@@ -32,6 +32,9 @@ public struct XRCharacterTrait: Equatable, Sendable {
   public var cameraHeight = 1.8
   /// Clip names keyed by `idle`, `walk`, `run`, `jump`.
   public var clips: [String: String] = [:]
+  /// `"on-input"` leaves the orbit camera alone until the first movement or jump input;
+  /// `"immediate"` (default) follows the character from the first frame.
+  public var cameraEngage = "immediate"
   public init() {}
 }
 
@@ -227,6 +230,7 @@ public struct XRSimTraits: Equatable, Sendable {
     t.cameraMode = oneOf(r["cameraMode"], cameraModes, "third-person")
     t.cameraDistance = num(r["cameraDistance"], 0.5, 50, 3.5)
     t.cameraHeight = num(r["cameraHeight"], -10, 50, 1.8)
+    t.cameraEngage = XRJSON.string(r["cameraEngage"]) == "on-input" ? "on-input" : "immediate"
     return t
   }
 

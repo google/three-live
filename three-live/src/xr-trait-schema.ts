@@ -751,6 +751,31 @@ export function parseExplode(raw: unknown): ExplodeOptions | null {
   };
 }
 
+/**
+ * Normalized `cutaway` trait: the mesh is hidden from the camera (dollhouse
+ * view) while the camera is on the side its outward `normal` points to, so
+ * orbiting a building reveals the rooms behind the nearest walls.
+ */
+export interface CutawayOptions {
+  /** Unit outward normal in the node's local space. */
+  readonly normal: TraitVec3;
+}
+
+/**
+ * Parses a `cutaway` trait (`[nx, ny, nz]` or `{normal: [nx, ny, nz]}`),
+ * returning `null` when disabled or when the normal is missing or zero.
+ */
+export function parseCutaway(raw: unknown): CutawayOptions | null {
+  if (!raw) return null;
+  const r = asRecord(raw);
+  if (r && r['enabled'] === false) return null;
+  const n = isFiniteVec3(raw) ? raw : r?.['normal'];
+  if (!isFiniteVec3(n)) return null;
+  const len = Math.hypot(n[0], n[1], n[2]);
+  if (len < 1e-8) return null;
+  return {normal: [n[0] / len, n[1] / len, n[2] / len]};
+}
+
 /** Identifiers rejected everywhere they could become object keys. */
 export const FORBIDDEN_ANCHOR_IDS: ReadonlySet<string> = new Set([
   '__proto__',
@@ -1201,6 +1226,7 @@ export interface NormalizedXRTraits {
   snapSocket?: SnapSocketOptions;
   gaze?: GazeOptions;
   explode?: ExplodeOptions;
+  cutaway?: CutawayOptions;
   navigable?: NavigableMode;
   text?: TextTraitOptions;
   bloom?: BloomTraitOptions;
@@ -1435,6 +1461,8 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
     r['explode'] ?? r['exploded'] ?? r['disassemble'],
   );
   if (explode) out.explode = explode;
+  const cutaway = parseCutaway(r['cutaway']);
+  if (cutaway) out.cutaway = cutaway;
   const navigable = parseNavigable(
     r['navigable'] ??
       (r['walkable'] !== undefined
@@ -1554,6 +1582,7 @@ export function buildXRSceneCoreExtension(
       direction: n.explode.direction ? [...n.explode.direction] : null,
     };
   }
+  if (n.cutaway) comp['cutaway'] = {normal: [...n.cutaway.normal]};
   if (n.navigable) comp['navigable'] = {mode: n.navigable};
   if (n.text) comp['text3d'] = {...n.text};
   if (n.bloom) comp['bloom'] = {...n.bloom};
@@ -1647,6 +1676,7 @@ export function flattenXRTraitsForUsd(
   if (n.snapSocket) put('snapSocket', n.snapSocket);
   if (n.gaze) put('gaze', n.gaze);
   if (n.explode) put('explode', n.explode);
+  if (n.cutaway) put('cutaway', n.cutaway);
   if (n.navigable) out['navigable'] = n.navigable;
   if (n.text) put('text', n.text);
   if (n.bloom) put('bloom', n.bloom);
@@ -1809,6 +1839,7 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'snapSocket',
   'gaze',
   'explode',
+  'cutaway',
   'navigable',
   'text',
   'bloom',
@@ -2245,7 +2276,7 @@ export function validateXRTraits(
           : `Unknown key '${key}' in userData.xr on node '${nodeName}'.`,
         closest
           ? `Replace '${key}' with '${closest}'.`
-          : 'Supported userData.xr traits include: grab, scale, billboard, follow, anchor, physics, orbit, handles, particles, holdToAsk, audio, dimensions, snapTo, snapSocket, gaze, explode, navigable, text, bloom, outline, ik, character, agent, integrity, zone, spawner, objective, audioCues, collidable.',
+          : 'Supported userData.xr traits include: grab, scale, billboard, follow, anchor, physics, orbit, handles, particles, holdToAsk, audio, dimensions, snapTo, snapSocket, gaze, explode, cutaway, navigable, text, bloom, outline, ik, character, agent, integrity, zone, spawner, objective, audioCues, collidable.',
       );
     }
   }

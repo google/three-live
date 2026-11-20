@@ -128,6 +128,15 @@ data class XRGazeTrait(
   val action: String = "select",
 )
 
+/**
+ * Normalized `cutaway` trait: the node hides from the camera (dollhouse view) while the camera is
+ * on the side its outward [normal] points to.
+ */
+data class XRCutawayTrait(
+  /** Unit outward normal `(x, y, z)` in node-local space. */
+  val normal: List<Double>
+)
+
 /** Normalized `explode` trait (`exploded-view`). */
 data class XRExplodeTrait(
   val enabled: Boolean = true,
@@ -249,6 +258,7 @@ data class XRLiveNodeTraits(
   val snapSocket: XRSnapSocketTrait? = null,
   val gaze: XRGazeTrait? = null,
   val explode: XRExplodeTrait? = null,
+  val cutaway: XRCutawayTrait? = null,
   val anchorPersist: XRAnchorPersistTrait? = null,
   val bloom: XRBloomTrait? = null,
   val outline: XROutlineTrait? = null,
@@ -952,6 +962,18 @@ object XRLiveSceneCoreHelper {
     )
   }
 
+  /** Port of `parseCutaway()`: `[nx, ny, nz]` or `{normal: [nx, ny, nz]}`. */
+  @JvmStatic
+  fun parseCutaway(raw: Any?): XRCutawayTrait? {
+    if (!truthy(raw)) return null
+    val r = MiniJson.asMap(raw)
+    if (r != null && r["enabled"] == false) return null
+    val n = finiteVec3(r?.get("normal") ?: raw) ?: return null
+    val len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2])
+    if (len < 1e-8) return null
+    return XRCutawayTrait(listOf(n[0] / len, n[1] / len, n[2] / len))
+  }
+
   /** Port of `parseExplode()`. */
   @JvmStatic
   fun parseExplode(raw: Any?): XRExplodeTrait? {
@@ -1477,6 +1499,7 @@ object XRLiveSceneCoreHelper {
       snapSocket = parseSnapSocket(xr["snapSocket"] ?: sc["snapSocket"]),
       gaze = parseGaze(xr["gaze"] ?: sc["gaze"]),
       explode = parseExplode(xr["explode"] ?: sc["explode"]),
+      cutaway = parseCutaway(xr["cutaway"] ?: sc["cutaway"]),
       anchorPersist = anchorPersist,
       bloom = parseBloom(xr["bloom"] ?: sc["bloom"]),
       outline = parseOutline(xr["outline"] ?: sc["outline"]),

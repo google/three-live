@@ -33,6 +33,8 @@ public enum CharacterController {
     var grounded = true
     var vy = 0.0
     var clip: String?
+    /// False until the first movement / jump input when `cameraEngage` is `on-input`.
+    var cameraEngaged = false
     init(_ body: XRSimWorld.Body) { self.body = body }
   }
 
@@ -44,6 +46,11 @@ public enum CharacterController {
     switch mode {
     case "fixed-camera", "fixed": t.cameraMode = "fixed"
     case "first-person", "top-down", "third-person": t.cameraMode = mode!
+    default: break
+    }
+    switch world.characterCamera?.trimmingCharacters(in: .whitespaces).lowercased() {
+    case "on-input": t.cameraEngage = "on-input"
+    case "immediate": t.cameraEngage = "immediate"
     default: break
     }
     t.speed = XRJSON.clampNum(world.characterSpeed, 0.1, 20, base.speed)
@@ -81,12 +88,12 @@ public enum CharacterController {
     public let distance: Double
   }
 
-  /// The camera rig, or `nil` when there is no visible character, the camera is `fixed`, or
-  /// an XR session drives the camera.
+  /// The camera rig, or `nil` when there is no visible character, the camera is `fixed`, an
+  /// XR session drives the camera, or `cameraEngage` is `on-input` and no input has arrived yet.
   public static func cameraRig(_ world: XRSimWorld) -> CameraRig? {
     guard let st = world.state[key] as? State, let base = st.body.traits.character,
       !st.body.hidden, !world.xrActive, let opts = resolve(world, base),
-      opts.cameraMode != "fixed"
+      opts.cameraMode != "fixed", opts.cameraEngage != "on-input" || st.cameraEngaged
     else { return nil }
     let b = st.body
     let feet = b.pos.y + feetOffset(b)
@@ -207,6 +214,7 @@ public enum CharacterController {
     let mz = fwd.x * x + fwd.z * z
     let jump = world.jumpQueued
     world.jumpQueued = false
+    if !st.cameraEngaged && ((x * x + z * z).squareRoot() > 0.05 || jump) { st.cameraEngaged = true }
     stepCharacter(world, st, opts, moveX: mx, moveZ: mz, sprint: world.sprint, jump: jump, dt: dt)
     let speed = (st.body.vel.x * st.body.vel.x + st.body.vel.z * st.body.vel.z).squareRoot()
     let clip = clipState(
@@ -222,5 +230,6 @@ public enum CharacterController {
     st.grounded = true
     st.vy = 0
     st.clip = nil
+    st.cameraEngaged = false
   }
 }
