@@ -185,6 +185,13 @@ export interface SharedThreeLiveRegistry {
    */
   sandboxEngineSource?: string | null;
   /**
+   * Explicit IIFE bundle URLs for a-la-carte domain kits requested via the
+   * `kits` attribute (keyed by kit name, e.g. `architecture` or `all`). When a
+   * kit is not listed, its URL is derived next to `sandboxEngineSrc`
+   * (`three-live-kit-<name>.min.js` / `three-live-kits.min.js`).
+   */
+  sandboxKitSrcs?: Record<string, string> | null;
+  /**
    * URL of `three-live-sandbox.html` used when executing procedural scripts in
    * `'iframe'` sandbox mode (`<iframe sandbox="allow-scripts">`).
    */

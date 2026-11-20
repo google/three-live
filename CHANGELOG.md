@@ -22,6 +22,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [Unreleased]
+
+### Added
+
+-   **Domain kits inside the browser sandbox (`kits` attribute):**
+    `<three-live kits="architecture">` (or `kits="all"`, comma- or
+    space-separated) imports the requested a-la-carte kit bundles
+    (`three-live-kit-<name>.min.js` / `three-live-kits.min.js`, derived next to
+    `sandboxEngineSrc`) inside the Worker and opaque-origin iframe sandboxes
+    right after the engine loads, so `THREE.Architecture` and the other kit
+    namespaces are available to sandboxed scene scripts without host-side
+    shims. Kit URLs are allowlisted by the worker's Trusted Types policy, can
+    be overridden with `ThreeLiveElement.sandboxKitSrcs` /
+    `setSandboxKitSrc(name, url)`, and unknown kit names fail closed before a
+    worker is spawned. Kits already loaded on the host page are still
+    forwarded automatically and are not fetched twice.
+-   **`camera-target="auto"` and `ThreeView.clearTarget()`:** Setting
+    `camera-target="auto"` (or removing the attribute) now returns the orbit
+    pivot to the model's bounding-box center instead of keeping the last
+    custom target.
+
+### Fixed
+
+-   **No untextured first frame:** `loadModel()` now waits (up to 1.5 s, via
+    the new `ThreeView.whenTexturesReady()`) for embedded and URI glTF
+    textures to decode and upload before hiding the poster and firing
+    `load` / `three-load`, eliminating the flat base-color flash on textured
+    models.
+-   **Same-origin posters under the default capabilities:** Host-authored
+    `poster` URLs that are clean same-origin relative paths (e.g.
+    `/images/poster.webp`) render without `remote_content` and no longer emit
+    a capability denial. Cross-origin, protocol-relative, traversal, encoded,
+    and opaque-origin cases still require `remote_content`.
+
+--------------------------------------------------------------------------------
+
 ## [1.5.0] - 2026-11-20 (Beta)
 
 ### Changed

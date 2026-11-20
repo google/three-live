@@ -87,7 +87,7 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     their enforced byte budgets:
 
     -   `three-live-viewer.min.js`: `< 35 KB gz`
-    -   `three-live.min.js`: `< 86 KB gz`
+    -   `three-live.min.js`: `< 88 KB gz`
     -   `three-live-studio.min.js`: `< 36 KB gz`
     -   `three-live-cad.min.js`: `< 20 KB gz`
     -   `three-live-kit-mechanical.min.js`: `< 18 KB gz`
@@ -102,9 +102,9 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     -   `three-live-webgpu.min.js`: `< 23 KB gz`
     -   `three-live-tsl.min.js`: `< 19 KB gz`
     -   `three-live-full.min.js`: `< 242 KB gz`
-    -   `three-live-compiler-bundle.min.js`: `< 260 KB gz`
+    -   `three-live-compiler-bundle.min.js`: `< 262 KB gz`
     -   `xr-live-viewer.min.js`: `< 62 KB gz`
-    -   `xr-live.min.js`: `< 98 KB gz`
+    -   `xr-live.min.js`: `< 100 KB gz`
     -   `xr-live-sensors.min.js`: `< 10 KB gz`
     -   `xr-live-spatial.min.js`: `< 65 KB gz`
     -   `xr-live-sim.min.js`: `< 30 KB gz`

@@ -27,6 +27,7 @@ import {
   hasCapabilityInPolicy,
   isNetworkUrlPermitted,
   isNonNetworkUrl,
+  isSameOriginRelativeUrl,
   normalizeCapabilityOrigin,
   parseCapabilities,
   resetCapabilityDenials,
@@ -77,6 +78,7 @@ export {
   hasCapabilityInPolicy,
   isNetworkUrlPermitted,
   isNonNetworkUrl,
+  isSameOriginRelativeUrl,
   normalizeCapabilityOrigin,
   parseCapabilities,
   resetCapabilityDenials,
@@ -153,6 +155,12 @@ export interface ScriptExecutionOptions {
   readonly texturePack?: Readonly<
     Record<string, {readonly size: number; readonly rgba: Uint8Array}>
   > | null;
+  /**
+   * A-la-carte domain kits (`mechanical`, `architecture`, `industrial`,
+   * `science`, `electronics`, or `all`) loaded inside the sandbox before the
+   * scene script runs. Mirrors the `kits` attribute.
+   */
+  readonly kits?: readonly string[];
 }
 
 export interface ScriptRunner {
@@ -281,6 +289,19 @@ export class ThreeLiveElement extends BaseElement {
 
   static set sandboxEngineSource(value: string | null) {
     getSharedRegistry().sandboxEngineSource = value;
+  }
+
+  /**
+   * Optional explicit IIFE bundle URLs for domain kits requested through the
+   * `kits` attribute, keyed by kit name (e.g. `{architecture: '/js/kit.js'}`).
+   * Unlisted kits are derived next to `sandboxEngineSrc`.
+   */
+  static get sandboxKitSrcs(): Readonly<Record<string, string>> | null {
+    return getSharedRegistry().sandboxKitSrcs ?? null;
+  }
+
+  static set sandboxKitSrcs(value: Readonly<Record<string, string>> | null) {
+    getSharedRegistry().sandboxKitSrcs = value ? {...value} : null;
   }
 
   /**
@@ -564,8 +585,16 @@ export class ThreeLiveElement extends BaseElement {
         break;
 
       case 'camera-target': {
+        if (!v) break;
+        const raw = (newVal ?? '').trim().toLowerCase();
+        if (raw === '' || raw === 'auto') {
+          // Removing the attribute (or `camera-target="auto"`) returns the
+          // orbit pivot to the model's bounding-box center.
+          v.clearTarget();
+          break;
+        }
         const t = this.parseCameraTarget(newVal);
-        if (v && t) v.setTarget(t[0], t[1], t[2]);
+        if (t) v.setTarget(t[0], t[1], t[2]);
         break;
       }
 
@@ -1118,6 +1147,12 @@ export class ThreeLiveElement extends BaseElement {
       this.viewer.loadGLBData(glbData, limits);
       this.currentModel = glbData;
       this.currentModelLimits = limits;
+      // Keep the poster up until embedded textures have decoded and uploaded,
+      // so the first visible frame is never the flat untextured base color.
+      await this.viewer.whenTexturesReady?.();
+      current.signal.throwIfAborted();
+      if (!this.viewer) return;
+      this.viewer.render?.();
       this.isModelLoaded = true;
       this.hidePoster();
       this.setSlotVisible('error', false);
@@ -1406,7 +1441,13 @@ export class ThreeLiveElement extends BaseElement {
       }
       return;
     }
-    if (!this.checkCapability('remote_content', 'poster', {url: src})) {
+    // `poster` is host-authored markup, so same-origin relative paths (e.g.
+    // `/images/poster.webp`) render without `remote_content`; cross-origin
+    // URLs still require it.
+    if (
+      !isSameOriginRelativeUrl(src) &&
+      !this.checkCapability('remote_content', 'poster', {url: src})
+    ) {
       return;
     }
 
@@ -1708,6 +1749,21 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   /**
+   * Domain kits requested by the `kits` attribute (comma- or space-separated,
+   * e.g. `kits="architecture"` or `kits="all"`), lowercased and deduplicated.
+   */
+  get scriptKits(): string[] {
+    const raw = this.getAttr('kits');
+    if (!raw) return [];
+    const out: string[] = [];
+    for (const part of raw.split(/[\s,]+/)) {
+      const name = part.trim().toLowerCase();
+      if (name && out.indexOf(name) === -1) out.push(name);
+    }
+    return out;
+  }
+
+  /**
    * Loads and compiles a server-generated Three.js scene script URL directly
    * inside the mandatory sandbox (Use Case 2).
    */
@@ -1732,7 +1788,13 @@ export class ThreeLiveElement extends BaseElement {
         callbacks.onError?.(error);
         return Promise.reject(error);
       }
-      return runner.executeUrl(src, this.sandbox, callbacks);
+      const kits = this.scriptKits;
+      return runner.executeUrl(
+        src,
+        this.sandbox,
+        callbacks,
+        kits.length > 0 ? {kits} : undefined,
+      );
     });
   }
 
@@ -1754,6 +1816,7 @@ export class ThreeLiveElement extends BaseElement {
     return this.runWithScriptRunner((runner, callbacks) =>
       runner.execute(script, this.sandbox, callbacks, {
         allowClientScripts: true,
+        kits: this.scriptKits,
       }),
     );
   }

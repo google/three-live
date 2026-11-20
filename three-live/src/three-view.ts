@@ -1225,6 +1225,8 @@ function buildGpuSceneUnchecked(
   worldMatrices: Float32Array[];
   gpuTextures: Array<WebGLTexture | null>;
   availableVariants: string[];
+  /** Settles once every embedded/URI texture has decoded and uploaded (or failed). */
+  texturesReady: Promise<void>;
 } {
   if (!data || !data.gltf) {
     throw new Error(
@@ -1321,6 +1323,7 @@ function buildGpuSceneUnchecked(
 
   // Load Textures from glTF
   const gpuTextures: (WebGLTexture | null)[] = [];
+  const pendingTextures: Array<Promise<void>> = [];
   track.gpuTextures = gpuTextures;
   if (gltf.textures && gltf.images) {
     if (gltf.textures.length > limits.maxTextures) {
@@ -1378,9 +1381,11 @@ function buildGpuSceneUnchecked(
             type: imgDef.mimeType || 'image/png',
           });
           if (typeof createImageBitmap === 'function') {
-            createImageBitmap(blob)
-              .then(uploadTex)
-              .catch(() => {});
+            pendingTextures.push(
+              createImageBitmap(blob)
+                .then(uploadTex)
+                .catch(() => {}),
+            );
           }
         } else if (imgDef.uri) {
           const safeUri = sanitizeTextureUri(imgDef.uri);
@@ -1397,7 +1402,15 @@ function buildGpuSceneUnchecked(
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.referrerPolicy = 'no-referrer';
-            img.onload = () => uploadTex(img);
+            pendingTextures.push(
+              new Promise<void>((resolve) => {
+                img.onload = () => {
+                  uploadTex(img);
+                  resolve();
+                };
+                img.onerror = () => resolve();
+              }),
+            );
             img.src = safeUri;
           }
         }
@@ -1815,6 +1828,10 @@ function buildGpuSceneUnchecked(
     worldMatrices: nodeWorldMatrices,
     gpuTextures,
     availableVariants,
+    texturesReady:
+      pendingTextures.length > 0
+        ? Promise.allSettled(pendingTextures).then(() => {})
+        : Promise.resolve(),
   };
 }
 
@@ -1907,6 +1924,7 @@ export class ThreeView {
   private customDistance = false;
   private distanceMode: 'auto' | 'relative' | 'absolute' = 'auto';
   private initialCustomTarget: [number, number, number] | null = null;
+  private texturesReady: Promise<void> = Promise.resolve();
 
   // Active camera state
   customTarget: [number, number, number] | null = null;
@@ -2247,6 +2265,7 @@ export class ThreeView {
       worldMatrices,
       gpuTextures,
       availableVariants,
+      texturesReady,
     } = buildGpuScene(
       this.gl,
       glbData,
@@ -2254,6 +2273,7 @@ export class ThreeView {
       () => this.render(),
       this.container,
     );
+    this.texturesReady = texturesReady;
     this.lastGlbData = glbData;
     this.lastLimits = limits;
     this.disposeMeshGpuResources();
@@ -2387,6 +2407,23 @@ export class ThreeView {
    * Loads an optional room/environment GLB backdrop that renders behind/around
    * the foreground `meshes` without altering `bounds` (camera framing) or exports.
    */
+  /**
+   * Resolves once the textures of the most recently loaded model have decoded
+   * and uploaded to the GPU (failed textures count as settled), or after
+   * `timeoutMs`, whichever comes first. Resolves immediately when the model has
+   * no pending textures.
+   */
+  public whenTexturesReady(timeoutMs = 1500): Promise<void> {
+    const ready = this.texturesReady;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, Math.max(0, timeoutMs));
+    });
+    return Promise.race([ready, timeout]).then(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+  }
+
   public setBackdropGLB(
     data: GLBData | ArrayBuffer | ArrayBufferView | null,
     offset?: [number, number, number],
@@ -2854,6 +2891,19 @@ export class ThreeView {
 
   public setTarget(x: number, y: number, z: number): void {
     this.customTarget = [x, y, z];
+    if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
+      this.update(0);
+      this.render();
+    }
+  }
+
+  /**
+   * Clears a custom orbit target set by `setTarget()` (or the
+   * `camera-target` attribute) so the camera orbits `bounds.center` again.
+   */
+  public clearTarget(): void {
+    if (!this.customTarget) return;
+    this.customTarget = null;
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
       this.render();

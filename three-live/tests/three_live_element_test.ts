@@ -19,7 +19,10 @@ import {
 import {environmentMapPlugin} from '../src/plugins/envmap';
 import {hotspotPlugin} from '../src/plugins/hotspots';
 import {authorScriptRunner} from '../src/three-author';
-import {ThreeLiveElement} from '../src/three-live-element';
+import {
+  isSameOriginRelativeUrl,
+  ThreeLiveElement,
+} from '../src/three-live-element';
 import {ThreeView} from '../src/three-view';
 
 ThreeView.registerPlugin(hotspotPlugin);
@@ -1033,9 +1036,99 @@ async function runElementTests() {
       threeErrorDetail.message === 'corrupt GLB',
     'failed loadModel dispatches three-error CustomEvent with { error, message, stage: "load" }',
   );
+
   assert(
     errorSlotEl.hidden === false && errorSlotEl.style.display === '',
     'failed loadModel reveals [slot="error"] child',
+  );
+
+  // The poster stays up and `load` waits until embedded textures upload.
+  {
+    let releaseTextures: () => void = () => {};
+    (instance as any).viewer.loadGLBData = () => {};
+    (instance as any).viewer.whenTexturesReady = () =>
+      new Promise<void>((resolve) => {
+        releaseTextures = resolve;
+      });
+    posterSlotEl.hidden = false;
+    posterSlotEl.style.display = 'block';
+    threeLoadDetail = null;
+    const pendingLoad = instance.loadModel(validMockGlb as any);
+    await new Promise((r) => setTimeout(r, 10));
+    assert(
+      threeLoadDetail === null && posterSlotEl.hidden === false,
+      'loadModel keeps the poster and defers three-load until textures are ready',
+    );
+    releaseTextures();
+    await pendingLoad;
+    assert(
+      threeLoadDetail !== null && posterSlotEl.hidden === true,
+      'loadModel hides the poster and fires three-load once textures upload',
+    );
+    delete (instance as any).viewer.whenTexturesReady;
+  }
+
+  // `camera-target="auto"` (or removing the attribute) clears the pivot.
+  {
+    const targetCalls: string[] = [];
+    (instance as any).viewer.setTarget = (x: number, y: number, z: number) =>
+      targetCalls.push(`set ${x} ${y} ${z}`);
+    (instance as any).viewer.clearTarget = () => targetCalls.push('clear');
+    instance.setAttribute('camera-target', '4m 5m 6m');
+    instance.setAttribute('camera-target', 'auto');
+    instance.setAttribute('camera-target', '1 2 3');
+    instance.removeAttribute('camera-target');
+    assert(
+      JSON.stringify(targetCalls) ===
+        JSON.stringify(['set 4 5 6', 'clear', 'set 1 2 3', 'clear']),
+      'camera-target="auto" and removing camera-target call viewer.clearTarget()',
+    );
+  }
+
+  // Host-authored same-origin relative posters skip `remote_content`.
+  {
+    const gAny = globalThis as Record<string, unknown>;
+    const prevLocation = gAny['location'];
+    gAny['location'] = {
+      origin: 'https://app.example',
+      href: 'https://app.example/studio/index.html',
+    };
+    try {
+      assert(
+        isSameOriginRelativeUrl('/images/posters/house.webp') &&
+          isSameOriginRelativeUrl('posters/house.webp'),
+        'isSameOriginRelativeUrl accepts clean same-origin relative poster paths',
+      );
+      assert(
+        !isSameOriginRelativeUrl('https://evil.example/p.webp') &&
+          !isSameOriginRelativeUrl('//evil.example/p.webp') &&
+          !isSameOriginRelativeUrl('../secret.webp') &&
+          !isSameOriginRelativeUrl('/a/%2e%2e/b.webp') &&
+          !isSameOriginRelativeUrl('javascript:alert(1)') &&
+          !isSameOriginRelativeUrl('/a\\b.webp'),
+        'isSameOriginRelativeUrl rejects cross-origin, protocol-relative, traversal, encoded, and scheme URLs',
+      );
+      gAny['location'] = {origin: 'null', href: 'about:srcdoc'};
+      assert(
+        !isSameOriginRelativeUrl('/images/posters/house.webp'),
+        'isSameOriginRelativeUrl is always false on opaque-origin hosts',
+      );
+    } finally {
+      gAny['location'] = prevLocation;
+    }
+  }
+
+  // `kits` attribute is parsed into normalized domain kit names.
+  instance.setAttribute('kits', 'Architecture, mechanical  architecture');
+  assert(
+    JSON.stringify((instance as any).scriptKits) ===
+      JSON.stringify(['architecture', 'mechanical']),
+    'kits attribute parses into lowercase, deduplicated scriptKits',
+  );
+  instance.removeAttribute('kits');
+  assert(
+    (instance as any).scriptKits.length === 0,
+    'scriptKits is empty without a kits attribute',
   );
 
   // Test three-context-lost and three-context-restored forwarding from canvas

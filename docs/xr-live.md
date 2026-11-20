@@ -64,7 +64,7 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 `<xr-live>` addresses both web and native apps from a single scene definition:
 
 *   **On the web (`<xr-live>`):** Starts with small core bundles (`< 62 KB gz`
-    for `xr-live-viewer.min.js`, or `< 98 KB gz` for `xr-live.min.js` with live
+    for `xr-live-viewer.min.js`, or `< 100 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
     each, or `< 65 KB gz` for all 15 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
@@ -128,7 +128,7 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 ### Register optional plugins for advanced features
 
 When bundling with Vite, Rollup, esbuild, or Webpack, you can pair the
-`<xr-live>` core (`three-live/xr-live` at `< 98 KB gz`, or
+`<xr-live>` core (`three-live/xr-live` at `< 100 KB gz`, or
 `three-live/xr-live-viewer` at `< 62 KB gz`) with only the specific plugins your
 application uses:
 

@@ -466,14 +466,24 @@ export interface ThreeLiveAttributes {
   'ios-src'?: string;
   /** URL or inline script for procedural Three.js scene generation. */
   'script-src'?: string;
-  /** Responsive image preview shown before 3D model finishes hydration. */
+  /**
+   * Responsive image preview shown until the 3D model (including embedded
+   * textures) finishes loading. Same-origin relative paths need no extra
+   * capability; cross-origin URLs require `remote_content`.
+   */
   'poster'?: string;
   /** Uniform or per-axis scale multiplier ("x y z"). */
   'scale'?: string;
   /** Initial camera orbit angles and distance: "theta phi [radius]" (e.g. "0deg 75deg 3m") or JSON string. */
   'camera-orbit'?: string | CameraState;
-  /** Orbit center coordinate "x y z". */
+  /** Orbit center coordinate "x y z", or "auto" (default) for the model's bounding-box center. */
   'camera-target'?: string;
+  /**
+   * A-la-carte domain kits loaded inside the script sandbox before the scene
+   * script runs (comma- or space-separated): "mechanical", "architecture",
+   * "industrial", "science", "electronics", or "all".
+   */
+  'kits'?: string;
   /** Lower bounds for camera orbit ("theta phi radius"). */
   'min-camera-orbit'?: string;
   /** Upper bounds for camera orbit ("theta phi radius"). */

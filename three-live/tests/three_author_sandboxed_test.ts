@@ -20,16 +20,19 @@ import {
   Float32BufferAttribute,
   getAllowClientScripts,
   getSandboxIframeSrc,
+  getSandboxKitSrc,
   isAllowedSandboxEngineUrl,
   Mesh,
   MeshStandardMaterial,
   noopProxy,
+  parseSandboxKits,
   PerspectiveCamera,
   Scene,
   SceneQuotaValidator,
   setAllowClientScripts,
   setSandboxEngineSrc,
   setSandboxIframeSrc,
+  setSandboxKitSrc,
   Texture,
   THREE,
   toTrustedWorkerScriptURL,
@@ -1298,6 +1301,130 @@ async function runSandboxedAuthorTests() {
       urlWorkerPosted.some((m) => m.type === '3D_MODEL_READY') &&
       urlWorkerPosted.some((m) => m.type === 'DONE'),
     'Use Case 2: Worker loads server scriptUrl directly via private nativeImportScripts after scrubbing self.importScripts',
+  );
+
+  // `kits="architecture"`: allowlisted domain kit bundles are imported right
+  // after the engine (before ambient authority is revoked), in order.
+  assert(
+    JSON.stringify(parseSandboxKits('Architecture, mechanical architecture')) ===
+      JSON.stringify(['architecture', 'mechanical']) &&
+      JSON.stringify(parseSandboxKits('science all')) ===
+        JSON.stringify(['all']) &&
+      JSON.stringify(parseSandboxKits(null)) === '[]',
+    'parseSandboxKits lowercases, dedupes, and collapses `all`',
+  );
+  setSandboxEngineSrc('https://cdn.example.com/dist/three-live-full.min.js');
+  assert(
+    getSandboxKitSrc('architecture') ===
+      'https://cdn.example.com/dist/three-live-kit-architecture.min.js' &&
+      getSandboxKitSrc('all') ===
+        'https://cdn.example.com/dist/three-live-kits.min.js' &&
+      getSandboxKitSrc('rocketry') === null,
+    'getSandboxKitSrc derives kit bundle URLs next to the engine bundle',
+  );
+  setSandboxKitSrc('architecture', 'https://kits.example.com/arch.min.js');
+  assert(
+    getSandboxKitSrc('architecture') === 'https://kits.example.com/arch.min.js',
+    'setSandboxKitSrc overrides a derived kit bundle URL',
+  );
+  setSandboxKitSrc('architecture', null);
+  setSandboxEngineSrc(null);
+
+  const kitImports: string[] = [];
+  const kitWorkerPosted: PostedMessage[] = [];
+  const kitWorkerSelf: StubWorkerSelf = {
+    THREE: g['THREE'],
+    importScripts: (u: unknown) => {
+      kitImports.push(String(u));
+    },
+    postMessage: (msg: PostedMessage) => kitWorkerPosted.push(msg),
+    onmessage: null,
+  } as unknown as StubWorkerSelf;
+  const kitUrl = 'https://cdn.example.com/three-live-kit-architecture.min.js';
+  const prevSelfForKits = g['self'];
+  g['self'] = kitWorkerSelf;
+  try {
+    new Function(
+      buildSandboxWorkerSource(
+        'https://cdn.example.com/three-live.min.js',
+        WORKER_NONCE,
+        {kitSrcs: [kitUrl]},
+      ),
+    )();
+  } finally {
+    g['self'] = prevSelfForKits;
+  }
+  assert(
+    kitImports.length === 2 &&
+      kitImports[0] === 'https://cdn.example.com/three-live.min.js' &&
+      kitImports[1] === kitUrl &&
+      kitWorkerPosted.some((m) => m.type === 'READY') &&
+      kitWorkerSelf['importScripts'] === undefined,
+    'Worker imports requested domain kits after the engine, then revokes importScripts',
+  );
+
+  const failingKitPosted: PostedMessage[] = [];
+  const failingKitSelf: StubWorkerSelf = {
+    THREE: g['THREE'],
+    importScripts: (u: unknown) => {
+      if (String(u) === kitUrl) throw new Error('404');
+    },
+    postMessage: (msg: PostedMessage) => failingKitPosted.push(msg),
+    onmessage: null,
+  } as unknown as StubWorkerSelf;
+  g['self'] = failingKitSelf;
+  try {
+    new Function(
+      buildSandboxWorkerSource(
+        'https://cdn.example.com/three-live.min.js',
+        WORKER_NONCE,
+        {kitSrcs: [kitUrl]},
+      ),
+    )();
+  } finally {
+    g['self'] = prevSelfForKits;
+  }
+  const kitError = failingKitPosted.find((m) => m.type === 'ERROR') as
+    | (PostedMessage & {message?: string})
+    | undefined;
+  assert(
+    kitError !== undefined &&
+      String(kitError.message).includes('domain kit') &&
+      !failingKitPosted.some((m) => m.type === 'READY'),
+    'Worker fails closed with a clear error when a domain kit cannot load',
+  );
+
+  let unknownKitError = '';
+  let workerConstructed = false;
+  const prevWorker = g['Worker'];
+  g['Worker'] = class {
+    constructor() {
+      workerConstructed = true;
+    }
+  };
+  setSandboxEngineSrc('https://cdn.example.com/dist/three-live-full.min.js');
+  try {
+    await authorScriptRunner
+      .execute(
+        'scene.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()));',
+        'worker',
+        {
+          onModelReady: () => {},
+          onError: (e: Error) => {
+            unknownKitError = e.message;
+          },
+        },
+        {allowClientScripts: true, kits: ['rocketry']},
+      )
+      .catch(() => {});
+  } finally {
+    g['Worker'] = prevWorker;
+    setSandboxEngineSrc(null);
+  }
+  assert(
+    unknownKitError.includes('Unknown domain kit "rocketry"') &&
+      !workerConstructed,
+    'authorScriptRunner rejects unknown domain kit names before spawning a worker',
   );
 
   console.log(

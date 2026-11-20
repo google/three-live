@@ -3242,6 +3242,76 @@ async function runThreeViewTests() {
     );
   }
 
+  // Orbit target clearing (`camera-target="auto"`) and texture readiness.
+  {
+    const tView = new ThreeView(mockCanvas, mockCanvas, {autoRotate: false});
+    tView.setTarget(1, 2, 3);
+    tView.clearTarget();
+    assert(
+      tView.getTarget() === null,
+      'ThreeView.clearTarget() returns the orbit pivot to bounds.center',
+    );
+
+    const gAny = globalThis as Record<string, unknown>;
+    const prevBitmap = gAny['createImageBitmap'];
+    let releaseBitmap: (v: unknown) => void = () => {};
+    gAny['createImageBitmap'] = () =>
+      new Promise((resolve) => {
+        releaseBitmap = resolve;
+      });
+    try {
+      const texturedGlb = {
+        gltf: {
+          asset: {version: '2.0'},
+          meshes: [],
+          textures: [{source: 0}],
+          images: [{bufferView: 0, mimeType: 'image/png'}],
+          bufferViews: [{buffer: 0, byteOffset: 0, byteLength: 4}],
+        },
+        bin: new ArrayBuffer(4),
+      };
+      tView.loadGLBData(texturedGlb as any);
+      let ready = false;
+      const readyPromise = tView.whenTexturesReady(5000).then(() => {
+        ready = true;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      assert(
+        !ready,
+        'whenTexturesReady() stays pending while an embedded texture is decoding',
+      );
+      releaseBitmap({width: 1, height: 1});
+      await readyPromise;
+      assert(
+        ready,
+        'whenTexturesReady() resolves after embedded textures upload',
+      );
+
+      tView.loadGLBData(texturedGlb as any);
+      const t0 = Date.now();
+      await tView.whenTexturesReady(30);
+      assert(
+        Date.now() - t0 < 1000,
+        'whenTexturesReady(timeoutMs) never blocks longer than its timeout',
+      );
+      releaseBitmap({width: 1, height: 1});
+
+      tView.loadGLBData({
+        gltf: {asset: {version: '2.0'}, meshes: []},
+        bin: new ArrayBuffer(0),
+      } as any);
+      const t1 = Date.now();
+      await tView.whenTexturesReady(5000);
+      assert(
+        Date.now() - t1 < 1000,
+        'whenTexturesReady() resolves immediately for models without textures',
+      );
+    } finally {
+      gAny['createImageBitmap'] = prevBitmap;
+      tView.destroy?.();
+    }
+  }
+
   console.log(
     `\n🏆 three-view Test Results: ${passed} Passed, ${failed} Failed.`,
   );

@@ -29,7 +29,7 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Goal | Element | Recommended Bundle | Enforced Budget |
 | :--- | :--- | :--- | :---: |
 | `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 35 KB gz` |
-| Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 86 KB gz` |
+| Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 88 KB gz` |
 | Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js` | `< 36 KB gz` |
 | Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry`, `PatternInstancer` arrays, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` | `three-live-cad.min.js` | `< 20 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz` |
@@ -44,9 +44,9 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 23 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
 | Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 242 KB gz` |
-| Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 260 KB gz` |
+| Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 262 KB gz` |
 | `.glb` / `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` (no scripting) | `<xr-live>` | `xr-live-viewer.min.js` | `< 62 KB gz` |
-| 6DoF WebXR + `<script type="text/three">` + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 98 KB gz` |
+| 6DoF WebXR + `<script type="text/three">` + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 100 KB gz` |
 | Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP | `<xr-live>` | `xr-live-sensors.min.js` | `< 10 KB gz` |
 | Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins | `<xr-live>` | `xr-live-spatial.min.js` | `< 65 KB gz` |
 | Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` |
@@ -132,7 +132,8 @@ This file provides high-signal context, architectural invariants, and authoring 
         font).
     -   **A La Carte Parametric Domain Kits (`three-live-kits.min.js` or
         `three-live-kit-<domain>.min.js`, built into CLI/MCP; excluded from
-        `*-full.min.js`):** 57 watertight 2-manifold geometries across 5
+        `*-full.min.js`; request them inside the browser sandbox with
+        `kits="architecture"` / `kits="all"` on `<three-live>`):** 57 watertight 2-manifold geometries across 5
         canonical industry namespaces (zero aliases, zero root `THREE.*` leaks):
         -   `THREE.Mechanical` (15): `SpurGearGeometry`, `BevelGearGeometry`,
             `InternalRingGearGeometry`, `RackGeometry`, `PulleyGeometry`
