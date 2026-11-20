@@ -159,7 +159,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "filament"
-      version = "1.5.0"
+      version = "1.5.1"
       afterEvaluate { from(components["release"]) }
 
       pom {

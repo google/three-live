@@ -20,4 +20,4 @@ before_install:
   - THREE_LIVE_PREBUILT_JNI=1 bash scripts/build_android_aar.sh
 
 install:
-  - ./gradlew :mobile:android:publishReleasePublicationToMavenLocal :mobile:android-filament:publishReleasePublicationToMavenLocal :mobile:android-firebase-ai:publishReleasePublicationToMavenLocal :mobile:android-detect-mlkit:publishReleasePublicationToMavenLocal :mobile:android-hands-androidxr:publishReleasePublicationToMavenLocal :mobile:android-hands-mediapipe:publishReleasePublicationToMavenLocal -x test --stacktrace
+  - ./gradlew :mobile:android-runtime:publishReleasePublicationToMavenLocal :mobile:android-kernels:publishReleasePublicationToMavenLocal :mobile:android:publishReleasePublicationToMavenLocal :mobile:android-filament:publishReleasePublicationToMavenLocal :mobile:android-firebase-ai:publishReleasePublicationToMavenLocal :mobile:android-detect-mlkit:publishReleasePublicationToMavenLocal :mobile:android-hands-androidxr:publishReleasePublicationToMavenLocal :mobile:android-hands-mediapipe:publishReleasePublicationToMavenLocal -x test --stacktrace

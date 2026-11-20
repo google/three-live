@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [1.5.1] - 2026-11-20 (Beta)
+
+### Fixed
+
+-   **Android JitPack publishing (`jitpack.yml`):** Added
+    `:mobile:android-runtime:publishReleasePublicationToMavenLocal` and
+    `:mobile:android-kernels:publishReleasePublicationToMavenLocal` to
+    `jitpack.yml` so JitPack publishes all 8 Android modules (`:runtime`,
+    `:kernels`, `:compiler`, `:filament`, `:firebase-ai`, `:detect-mlkit`,
+    `:hands-androidxr`, `:hands-mediapipe`) and rewrites internal
+    `com.google.threelive:runtime` dependencies in `:filament` and the other
+    adapter modules to `com.github.google.three-live:runtime:v1.5.1`.
+
+--------------------------------------------------------------------------------
+
 ## [1.5.0] - 2026-11-20 (Beta)
 
 ### Changed

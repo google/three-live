@@ -1,6 +1,6 @@
 {
   "name": "three-live",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "mcpName": "io.github.google/three-live",
   "description": "Lightweight 3D, WebXR, and procedural Three.js runtime",
   "author": "Google LLC",
