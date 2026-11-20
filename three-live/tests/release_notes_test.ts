@@ -60,8 +60,8 @@ const changelogText = fs.readFileSync(findChangelogPath(), 'utf8');
     'v1.4.0 notes must not leak older [1.3.2] section',
   );
   assert(
-    !notes140.includes('## [Unreleased]'),
-    'v1.4.0 notes must not leak [Unreleased] section',
+    !notes140.includes('## [1.5.0]'),
+    'v1.4.0 notes must not leak newer [1.5.0] section',
   );
   assert(
     !notes140.includes('Single-JS-Engine Host Integration'),
@@ -70,12 +70,12 @@ const changelogText = fs.readFileSync(findChangelogPath(), 'utf8');
   console.log('   [PASS] v1.4.0 extracts isolated 1.4.0 section');
 }
 
-// 2. [Unreleased] covers post-1.4.0 additions without leaking [1.4.0].
+// 2. Exact v1.5.0 extraction covers 1.5.0 additions without leaking [1.4.0].
 {
-  const unreleased = extractReleaseNotes(changelogText, 'Unreleased');
+  const notes150 = extractReleaseNotes(changelogText, 'v1.5.0');
   assert(
-    unreleased.startsWith('## [Unreleased]\n'),
-    'Expected [Unreleased] heading',
+    notes150.startsWith('## [1.5.0] - 2026-11-20 (Beta)\n'),
+    'Expected [1.5.0] heading at start of v1.5.0 notes',
   );
   for (const expected of [
     'Secure-by-default capability-based security',
@@ -86,31 +86,50 @@ const changelogText = fs.readFileSync(findChangelogPath(), 'utf8');
     'PatternInstancer',
     'section-plane',
     'COLOR_0',
+    'BufferGeometry.groups',
+    'three-live/edits',
+    'tvOS 26 RealityKit',
     'TL601',
     'XRLiveRealityKitSession',
   ]) {
     assert(
-      unreleased.includes(expected),
-      `Expected "${expected}" in [Unreleased] section`,
+      notes150.includes(expected),
+      `Expected "${expected}" in [1.5.0] section`,
     );
   }
   assert(
-    !unreleased.includes('## [1.4.0]'),
-    '[Unreleased] extraction must stop before ## [1.4.0]',
+    !notes150.includes('## [1.4.0]'),
+    '[1.5.0] extraction must stop before ## [1.4.0]',
   );
-  console.log('   [PASS] Unreleased section covers post-1.4.0 changes cleanly');
+  console.log('   [PASS] v1.5.0 extracts isolated 1.5.0 section cleanly');
 }
 
 // 3. Unstamped tag falls back to [Unreleased] with rewritten version heading.
 {
-  const fallback = extractReleaseNotes(changelogText, 'v9.9.9-beta.1');
+  const syntheticChangelog = [
+    '## [Unreleased]',
+    '',
+    '### Added',
+    '- Next feature in flight',
+    '',
+    '---',
+    '',
+    '## [1.5.0] - 2026-11-20 (Beta)',
+    '- Shipped',
+    '',
+  ].join('\n');
+  const fallback = extractReleaseNotes(syntheticChangelog, 'v9.9.9-beta.1');
   assert(
     fallback.startsWith('## [9.9.9-beta.1]\n'),
     'Expected [Unreleased] fallback to stamp target version heading',
   );
   assert(
-    fallback.includes('Single-JS-Engine Host Integration'),
+    fallback.includes('Next feature in flight'),
     'Expected [Unreleased] body in fallback notes',
+  );
+  assert(
+    !fallback.includes('## [1.5.0]'),
+    'Fallback must not leak previous release section',
   );
   console.log('   [PASS] Unstamped release tag falls back to [Unreleased]');
 }
