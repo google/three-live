@@ -412,7 +412,7 @@ The following table compares the two runtime tiers across Android, iOS, and Web:
 | **Three.js JIT compiler** | Yes (sandboxed Rust `Boa`/QuickJS VM on Android/iOS/CLI, Web Worker on Web) | Yes (inherits `three-author` JIT compiler plus `userData.xr` spatial traits) |
 | **Android & iOS runtime** | Google Filament (`FilamentHelper`), Apple RealityKit (`RealityKitHelper`), and `.glb`/`.usdz` export | Native Android (`Filament` + Jetpack XR `SceneCore` + `XRLiveRuntimeSession`) and native iOS/visionOS (`RealityKit` + `XRLiveRealityKitSession`) |
 | **Spatial interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`, `audioEmitter`), 15 spatial plugins, 6 `xr-live-sim` simulation plugins, 25-joint hands, and `KHR_interactivity` |
-| **Web bundle budget** | **`< 35 KB gz`** (viewer), **`< 88 KB gz`** (`three-live.min.js`), **`< 242 KB gz`** (`three-live-full.min.js`) | **`< 62 KB gz`** (viewer), **`< 100 KB gz`** (`xr-live.min.js`), **`< 352 KB gz`** (`xr-live-full.min.js`) |
+| **Web bundle budget** | **`< 35 KB gz`** (viewer), **`< 88 KB gz`** (`three-live.min.js`), **`< 244 KB gz`** (`three-live-full.min.js`) | **`< 62 KB gz`** (viewer), **`< 100 KB gz`** (`xr-live.min.js`), **`< 354 KB gz`** (`xr-live-full.min.js`) |
 <!-- mdformat on -->
 
 ### HTML attribute compatibility with `<model-viewer>`
@@ -442,7 +442,7 @@ custom element name when `@google/model-viewer` is not loaded.
 | **Target platforms** | Web Custom Element (`<model-viewer>`). | Native **Android** SDK (`ThreeCompiler` JNI + Google Filament / Jetpack XR), native **iOS / visionOS** SDK (`ThreeCompiler` XCFramework + RealityKit), **Rust CLI / MCP server** (`three-live-cli`), and **Web** Custom Elements (`<three-live>`, `<xr-live>`). |
 | **Post-processing & effects** | Provided via the companion `@google/model-viewer-effects` package (`<effect-composer>`, `<bloom-effect>`, `<outline-effect>`). | Built-in HTML attributes (`bloom`, `bloom-threshold`, `bloom-radius`, `outline`, `outline-selected`, `outline-color`, `tone-mapping`, `shadow-maps`) with no external effect dependencies. |
 | **Interactivity & simulation** | Camera orbit/pan/zoom, animation playback, material variants, hotspots, and scene-graph material API. | Includes the above plus glTF `KHR_interactivity` behavior graphs, declarative `userData.xr` spatial traits (`grab`, `scale`, `anchor`, `snapTo`), and 60 Hz deterministic simulation plugins (`rigid-body`, `character-controller`, `navigation`, `objectives`). |
-| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 35 KB gz` (`three-live-viewer`), `< 88 KB gz` (`three-live`), `< 242 KB gz` (`three-live-full`), `< 352 KB gz` (`xr-live-full`). |
+| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 35 KB gz` (`three-live-viewer`), `< 88 KB gz` (`three-live`), `< 244 KB gz` (`three-live-full`), `< 354 KB gz` (`xr-live-full`). |
 <!-- mdformat on -->
 
 ### Modular plugins across Android, iOS, and Web
@@ -461,7 +461,7 @@ live Three.js scenes:
     `three-live-procedural.min.js` at `< 30 KB gz`,
     `three-live-animation.min.js` at `< 11 KB gz`, `three-live-ai.min.js` at
     `< 35 KB gz`, `three-live-webgpu.min.js` at `< 23 KB gz`, and
-    `three-live-tsl.min.js` at `< 19 KB gz`, or `< 242 KB gz` combined in
+    `three-live-tsl.min.js` at `< 19 KB gz`, or `< 244 KB gz` combined in
     `three-live-full.min.js`) add `KHR_interactivity` behavior graphs, PBR Next
     materials, `KHR_materials_variants`, `EXT_meshopt_compression`, HDRI and
     spherical-harmonics lighting, contact shadows, multi-light depth shadow maps
@@ -617,7 +617,7 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live-edits.min.js`** | **`< 11 KB gz`** | A la carte host add-on (`three-live/edits`, NOT included in `three-live-full`): targeted glTF sub-node replacement, world-space geometric & PBR material constraint grading (`preserveBounds`, `preserveFootprint`, `preserveHeight`, `maxBounds`, `matchMaterialOf`), detached asset compaction with `KHR_interactivity` / `EXT_meshopt_compression` remapping, and preview/accept/reject/undo staging. |
 |  | **`three-live-webgpu.min.js`** | **`< 23 KB gz`** | Opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`): compiles multi-thousand-part CAD and glTF assemblies into pre-recorded render bundles backed by storage buffers, with `depth24plus` 2D-array shadow depth passes + 16-tap Vogel-disk PCF, 1×1-scissor `pickMeshGPU`, Loop-Free TSL `GPURenderBundle` WGSL compilation, and automatic WebGL2 fallback for WebXR, `bloom`/`outline`, transmission, and custom shaders. |
 |  | **`three-live-tsl.min.js`** | **`< 19 KB gz`** | Opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` shader graph compiler (`extras.tsl`): compiles bounded 45-op node materials across WebGL2 GLSL ES 300, WebGPU WGSL `GPURenderBundle`s, and `.usdz` `MaterialX` / `UsdShade` with 60 Hz `setMaterialUniform` updates and `TSL.time` animation. |
-|  | **`three-live-full.min.js`** | **`< 242 KB gz`** | All-in-one 3D engine bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai` + `webgpu` + `tsl`, all 20 engine plugins auto-registered; domain kits are loaded separately via `three-live-kits.min.js`). |
+|  | **`three-live-full.min.js`** | **`< 244 KB gz`** | All-in-one 3D engine bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai` + `webgpu` + `tsl`, all 20 engine plugins auto-registered; domain kits are loaded separately via `three-live-kits.min.js`). |
 |  | **`three-live-compiler-bundle.min.js`** | **`< 262 KB gz`** | Self-contained headless host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall, installSandboxHardening}` + optional `__three_live_host__` v1 native kernel acceleration) for apps embedding their own JS engine (`dist/engine-requirements.json`). |
 | **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 62 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
 |  | **`xr-live.min.js`** | **`< 100 KB gz`** | Standard `<xr-live>` + **`three-author`** (live Three.js compiler) + runtime USDZ and GLB compiler. |
@@ -625,7 +625,7 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`xr-live-spatial.min.js`** | **`< 65 KB gz`** | Add-on plugin bundle registering all 15 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`, `spatial-audio`). |
 |  | **`xr-live-sim.min.js`** | **`< 30 KB gz`** | Add-on simulation plugin bundle registering all six simulation plugins (`character-controller`, `steering-agents`, `rigid-body` + mechanical `joint` constraints, `hit-zones`, `objectives`, `synth-audio`). |
 |  | **`xr-live-webgpu.min.js`** | **`< 13 KB gz`** | Opt-in WebGPU Gaussian Splatting compute and render accelerator (`splat-renderer="auto\|webgpu\|hybrid\|webgl2"`): WGSL 2-pass tiled radix sort, fp16 SH degrees 1–3, `drawIndirect` anisotropic quads, and WebXR / mixed-scene `mapAsync` coprocessor fallback. |
-|  | **`xr-live-full.min.js`** | **`< 352 KB gz`** | All-in-one 3D, XR, simulation, TSL, and WebGPU bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 15 spatial plugins + all 6 simulation plugins + `xr-live-webgpu`). |
+|  | **`xr-live-full.min.js`** | **`< 354 KB gz`** | All-in-one 3D, XR, simulation, TSL, and WebGPU bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 15 spatial plugins + all 6 simulation plugins + `xr-live-webgpu`). |
 <!-- mdformat on -->
 
 ### Safe execution & capability-based security for live, AI-generated Three.js

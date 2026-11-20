@@ -56,6 +56,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     depth, so textures line up with `THREE.Architecture.WallGeometry`
     (pediments, rakes, custom walls). The default `'bbox'` layout is
     unchanged.
+-   **Dollhouse cutaway trait (`userData.xr.cutaway`) on Web, Android, and iOS
+    / visionOS:** `cutaway: { normal: [nx, ny, nz] }` (or `[nx, ny, nz]`) hides
+    a wall from the camera while the camera is on the side its local outward
+    normal points to, so orbiting a building reveals the rooms behind the
+    nearest walls without recompiling the scene. On the web, cut walls skip
+    only the color and pick passes (they keep casting shadows, and taps pass
+    through to the rooms); `XRLiveRuntimeSession` on Android and iOS hides the
+    node each `step`. The new `cutaway="off"` attribute (or
+    `session.cutawayEnabled = false` natively) shows every wall again. The
+    trait serializes to glTF `extras.xr`, `ANDROID_xr_scenecore`, and USD
+    `customData` (`cutawayNormal`).
+-   **Opt-in `character.cameraEngage: 'on-input'`:** The `character-controller`
+    follow camera can wait for the first movement or jump input instead of
+    taking over the initial orbit framing (useful for spawn markers in
+    architectural / CAD scenes). Host override `character-camera="on-input" |
+    "immediate"` on `<xr-live>` and `XRSimWorld.characterCamera` on Android and
+    iOS. The default (`immediate`) is unchanged.
 
 ### Changed
 
@@ -66,6 +83,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     being downsampled to 64×64, and benefit from the native PNG encoder on
     Android, iOS, and the CLI. `DataTexture.avgColor` is now averaged in
     linear space per pixel.
+-   **Bundle budgets:** `three-live.min.js` 86 → 88 KB gz, `xr-live.min.js`
+    98 → 100 KB gz, `three-live-compiler-bundle.min.js` 260 → 262 KB gz,
+    `three-live-full.min.js` 242 → 244 KB gz, and `xr-live-full.min.js`
+    352 → 354 KB gz to fit the sandbox kit loader, texture readiness,
+    architectural presets, and cutaway / camera-engage runtime added in this
+    release.
 
 ### Fixed
 

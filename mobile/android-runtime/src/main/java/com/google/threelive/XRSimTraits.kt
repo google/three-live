@@ -29,6 +29,11 @@ data class XRCharacterTrait(
   val cameraHeight: Double = 1.8,
   /** Clip names keyed by `idle`, `walk`, `run`, `jump`. */
   val clips: Map<String, String> = emptyMap(),
+  /**
+   * `"on-input"` leaves the orbit camera alone until the first movement or jump input;
+   * `"immediate"` (default) follows the character from the first frame.
+   */
+  val cameraEngage: String = "immediate",
 )
 
 /** Normalized `agent` trait (`steering-agents`). */
@@ -318,6 +323,7 @@ data class XRSimTraits(
         cameraDistance = num(r["cameraDistance"], 0.5, 50.0, 3.5),
         cameraHeight = num(r["cameraHeight"], -10.0, 50.0, 1.8),
         clips = clips,
+        cameraEngage = if (r["cameraEngage"] == "on-input") "on-input" else "immediate",
       )
     }
 

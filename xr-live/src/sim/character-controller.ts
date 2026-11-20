@@ -21,12 +21,15 @@
  * relative to the camera heading; the capsule slides along `collidable` nodes,
  * stands on their tops, and falls back to its spawn height as the floor. The
  * orbit camera follows the character unless `cameraMode` is `'fixed'` or an
- * immersive session is presenting. Animation clips switch between `idle`,
+ * immersive session is presenting; with `cameraEngage: 'on-input'` (or
+ * `character-camera="on-input"`) it only starts following after the first
+ * movement or jump input. Animation clips switch between `idle`,
  * `walk`, `run`, and `jump` through the viewer's clip player.
  *
  * Host attributes: `character-controller` (`third-person` | `first-person` |
- * `top-down` | `fixed-camera` | `none`), `character-speed`, `character-jump`,
- * `touch-joystick` (`auto` | `always` | `none`).
+ * `top-down` | `fixed-camera` | `none`), `character-camera` (`immediate` |
+ * `on-input`), `character-speed`, `character-jump`, `touch-joystick` (`auto` |
+ * `always` | `none`).
  */
 
 import type {
@@ -71,6 +74,8 @@ interface CharacterState {
   vy: number;
   clip: CharacterClipState | null;
   cameraMode: CharacterCameraMode | null;
+  /** False until the first movement / jump input when `cameraEngage` is `on-input`. */
+  cameraEngaged: boolean;
 }
 
 const STATE_KEY = 'character-controller';
@@ -91,8 +96,14 @@ export function resolveCharacterOptions(
         ? mode
         : base.cameraMode;
   const joy = world.attr('touch-joystick')?.trim().toLowerCase() ?? 'auto';
+  // `character-camera="on-input" | "immediate"` overrides the trait.
+  const engageAttr = world.attr('character-camera')?.trim().toLowerCase();
+  const onInput =
+    engageAttr === 'on-input' ||
+    (engageAttr !== 'immediate' && base.cameraEngage === 'on-input');
   return {
     ...base,
+    cameraEngage: onInput ? 'on-input' : undefined,
     cameraMode,
     speed: clampNum(world.numAttr('character-speed'), 0.1, 20, base.speed),
     jumpVelocity: clampNum(
@@ -155,6 +166,7 @@ export function characterCameraRig(world: SimWorld): CharacterCameraRig | null {
   if (!st || st.body.hidden || world.xrActive) return null;
   const opts = resolveCharacterOptions(world, st.body.traits.character!);
   if (!opts || opts.cameraMode === 'fixed') return null;
+  if (opts.cameraEngage === 'on-input' && !st.cameraEngaged) return null;
   const b = st.body;
   const feet = b.pos[1] + feetOffset(b);
   const mode = opts.cameraMode;
@@ -324,7 +336,14 @@ export const characterControllerSystem: SimSystem = {
         .find((b) => b.traits.character && b.spawnedFrom === undefined);
       world.character = null;
       if (!body) return;
-      st = {body, grounded: true, vy: 0, clip: null, cameraMode: null};
+      st = {
+        body,
+        grounded: true,
+        vy: 0,
+        clip: null,
+        cameraMode: null,
+        cameraEngaged: false,
+      };
       world.state.set(STATE_KEY, st);
     }
     const opts = resolveCharacterOptions(world, st.body.traits.character!);
@@ -347,6 +366,9 @@ export const characterControllerSystem: SimSystem = {
     ];
     const jump = world.input.jumpQueued;
     world.input.jumpQueued = false;
+    if (!st.cameraEngaged && (Math.hypot(x, z) > 0.05 || jump)) {
+      st.cameraEngaged = true;
+    }
     stepCharacter(world, st, opts, move, world.input.sprint, jump, dt);
     const speed = Math.hypot(st.body.vel[0], st.body.vel[2]);
     const clip = characterClipState(
@@ -371,6 +393,8 @@ export const characterControllerSystem: SimSystem = {
       st.grounded = true;
       st.vy = 0;
       st.clip = null;
+      st.cameraEngaged = false;
+      st.cameraMode = null;
     }
   },
   dispose(world: SimWorld): void {

@@ -148,7 +148,7 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 
 To load all 15 spatial plugins without a bundler, import
 `/dist/xr-live-spatial.min.js` (`< 65 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 352 KB gz`, which also includes `xr-live-sensors`, the 6 `xr-live-sim`
+(`< 354 KB gz`, which also includes `xr-live-sensors`, the 6 `xr-live-sim`
 simulation plugins, and `xr-live-webgpu`). For WebGPU-accelerated 3D Gaussian
 Splatting without the full bundle, add `/dist/xr-live-webgpu.min.js`
 (`< 13 KB gz`).
@@ -234,6 +234,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`snapSocket`** | `string` **or** `{ tag: string, radius?: number, alignRotation?: boolean, highlightColor?: string }` | Marks a node as a magnetic snap target socket with a pulsing proximity highlight ring (`magnetic-snap`). |
 | **`gaze`** | `{ enabled?: boolean, dwellMs?: number, repeat?: boolean, action?: 'select' \| 'ask' } \| true` | Opts a mesh into hands-free eye and head gaze dwell (`dwellMs` in `[250, 10000]`, default `1200`), firing `meshclick` and `KHR_interactivity` (`'select'`) or Gemini Live (`'ask'`). |
 | **`explode`** | `{ enabled?: boolean, direction?: [x,y,z], distance?: number, layer?: number, leaderLine?: boolean } \| boolean` | Configures per-part explosion vector, distance (`0..10m`), staggered `layer` (`1..10`), and dashed leader lines (`exploded-view`); `false` pins a base part in place. |
+| **`cutaway`** | `{ normal: [x,y,z], enabled?: boolean } \| [x,y,z]` | Dollhouse view: the mesh hides from the camera while the camera is on the side its local outward `normal` points to, so orbiting a building reveals the rooms behind the nearest walls (put curbs/baseboards that should stay visible on separate meshes). Web hides walls in the color and pick passes only, so they still cast shadows; Android (`XRLiveRuntimeSession`) and iOS / visionOS (`XRLiveRuntimeSession` → RealityKit) hide the node. `cutaway="off"` on the element (or `session.cutawayEnabled = false` natively) shows every wall without a recompile. |
 | **`navigable`** | `boolean \| 'walkable' \| 'blocked'` | Marks floor and platform meshes as valid (`'walkable'`) or forbidden (`'blocked'`) landing targets for parabolic XR teleportation (`spatial-locomotion`). |
 | **`sync`** | `boolean` | Controls whether user manipulations on a node synchronize across peers in `shared-room` (defaults to `true` on grabbable nodes; set `false` to keep local-only). |
 | **`particles`** | `{ preset: 'rain' \| 'snow' \| 'sparks' \| 'confetti', count?: number, area?: number \| [x,y,z], speed?: number }` | Turns the node into a particle emitter volume (`count` up to `2,000`) that collides with the floor and WebXR depth surfaces. |
@@ -420,7 +421,7 @@ Add these keys to `userData.xr` on any mesh or group:
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Trait | Shape |
 | :---------- | :------------------------------------------------- |
-| `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, clips: { idle, walk, run, jump } }`. Camera modes: `third-person`, `first-person`, `top-down`, `fixed`. |
+| `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, cameraEngage, clips: { idle, walk, run, jump } }`. Camera modes: `third-person`, `first-person`, `top-down`, `fixed`. `cameraEngage: 'on-input'` keeps the initial orbit framing until the first movement or jump input (default `'immediate'`; host override `character-camera="on-input" \| "immediate"`, `characterCamera` natively). |
 | `agent` | A mode string or `{ mode, target, speed, turnSpeed, sightRadius, stopDistance, separationRadius, waypoints, loopWaypoints }`. `target` is a node name or `'user'` (the character, else the viewer). |
 | `rigidBody` / `physics` | `'dynamic' \| 'static' \| 'kinematic' \| true` or `{ body, shape: 'auto' \| 'box' \| 'sphere' \| 'cylinder', mass, restitution, friction, linearDamping, angularDamping, gravityScale, velocity, angularVelocity, lockRotation }`. |
 | `joint` / `constraint` | `'hinge' \| 'slider' \| 'spring' \| 'ball' \| true` or `{ type, target, anchor, axis, limits, stiffness, damping, restLength, motorSpeed, motorMaxForce }`. `target` is another node's `name` or `'world'` (default). |

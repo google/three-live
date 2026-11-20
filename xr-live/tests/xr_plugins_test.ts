@@ -30,10 +30,16 @@ import {
 import {interactivityPlugin} from '../../three-live/src/plugins/interactivity';
 import {THREE} from '../../three-live/src/three-author';
 import {sceneToCanvas3D} from '../../three-live/src/three-convert';
-import {parseGLB, ThreeView} from '../../three-live/src/three-view';
+import {
+  isMeshCutAway,
+  parseGLB,
+  ThreeView,
+} from '../../three-live/src/three-view';
 import {
   buildUsdXRLines,
+  buildXRSceneCoreExtension,
   normalizeXRTraits,
+  parseCutaway,
   registerXRTraitSerializer,
   safeMediaUrl,
   upgradeGltfNodeXR,
@@ -1556,6 +1562,51 @@ function testSchema(): void {
       p2Usd.includes('double3 explodeDirection = (1, 0, 0)') &&
       p2Usd.includes('double explodeLayer = 2'),
     'USD flattening emits gaze and explode entries',
+  );
+
+  // `cutaway` (dollhouse wall culling) normalization, serialization, and test.
+  const cw = normalizeXRTraits({cutaway: {normal: [0, 0, 2]}});
+  assert(
+    JSON.stringify(cw?.cutaway?.normal) === JSON.stringify([0, 0, 1]) &&
+      JSON.stringify(parseCutaway([3, 0, 4])?.normal) ===
+        JSON.stringify([0.6, 0, 0.8]) &&
+      parseCutaway({normal: [0, 0, 0]}) === null &&
+      parseCutaway({normal: [1, 0, 0], enabled: false}) === null &&
+      parseCutaway('front') === null,
+    'cutaway unit-normalizes its outward normal and rejects zero, disabled, and junk input',
+  );
+  const cwSc = buildXRSceneCoreExtension(cw!) as Record<string, unknown> | null;
+  const cwUsd = buildUsdXRLines({cutaway: [1, 0, 0]}, (v) => String(v));
+  assert(
+    JSON.stringify((cwSc?.['cutaway'] as {normal?: number[]})?.normal) ===
+      JSON.stringify([0, 0, 1]) &&
+      cwUsd.includes('double3 cutawayNormal = (1, 0, 0)'),
+    'cutaway serializes to ANDROID_xr_scenecore and USD customData',
+  );
+  // A wall at z = 2 whose outward normal points +Z.
+  const wall = {
+    name: 'FrontWall',
+    nodeIndex: 0,
+    transform: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 2, 1]),
+    normalMatrix: new Float32Array(9),
+    primitives: [{positions: new Float32Array([-1, 0, 0, 1, 2.7, 0])}],
+    extras: {xr: {cutaway: {normal: [0, 0, 1]}}},
+  } as any;
+  const plain = {...wall, name: 'Plain', extras: {}} as any;
+  const ident = wall.transform;
+  assert(
+    isMeshCutAway(wall, ident, 0, 1.5, 8) &&
+      !isMeshCutAway(wall, ident, 0, 1.5, -8) &&
+      !isMeshCutAway(plain, ident, 0, 1.5, 8),
+    'isMeshCutAway hides a wall only while the eye is on its outward side',
+  );
+  // Rotating the wall 180° about Y flips which side is "outside".
+  const rotated = {...wall, _cutaway: undefined} as any;
+  const rot = new Float32Array([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, -2, 1]);
+  assert(
+    isMeshCutAway(rotated, rot, 0, 1.5, -8) &&
+      !isMeshCutAway(rotated, rot, 0, 1.5, 8),
+    'isMeshCutAway applies the mesh world rotation to the outward normal',
   );
 }
 

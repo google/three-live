@@ -251,7 +251,7 @@ export interface ThreeLiveElement {
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
   static readonly observedAttributes =
-    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane'.split(
+    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane cutaway'.split(
       ' ',
     );
 
@@ -714,6 +714,15 @@ export class ThreeLiveElement extends BaseElement {
         v?.render();
         break;
 
+      case 'cutaway':
+        // `cutaway="off"` disables `userData.xr.cutaway` dollhouse culling
+        // without recompiling the scene; any other value (or none) enables it.
+        if (v) {
+          v.cutawayEnabled = this.cutawayEnabled;
+          v.render();
+        }
+        break;
+
       case 'capabilities':
         if (!this._syncingCapsAttr) {
           this.__tlCapsOverride = null;
@@ -944,6 +953,15 @@ export class ThreeLiveElement extends BaseElement {
   }
   set sectionPlane(val: string | null) {
     this.setAttr('section-plane', val);
+  }
+
+  /**
+   * Whether `userData.xr.cutaway` walls hide while they face the camera
+   * (dollhouse view). `cutaway="off"` (or `"false"` / `"none"`) disables it.
+   */
+  get cutawayEnabled(): boolean {
+    const raw = this.getAttr('cutaway')?.trim().toLowerCase();
+    return raw !== 'off' && raw !== 'false' && raw !== 'none';
   }
 
   protected fireEvent(type: string, detail?: unknown): void {
@@ -1405,6 +1423,7 @@ export class ThreeLiveElement extends BaseElement {
     });
 
     this.viewer.setInteractive(this.cameraControls);
+    this.viewer.cutawayEnabled = this.cutawayEnabled;
 
     if (this.skyboxImage) {
       this.viewer.setSkyboxImage(this.skyboxImage).catch(() => {});

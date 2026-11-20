@@ -101,7 +101,7 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     -   `three-live-ai.min.js`: `< 35 KB gz`
     -   `three-live-webgpu.min.js`: `< 23 KB gz`
     -   `three-live-tsl.min.js`: `< 19 KB gz`
-    -   `three-live-full.min.js`: `< 242 KB gz`
+    -   `three-live-full.min.js`: `< 244 KB gz`
     -   `three-live-compiler-bundle.min.js`: `< 262 KB gz`
     -   `xr-live-viewer.min.js`: `< 62 KB gz`
     -   `xr-live.min.js`: `< 100 KB gz`
@@ -109,7 +109,7 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     -   `xr-live-spatial.min.js`: `< 65 KB gz`
     -   `xr-live-sim.min.js`: `< 30 KB gz`
     -   `xr-live-webgpu.min.js`: `< 13 KB gz`
-    -   `xr-live-full.min.js`: `< 352 KB gz`
+    -   `xr-live-full.min.js`: `< 354 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
 
    ```bash

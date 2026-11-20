@@ -92,6 +92,12 @@ export interface CharacterOptions {
   readonly cameraMode: CharacterCameraMode;
   readonly cameraDistance: number;
   readonly cameraHeight: number;
+  /**
+   * `'on-input'` leaves the orbit camera alone until the first movement or
+   * jump input (so a spawn marker in an architectural/CAD scene does not
+   * hijack the initial framing). Omitted means `'immediate'` (default).
+   */
+  readonly cameraEngage?: 'on-input';
   /** glTF animation clip names by state; missing states play nothing. */
   readonly clips: Readonly<Partial<Record<CharacterClipState, string>>>;
 }
@@ -122,6 +128,9 @@ export function parseCharacter(raw: unknown): CharacterOptions | null {
     cameraMode: oneOf(r['cameraMode'], CHARACTER_CAMERA_MODES, 'third-person'),
     cameraDistance: clampNum(r['cameraDistance'], 0.5, 50, 3.5),
     cameraHeight: clampNum(r['cameraHeight'], -10, 50, 1.8),
+    ...(r['cameraEngage'] === 'on-input'
+      ? {cameraEngage: 'on-input' as const}
+      : {}),
     clips,
   };
 }

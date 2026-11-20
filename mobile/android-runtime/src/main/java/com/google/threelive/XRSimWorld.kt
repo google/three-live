@@ -122,6 +122,8 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
 
   /** `character-controller`: `null` keeps the trait's camera mode; `"none"` disables. */
   var characterMode: String? = null
+  /** `character-camera`: `"on-input"` or `"immediate"` overrides the trait's `cameraEngage`. */
+  var characterCamera: String? = null
   var characterSpeed: Double? = null
   var characterJump: Double? = null
   var steeringEnabled: Boolean = true

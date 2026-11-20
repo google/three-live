@@ -411,6 +411,64 @@ function testCharacter() {
   assert(characterClipState(3.5, 4, false) === 'jump', 'clip jump');
 }
 
+function testCharacterCameraEngage() {
+  console.log('\n🎥 character camera engage');
+  const nodes = (engage?: string) => [
+    {
+      name: 'Spawn',
+      translation: [2, 0, 1] as [number, number, number],
+      children: [1],
+      xr: {character: engage ? {cameraEngage: engage} : {}},
+    },
+    {
+      name: 'SpawnMesh',
+      translation: [0, 0.25, 0] as [number, number, number],
+      cube: 0.25,
+    },
+  ];
+  const lazy = makeHarness(nodes('on-input'));
+  lazy.run(0.5);
+  assert(
+    lazy.viewer.customTarget === null && characterCameraRig(lazy.world) === null,
+    "cameraEngage: 'on-input' keeps the initial orbit framing before input",
+  );
+  lazy.key('keydown', 'KeyW');
+  lazy.run(0.1);
+  lazy.key('keyup', 'KeyW');
+  assert(
+    Array.isArray(lazy.viewer.customTarget) &&
+      characterCameraRig(lazy.world) !== null,
+    'the follow camera engages after the first movement input',
+  );
+
+  const attrLazy = makeHarness(nodes(), {'character-camera': 'on-input'});
+  attrLazy.run(0.5);
+  assert(
+    attrLazy.viewer.customTarget === null,
+    'character-camera="on-input" overrides an immediate trait',
+  );
+  attrLazy.key('keydown', 'Space');
+  attrLazy.run(0.1);
+  assert(
+    Array.isArray(attrLazy.viewer.customTarget),
+    'a jump also engages the follow camera',
+  );
+
+  const eager = makeHarness(nodes('on-input'), {'character-camera': 'immediate'});
+  eager.run(0.1);
+  assert(
+    Array.isArray(eager.viewer.customTarget),
+    'character-camera="immediate" overrides an on-input trait',
+  );
+
+  const defaults = makeHarness(nodes());
+  defaults.run(0.1);
+  assert(
+    Array.isArray(defaults.viewer.customTarget),
+    'without cameraEngage the follow camera engages immediately (unchanged default)',
+  );
+}
+
 function testPlatforms() {
   console.log('\n🧱 platforms');
   const h = makeHarness(
@@ -1724,6 +1782,7 @@ function run() {
   testHelpers();
   testWorldBuild();
   testCharacter();
+  testCharacterCameraEngage();
   testPlatforms();
   testAgents();
   testHitZones();

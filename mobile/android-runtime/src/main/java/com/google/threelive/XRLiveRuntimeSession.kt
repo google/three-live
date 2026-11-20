@@ -215,6 +215,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private val ikRestOffsets = HashMap<Int, List<DoubleArray>>()
   private val ikRestRotations = HashMap<String, List<DoubleArray>>()
   private val lodNodes: IntArray
+  private val cutawayNodes: IntArray
+  private val cutawayHidden: BooleanArray
   private val lodChildren = HashMap<Int, IntArray>()
   private val lodActiveLevels = HashMap<Int, Int>()
   private val lodForcedLevels = HashMap<Int, Int>()
@@ -276,6 +278,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     grabbed = BooleanArray(n)
     dirtyTransform = BooleanArray(n)
     dirtyVisibility = BooleanArray(n)
+    cutawayHidden = BooleanArray(n)
     val rawAccessorsForInstancing = MiniJson.asList(root["accessors"]) ?: emptyList()
     for (i in 0 until n) {
       rotation[i * 4 + 3] = 1.0
@@ -452,6 +455,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
     billboards = bb.toIntArray()
     ikNodes = ikList.toIntArray()
     lodNodes = lodList.toIntArray()
+    cutawayNodes =
+      traits.filter { it.cutaway != null && it.nodeIndex in 0 until n }.map { it.nodeIndex }
+        .toIntArray()
 
     // Parse mesh local bounds from POSITION accessors when dynamic physics is present.
     if (dynNodes.isEmpty()) {
@@ -704,6 +710,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
       for (i in lodNodes) {
         stepLod(i, traitByNode[i]?.lod ?: continue, headPose)
       }
+      for (i in cutawayNodes) {
+        stepCutaway(i, traitByNode[i]?.cutaway ?: continue, headPose)
+      }
       if (dynamicBodies.isNotEmpty()) {
         stepPhysics(dt)
       }
@@ -901,7 +910,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     var cur = nodeIndex
     var d = 0
     while (cur in 0 until nodeCount && d < 128) {
-      if (!visible[cur]) return false
+      if (!visible[cur] || cutawayHidden[cur]) return false
       cur = parent[cur]
       d++
     }
@@ -952,6 +961,42 @@ class XRLiveRuntimeSession(gltfJson: String) {
     lodForcedLevels[nodeIndex] = clamped
     applyLodActiveLevel(nodeIndex, ch, clamped)
     flush()
+  }
+
+  /**
+   * Honors `cutaway` traits (dollhouse view). When `false`, every cut-away node is shown again; the
+   * change is applied on the next [step].
+   */
+  var cutawayEnabled: Boolean = true
+
+  /** Returns `true` while [nodeIndex] is hidden from the camera by its `cutaway` trait. */
+  fun isCutAway(nodeIndex: Int): Boolean =
+    nodeIndex in 0 until nodeCount && cutawayHidden[nodeIndex]
+
+  /**
+   * Hides [nodeIndex] from the camera while the camera is on the side its world-space outward
+   * normal points to (port of `isMeshCutAway()` in `three-view.ts`).
+   */
+  private fun stepCutaway(nodeIndex: Int, cutaway: XRCutawayTrait, headPose: XRPose) {
+    var hide = false
+    if (cutawayEnabled) {
+      worldMatrix(nodeIndex, mA)
+      val nx = cutaway.normal[0]
+      val ny = cutaway.normal[1]
+      val nz = cutaway.normal[2]
+      val wx = mA[0] * nx + mA[4] * ny + mA[8] * nz
+      val wy = mA[1] * nx + mA[5] * ny + mA[9] * nz
+      val wz = mA[2] * nx + mA[6] * ny + mA[10] * nz
+      val ex = headPose.position[0] - mA[12]
+      val ey = headPose.position[1] - mA[13]
+      val ez = headPose.position[2] - mA[14]
+      hide = wx * ex + wy * ey + wz * ez > 0.0
+    }
+    if (cutawayHidden[nodeIndex] != hide) {
+      cutawayHidden[nodeIndex] = hide
+      dirtyVisibility[nodeIndex] = true
+      anyDirty = true
+    }
   }
 
   private fun stepLod(nodeIndex: Int, lod: XRLodTrait, headPose: XRPose) {

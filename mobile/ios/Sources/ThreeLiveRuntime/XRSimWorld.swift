@@ -125,6 +125,8 @@ public final class XRSimWorld {
 
   /// `character-controller`: `nil` keeps the trait's camera mode; `"none"` disables.
   public var characterMode: String?
+  /// `character-camera`: `"on-input"` or `"immediate"` overrides the trait's `cameraEngage`.
+  public var characterCamera: String?
   public var characterSpeed: Double?
   public var characterJump: Double?
   public var steeringEnabled = true

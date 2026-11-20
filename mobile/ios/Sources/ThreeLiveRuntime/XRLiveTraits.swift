@@ -542,6 +542,17 @@ public struct XRLiveGaze: Codable, Sendable, Equatable {
   }
 }
 
+/// Normalized `cutaway` options: the node hides from the camera (dollhouse view) while the
+/// camera is on the side its outward `normal` points to.
+public struct XRLiveCutaway: Codable, Sendable, Equatable {
+  /// Unit outward normal in node-local space.
+  public var normal: SIMD3<Float>
+
+  public init(normal: SIMD3<Float>) {
+    self.normal = normal
+  }
+}
+
 /// Normalized `explode` options (`exploded-view`).
 public struct XRLiveExplode: Codable, Sendable, Equatable {
   public var enabled: Bool
@@ -736,6 +747,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var snapSocket: XRLiveSnapSocket?
   public var gaze: XRLiveGaze?
   public var explode: XRLiveExplode?
+  public var cutaway: XRLiveCutaway?
   public var anchorPersist: XRLiveAnchorPersist?
   public var bloom: XRLiveBloom?
   public var outline: XRLiveOutline?
@@ -761,7 +773,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
       && audio == nil && audioEmitter == nil && dimensions == nil && snapTo == nil
       && snapSocket == nil
-      && gaze == nil && explode == nil && anchorPersist == nil && bloom == nil && outline == nil
+      && gaze == nil && explode == nil && cutaway == nil && anchorPersist == nil && bloom == nil
+      && outline == nil
       && ik == nil && lod == nil && navigable == nil && sync == nil && !pointerEventsNone
   }
 }
@@ -1023,6 +1036,19 @@ public enum XRLiveTraitParser {
       repeatDwell: XRJSON.bool(r?["repeat"]) == true,
       action: act
     )
+  }
+
+  /// Parses a `cutaway` trait (`[nx, ny, nz]` or `{normal: [nx, ny, nz]}`), port of
+  /// `parseCutaway()`.
+  public static func parseCutaway(_ raw: Any?) -> XRLiveCutaway? {
+    guard XRJSON.truthy(raw) else { return nil }
+    let r = XRJSON.object(raw)
+    if let r = r, XRJSON.bool(r["enabled"]) == false { return nil }
+    guard let v = XRJSON.finiteVec3(r?["normal"] ?? raw) else { return nil }
+    let len = (v.x * v.x + v.y * v.y + v.z * v.z).squareRoot()
+    guard len >= 1e-8 else { return nil }
+    return XRLiveCutaway(
+      normal: SIMD3<Float>(Float(v.x / len), Float(v.y / len), Float(v.z / len)))
   }
 
   /// Parses an `explode` trait (`true` or an object).
@@ -1473,6 +1499,7 @@ public enum XRLiveTraitParser {
     out.snapSocket = parseSnapSocket(r["snapSocket"])
     out.gaze = parseGaze(r["gaze"])
     out.explode = parseExplode(r["explode"])
+    out.cutaway = parseCutaway(r["cutaway"])
     out.bloom = parseBloom(r["bloom"])
     out.outline = parseOutline(r["outline"])
     out.ik = parseIK(r["ik"])
@@ -1553,6 +1580,11 @@ public enum XRLiveTraitParser {
       r["explode"] = ex
     } else if let ex = d["explode"] {
       r["explode"] = ex
+    }
+    if let cw = gather("cutaway") {
+      r["cutaway"] = cw
+    } else if let cw = d["cutaway"] {
+      r["cutaway"] = cw
     }
     if let bl = gather("bloom") {
       r["bloom"] = bl

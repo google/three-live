@@ -353,6 +353,8 @@ public final class XRLiveRuntimeSession {
 
   private var dirtyTransforms = Set<Int>()
   private var dirtyVisibility = Set<Int>()
+  /// Nodes currently hidden from the camera by their `cutaway` trait.
+  private var cutawayHidden = Set<Int>()
   private var dirtyMaterials = Set<Int>()
   private var hasAnimatedTsl = false
   private var tslElapsedSec: Float = 0
@@ -896,6 +898,32 @@ public final class XRLiveRuntimeSession {
     flush()
   }
 
+  /// Honors `cutaway` traits (dollhouse view). When `false`, every cut-away node is shown
+  /// again on the next `step`.
+  public var cutawayEnabled = true
+
+  /// Whether node `index` is currently hidden from the camera by its `cutaway` trait.
+  public func isCutAway(_ index: Int) -> Bool {
+    cutawayHidden.contains(index)
+  }
+
+  /// Hides node `index` from the camera while the camera is on the side its world-space
+  /// outward normal points to (port of `isMeshCutAway()` in `three-view.ts`).
+  private func stepCutaway(_ index: Int, _ cutaway: XRLiveCutaway, headPose: XRPose?) {
+    var hide = false
+    if cutawayEnabled, let head = headPose {
+      let m = worldMatrix(of: index)
+      let n = cutaway.normal
+      let w = m * SIMD4<Float>(n.x, n.y, n.z, 0)
+      let p = SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+      hide = simd_dot(SIMD3<Float>(w.x, w.y, w.z), head.position - p) > 0
+    }
+    if hide != cutawayHidden.contains(index) {
+      if hide { cutawayHidden.insert(index) } else { cutawayHidden.remove(index) }
+      dirtyVisibility.insert(index)
+    }
+  }
+
   private func stepLod(_ index: Int, lod: XRLiveLod, headPose: XRPose?) {
     guard let ch = lodChildren[index], !ch.isEmpty else { return }
     let nextIdx: Int
@@ -1088,7 +1116,7 @@ public final class XRLiveRuntimeSession {
     var cur: Int? = index
     var depth = 0
     while let c = cur, c >= 0, c < nodes.count, depth < 128 {
-      if !nodes[c].visible { return false }
+      if !nodes[c].visible || cutawayHidden.contains(c) { return false }
       cur = parentOf[c]
       depth += 1
     }
@@ -2296,6 +2324,9 @@ public final class XRLiveRuntimeSession {
       if let lod = traits.lod {
         stepLod(i, lod: lod, headPose: headPose)
       }
+      if let cutaway = traits.cutaway {
+        stepCutaway(i, cutaway, headPose: headPose)
+      }
     }
     stepPhysics(dt: stepDt)
   }
@@ -3017,7 +3048,7 @@ public final class XRLiveRuntimeSession {
       d.nodeTransformChanged(i, transform: Self.transform(of: nodes[i]))
     }
     for i in visibility where i < nodes.count {
-      d.visibilityChanged(i, visible: nodes[i].visible)
+      d.visibilityChanged(i, visible: nodes[i].visible && !cutawayHidden.contains(i))
     }
     for i in mats where i < materials.count {
       d.materialChanged(i, material: Self.publicMaterial(materials[i]))
