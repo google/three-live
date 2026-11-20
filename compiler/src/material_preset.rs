@@ -25,7 +25,7 @@ use boa_engine::object::builtins::JsArray;
 use boa_engine::{js_string, Context, JsResult, JsValue, NativeFunction};
 
 /// Preset names in kernel-index order (shared with the JS side).
-pub const MATERIAL_PRESETS: [&str; 11] = [
+pub const MATERIAL_PRESETS: [&str; 15] = [
     "checkerboard",
     "grid",
     "wood",
@@ -37,6 +37,10 @@ pub const MATERIAL_PRESETS: [&str; 11] = [
     "fabric",
     "leather",
     "rust",
+    "clapboard",
+    "shiplap",
+    "stucco",
+    "shingle",
 ];
 
 /// Canonicalized kernel parameters (validated and clamped by the JS caller).
@@ -335,6 +339,79 @@ fn shade(p: &PresetParams, u: f64, v: f64, xi: i64, yi: i64) -> [f64; 6] {
                 0.0,
             ]
         }
+        // clapboard
+        11 => {
+            let gv = v * sf;
+            let row = gv.floor() as i64;
+            let fv = gv - gv.floor();
+            let lap = smooth(0.0, 0.08, fv);
+            let grain = fbm(u, v, 3, s * 24, 2, seed.wrapping_add(7));
+            let tone = rnd(0, row.rem_euclid(s), seed.wrapping_add(11));
+            let m = (0.78 + 0.22 * lap) * (0.94 + 0.12 * (grain - 0.5)) * (0.97 + 0.06 * tone);
+            let col = k(m);
+            [col[0], col[1], col[2], 0.2 + 0.7 * fv, rough + 0.1 * (1.0 - lap), 0.0]
+        }
+        // shiplap
+        12 => {
+            let gv = v * sf;
+            let row = gv.floor() as i64;
+            let fv = gv - gv.floor();
+            let bu = u * 2.0 + rnd(0, row.rem_euclid(s), seed.wrapping_add(11));
+            let bi = bu.floor() as i64;
+            let fu = bu - bu.floor();
+            let d = (fu.min(1.0 - fu) * 0.5 * sf).min(fv.min(1.0 - fv));
+            let gw = 0.04f64.max(1.5 * sf / p.size as f64);
+            let gap = 1.0 - smooth(gw * 0.5, gw, d);
+            let var = rnd(bi.rem_euclid(2), row.rem_euclid(s), seed);
+            let grain = fbm(u, v, 4, s * 24, 2, seed.wrapping_add(7));
+            let bm = 0.8 + 0.25 * var + 0.12 * (grain - 0.5);
+            [
+                mix(c[0] * bm, c2[0], gap),
+                mix(c[1] * bm, c2[1], gap),
+                mix(c[2] * bm, c2[2], gap),
+                (1.0 - gap) * (0.7 + 0.1 * grain) + gap * 0.15,
+                mix(rough, 0.95, gap),
+                0.0,
+            ]
+        }
+        // stucco
+        13 => {
+            let n = fbm(u, v, s, s, 5, seed);
+            let sp = rnd(xi, yi, seed.wrapping_add(31));
+            let trowel = fbm(u, v, s * 8, s * 8, 2, seed.wrapping_add(13));
+            let col = k(0.9 + 0.14 * (n - 0.5) + 0.05 * (sp - 0.5));
+            [
+                col[0],
+                col[1],
+                col[2],
+                0.5 + 0.3 * (trowel - 0.5) + 0.12 * (sp - 0.5),
+                rough + 0.05 * (trowel - 0.5),
+                0.0,
+            ]
+        }
+        // shingle
+        14 => {
+            let half = s / 2;
+            let gv = v * sf;
+            let row = gv.floor() as i64;
+            let fv = gv - gv.floor();
+            let off = if row.rem_euclid(2) == 1 { 0.5 } else { 0.0 };
+            let bu = u * half as f64 + off;
+            let bi = bu.floor() as i64;
+            let fu = bu - bu.floor();
+            let gap = 1.0 - smooth(0.02, 0.05, fu.min(1.0 - fu));
+            let var = rnd(bi.rem_euclid(half), row.rem_euclid(s), seed);
+            let grit = fbm(u, v, s * 8, s * 8, 2, seed.wrapping_add(5));
+            let bm = (0.8 + 0.3 * var + 0.1 * (grit - 0.5)) * (1.0 - 0.35 * smooth(0.85, 1.0, fv));
+            [
+                mix(c[0] * bm, c2[0], gap),
+                mix(c[1] * bm, c2[1], gap),
+                mix(c[2] * bm, c2[2], gap),
+                (1.0 - gap) * (0.25 + 0.6 * fv) + gap * 0.1,
+                mix(rough, 0.95, gap),
+                0.0,
+            ]
+        }
         // rust
         _ => {
             let n = fbm(u, v, s, s, 5, seed);
@@ -562,7 +639,7 @@ mod tests {
 /// `three-live/tests/three_procedural_test.ts` assert the same constants, proving the Web
 /// worker and Boa outputs are byte-identical.
 #[cfg(test)]
-pub(crate) const PARITY_HASHES: [[u32; 3]; 11] = [
+pub(crate) const PARITY_HASHES: [[u32; 3]; 15] = [
     [1790197189, 3455663557, 2500509125],
     [1478526405, 1444740549, 2500509125],
     [1443984829, 2558384049, 135696830],
@@ -574,6 +651,10 @@ pub(crate) const PARITY_HASHES: [[u32; 3]; 11] = [
     [2095234875, 3455663557, 2500509125],
     [716167143, 2720860795, 1956285490],
     [1433902205, 225922196, 1140331227],
+    [2879227610, 86556101, 3183034821],
+    [2228436477, 3962713919, 1688941221],
+    [2992030057, 328505037, 1497047177],
+    [99483332, 3581188677, 3709900229],
 ];
 
 #[cfg(test)]
@@ -581,7 +662,7 @@ mod parity {
     use super::*;
     #[test]
     fn native_kernels_match_pinned_cross_language_hashes() {
-        for kind in 0..11u32 {
+        for kind in 0..MATERIAL_PRESETS.len() as u32 {
             let m = generate_material_preset(&parity_params(kind));
             let got = [fnv1a32(&m.albedo), fnv1a32(&m.normal), fnv1a32(&m.orm)];
             assert_eq!(got, PARITY_HASHES[kind as usize], "{}", MATERIAL_PRESETS[kind as usize]);
@@ -596,7 +677,7 @@ pub(crate) fn parity_params(kind: u32) -> PresetParams {
     PresetParams {
         kind,
         size: 64,
-        scale: [8, 8, 10, 3, 1, 8, 4, 8, 32, 12, 4][kind as usize],
+        scale: [8, 8, 10, 3, 1, 8, 4, 8, 32, 12, 4, 8, 8, 4, 8][kind as usize],
         seed: 7,
         color: [153.0 / 255.0, 102.0 / 255.0, 51.0 / 255.0],
         color2: [217.0 / 255.0, 217.0 / 255.0, 204.0 / 255.0],

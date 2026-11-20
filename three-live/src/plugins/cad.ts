@@ -57,6 +57,13 @@ export interface ExtrudeGeometryOptions {
   caps?: boolean;
   /** Optional reference up vector for the Bishop frame when `extrudePath` is set. */
   up?: {x: number; y: number; z: number} | [number, number, number];
+  /**
+   * UV layout for straight extrusions: `'bbox'` (default) normalizes cap UVs
+   * to the shape's bounding box and side UVs to `[0, 1]`; `'world'` emits
+   * 1:1 world-meter UVs (caps use shape `x, y`, sides use perimeter length and
+   * depth) so textures line up with `THREE.Architecture.WallGeometry`.
+   */
+  uvGenerator?: 'bbox' | 'world';
 }
 
 /**
@@ -2648,6 +2655,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const bevelSegments = bevelEnabled
         ? Math.max(1, Math.min(8, Math.floor(num(options.bevelSegments, 2))))
         : 0;
+      const worldUv = options.uvGenerator === 'world';
 
       const positions: number[] = [];
       const normals: number[] = [];
@@ -2701,7 +2709,8 @@ export function installCadExtension(threeNs: any, reg?: any): any {
             const vy = v.y + n2.y * bevelOffset;
             positions.push(vx, vy, zCap);
             normals.push(0, 0, nz);
-            uvs.push((vx - minX) / spanX, (vy - minY) / spanY);
+            if (worldUv) uvs.push(vx, vy);
+            else uvs.push((vx - minX) / spanX, (vy - minY) / spanY);
           }
           for (const [a, b, c] of capTris) {
             indices.push(
@@ -2754,6 +2763,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         let globalRingOffset = 0;
         for (const ring of allRings) {
           const rLen = ring.length;
+          // Cumulative perimeter length (meters) for `uvGenerator: 'world'`.
+          const perim: number[] = [0];
+          for (let i = 1; i <= rLen; i++) {
+            const a = ring[i - 1];
+            const b = ring[i % rLen];
+            perim.push(perim[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+          }
           for (let l = 0; l < layers.length - 1; l++) {
             const l0 = layers[l];
             const l1 = layers[l + 1];
@@ -2802,10 +2818,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
                 l1.z,
               );
               normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz);
-              const u0 = i / rLen;
-              const u1 = (i + 1) / rLen;
-              const v0uv = l / (layers.length - 1);
-              const v1uv = (l + 1) / (layers.length - 1);
+              const u0 = worldUv ? perim[i] : i / rLen;
+              const u1 = worldUv ? perim[i + 1] : (i + 1) / rLen;
+              const v0uv = worldUv ? l0.z : l / (layers.length - 1);
+              const v1uv = worldUv ? l1.z : (l + 1) / (layers.length - 1);
               uvs.push(u0, v0uv, u1, v0uv, u1, v1uv, u0, v1uv);
               indices.push(
                 quadBase,

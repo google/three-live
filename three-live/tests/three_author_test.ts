@@ -2526,6 +2526,88 @@ function runCadRegressionTests(
         !usdzText.includes('diffuseColor = (1.0, 1.0, 1.0)'),
       'scene.toUSDZ() tints untextured USDA diffuseColor using DataTexture avgColor',
     );
+
+    // Resolution: DataTexture shares CanvasTexture's multi-block encoder, so
+    // pixels round-trip 1:1 up to 2048 px (previously capped at 64x64).
+    const pngSize = (uri: string): [number, number] => {
+      const bin = atob(uri.slice(uri.indexOf(',') + 1));
+      const u32 = (o: number) =>
+        ((bin.charCodeAt(o) << 24) |
+          (bin.charCodeAt(o + 1) << 16) |
+          (bin.charCodeAt(o + 2) << 8) |
+          bin.charCodeAt(o + 3)) >>>
+        0;
+      return [u32(16), u32(20)];
+    };
+    const big = new Uint8Array(256 * 128 * 4).fill(200);
+    const bigTex = new THREE.DataTexture(big, 256, 128, THREE.RGBAFormat);
+    assert(
+      JSON.stringify(pngSize(bigTex.source)) === JSON.stringify([256, 128]),
+      'THREE.DataTexture bakes 256x128 pixels 1:1 (no 64x64 downsample)',
+    );
+    const wide = new Uint8Array(2048 * 4 * 4).fill(90);
+    const wideTex = new THREE.DataTexture(wide, 2048, 4, THREE.RGBAFormat);
+    const [hw, hh] = pngSize(wideTex.source);
+    const huge = new THREE.DataTexture(
+      new Uint8Array(4096 * 2 * 4),
+      4096,
+      2,
+      THREE.RGBAFormat,
+    );
+    assert(
+      hw === 2048 &&
+        hh === 4 &&
+        Math.abs(wideTex.avgColor[3] - 90 / 255) < 1e-6 &&
+        huge.source === '',
+      'THREE.DataTexture keeps 2048 px textures 1:1 and still rejects sources above SECURITY_3D_MAX_TEXTURE_DIMENSION',
+    );
+    const lum = new THREE.DataTexture(
+      new Uint8Array([0, 255, 255, 0]),
+      2,
+      2,
+      THREE.RedFormat,
+    );
+    assert(
+      lum.source.startsWith('data:image/png;base64,') &&
+        JSON.stringify(pngSize(lum.source)) === JSON.stringify([2, 2]) &&
+        Math.abs(lum.avgColor[0] - 0.5) < 0.01,
+      'THREE.DataTexture expands single-channel data before encoding',
+    );
+  }
+
+  // ExtrudeGeometry `uvGenerator: 'world'` emits 1:1 world-meter UVs.
+  {
+    const rect = new THREE.Shape();
+    rect.moveTo(0, 0);
+    rect.lineTo(2, 0);
+    rect.lineTo(2, 1);
+    rect.lineTo(0, 1);
+    rect.lineTo(0, 0);
+    const uvRange = (geo: any): number[] => {
+      const uv = geo.getAttribute('uv').array as ArrayLike<number>;
+      let maxU = -Infinity;
+      let maxV = -Infinity;
+      for (let i = 0; i < uv.length; i += 2) {
+        maxU = Math.max(maxU, uv[i]);
+        maxV = Math.max(maxV, uv[i + 1]);
+      }
+      return [maxU, maxV];
+    };
+    const worldGeo = new THREE.ExtrudeGeometry(rect, {
+      depth: 0.25,
+      uvGenerator: 'world',
+    });
+    const bboxGeo = new THREE.ExtrudeGeometry(rect, {depth: 0.25});
+    const [wu, wv] = uvRange(worldGeo);
+    const [bu, bv] = uvRange(bboxGeo);
+    assert(
+      Math.abs(wu - 6) < 1e-6 && Math.abs(wv - 1) < 1e-6,
+      "ExtrudeGeometry uvGenerator: 'world' emits meter UVs (caps up to shape size, sides up to the 6 m perimeter)",
+    );
+    assert(
+      Math.abs(bu - 1) < 1e-6 && Math.abs(bv - 1) < 1e-6,
+      'ExtrudeGeometry keeps normalized [0, 1] UVs by default',
+    );
   }
 
   // Coverage: Partial-arc SphereGeometry and openEnded / partial-arc CylinderGeometry & ConeGeometry.

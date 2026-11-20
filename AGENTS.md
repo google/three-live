@@ -117,7 +117,9 @@ This file provides high-signal context, architectural invariants, and authoring 
     -   **2D Shapes, 3D Sweeps, Helices & Lofts:** `new THREE.Shape()`,
         `shape.moveTo/lineTo/quadraticCurveTo/bezierCurveTo/absarc()`,
         `shape.holes.push(holePath)`, `new THREE.ExtrudeGeometry(shape, { depth,
-        bevelEnabled, bevelThickness, bevelSize, bevelSegments, extrudePath })`,
+        bevelEnabled, bevelThickness, bevelSize, bevelSegments, extrudePath,
+        uvGenerator: 'world' })` (`'world'` = 1:1 meter UVs matching
+        `THREE.Architecture.WallGeometry`; default `'bbox'`),
         `new THREE.SweepGeometry(shape, pathOrOptions)`,
         `new THREE.HelixGeometry({ radius, height, turns, wireRadius, shape })`,
         `new THREE.LoftGeometry(stations, { steps, interpolation, path, openTop,

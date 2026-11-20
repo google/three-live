@@ -42,9 +42,12 @@ import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
 import {installLodExtension} from './plugins/lod';
 import {installProceduralExtension} from './plugins/procedural';
+import {
+  encodeRgbaToPngDataUri,
+  PNG_MAX_TEXTURE_DIM,
+} from './png-encode';
 import {makePngDeflater, PngDeflater} from './png-deflate';
 import {
-  calculateCRC32,
   generateUSDZ,
   glbToUSDZ,
   sceneToCanvas3D,
@@ -1996,9 +1999,6 @@ export class TubeGeometry extends BufferGeometry {
 // 4. Materials & Textures
 // =========================================================================
 
-const B64_CHARS =
-  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
 export class Texture {
   public source: string | any;
   public isTexture: boolean = true;
@@ -2036,8 +2036,9 @@ export class Texture {
  * Encodes raw pixel buffers (`Uint8Array`, `Uint8ClampedArray`, `Float32Array`,
  * or numeric arrays in `RGBAFormat`, `RGBFormat`, `RGFormat`/`LuminanceAlphaFormat`,
  * or `RedFormat`/`LuminanceFormat`/`AlphaFormat`) into an inline stored-DEFLATE
- * `data:image/png;base64,...` URI and computes linear `avgColor` for fallback
- * tinting on untextured targets.
+ * `data:image/png;base64,...` URI (via the encoder shared with
+ * `THREE.CanvasTexture`, 1:1 up to 2048 px per axis) and computes linear
+ * `avgColor` for fallback tinting on untextured targets.
  */
 export class DataTexture extends Texture {
   public readonly isDataTexture: boolean = true;
@@ -2126,8 +2127,6 @@ export class DataTexture extends Texture {
       this.type === 1016 ||
       buf instanceof Float32Array ||
       buf instanceof Float64Array;
-    const dstW = Math.min(srcW, 64);
-    const dstH = Math.min(srcH, 64);
     let sig = (this.flipY ? 257 : 1) ^ this.colorSpace.length ^ buf.length;
     const step = Math.max(1, (buf.length >> 6) | 0);
     for (let i = 0; i < buf.length; i += step) {
@@ -2135,105 +2134,40 @@ export class DataTexture extends Texture {
     }
     if (sig === this._sig && this.source) return;
     this._sig = sig;
-    const rawLen = dstH * (1 + dstW * 4);
-    const png = new Uint8Array(68 + rawLen);
-    const dv = new DataView(png.buffer);
-    dv.setUint32(0, 0x89504e47);
-    dv.setUint32(4, 0x0d0a1a0a);
-    dv.setUint32(8, 13);
-    dv.setUint32(12, 0x49484452); // IHDR
-    dv.setUint32(16, dstW);
-    dv.setUint32(20, dstH);
-    png[24] = 8;
-    png[25] = 6;
-    dv.setUint32(29, calculateCRC32(png.subarray(12, 29)));
-    dv.setUint32(33, rawLen + 11);
-    dv.setUint32(37, 0x49444154); // IDAT
-    png[41] = 0x78;
-    png[42] = 0x01;
-    png[43] = 0x01;
-    dv.setUint16(44, rawLen, true);
-    dv.setUint16(46, ~rawLen & 0xffff, true);
-
-    let p = 48;
-    let s1 = 1;
-    let s2 = 0;
-    let sr = 0;
-    let sg = 0;
-    let sb = 0;
-    let sa = 0;
     const toByte = (v: number): number => {
       if (!Number.isFinite(v)) return 0;
       const x = isFloat && v <= 1 ? v * 255 : v;
       return x > 0 ? (x < 255 ? (x + 0.5) | 0 : 255) : 0;
     };
-    for (let y = 0; y < dstH; y++) {
-      const row = ((y * srcH) / dstH) | 0;
-      const sy = this.flipY ? srcH - 1 - row : row;
-      png[p++] = 0;
-      s2 += s1;
-      for (let x = 0; x < dstW; x++) {
-        const i = (sy * srcW + (((x * srcW) / dstW) | 0)) * ch;
-        const r = f === 1021 ? 255 : toByte(buf[i] ?? 0);
-        const g =
-          ch >= 3
-            ? toByte(buf[i + 1] ?? 0)
-            : f === 1030
-              ? toByte(buf[i + 1] ?? 0)
-              : r;
-        const b = ch >= 3 ? toByte(buf[i + 2] ?? 0) : f === 1030 ? 0 : r;
-        const a =
-          ch === 4
-            ? toByte(buf[i + 3] ?? 255)
-            : f === 1021
-              ? toByte(buf[i] ?? 255)
-              : f === 1025
-                ? toByte(buf[i + 1] ?? 255)
-                : 255;
-        png[p++] = r;
-        s1 += r;
-        s2 += s1;
-        png[p++] = g;
-        s1 += g;
-        s2 += s1;
-        png[p++] = b;
-        s1 += b;
-        s2 += s1;
-        png[p++] = a;
-        s1 += a;
-        s2 += s1;
-        sr += r;
-        sg += g;
-        sb += b;
-        sa += a;
-      }
-      s1 %= 65521;
-      s2 %= 65521;
+    // Expand the source format to RGBA8, then share CanvasTexture's
+    // multi-block PNG encoder (1:1 up to 2048 px, box-filtered above).
+    const rgba = new Uint8Array(nPx * 4);
+    for (let px = 0, o = 0; px < nPx; px++, o += 4) {
+      const i = px * ch;
+      const r = f === 1021 ? 255 : toByte(buf[i] ?? 0);
+      rgba[o] = r;
+      rgba[o + 1] =
+        ch >= 3 || f === 1030 ? toByte(buf[i + 1] ?? 0) : r;
+      rgba[o + 2] = ch >= 3 ? toByte(buf[i + 2] ?? 0) : f === 1030 ? 0 : r;
+      rgba[o + 3] =
+        ch === 4
+          ? toByte(buf[i + 3] ?? 255)
+          : f === 1021
+            ? toByte(buf[i] ?? 255)
+            : f === 1025
+              ? toByte(buf[i + 1] ?? 255)
+              : 255;
     }
-    dv.setUint32(p, ((s2 << 16) | s1) >>> 0);
-    dv.setUint32(p + 4, calculateCRC32(png.subarray(37, p + 4)));
-    dv.setUint32(p + 12, 0x49454e44); // IEND
-    dv.setUint32(p + 16, 0xae426082);
-
-    const cnt = dstW * dstH * 255;
-    const lin = this.colorSpace === 'srgb-linear';
-    this.avgColor = [
-      lin ? sr / cnt : srgbToLinear(sr / cnt),
-      lin ? sg / cnt : srgbToLinear(sg / cnt),
-      lin ? sb / cnt : srgbToLinear(sb / cnt),
-      sa / cnt,
-    ];
-    const parts: string[] = ['data:image/png;base64,'];
-    for (let i = 0; i < png.length; i += 3) {
-      const n = (png[i] << 16) | ((png[i + 1] ?? 0) << 8) | (png[i + 2] ?? 0);
-      parts.push(
-        B64_CHARS[(n >> 18) & 63] +
-          B64_CHARS[(n >> 12) & 63] +
-          (i + 1 < png.length ? B64_CHARS[(n >> 6) & 63] : '=') +
-          (i + 2 < png.length ? B64_CHARS[n & 63] : '='),
-      );
-    }
-    this.source = parts.join('');
+    const encoded = encodeRgbaToPngDataUri(
+      rgba,
+      srcW,
+      srcH,
+      this.flipY,
+      this.colorSpace === 'srgb-linear',
+      PNG_MAX_TEXTURE_DIM,
+    );
+    this.avgColor = encoded.avgColor;
+    this.source = encoded.uri;
   }
 }
 
@@ -5754,6 +5688,9 @@ export const THREE: any = new Proxy(threeExports, {
 
 const sharedRegForAuthor = getSharedRegistry();
 sharedRegForAuthor.threeNamespace = THREE;
+// Shared with the procedural add-on's CanvasTexture (also inside sandboxes,
+// where its installer is serialized and must not import modules itself).
+sharedRegForAuthor.encodeRgbaPng = encodeRgbaToPngDataUri;
 if (sharedRegForAuthor.workerExtensionInstallers) {
   for (const installer of sharedRegForAuthor.workerExtensionInstallers) {
     installer(THREE, sharedRegForAuthor);

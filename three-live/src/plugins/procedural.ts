@@ -824,43 +824,6 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     return out;
   })();
 
-  const crcTable = (() => {
-    const tbl = new Uint32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) {
-        c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-      }
-      tbl[n] = c >>> 0;
-    }
-    return tbl;
-  })();
-
-  const crc32Bytes = (bytes: Uint8Array): number => {
-    let c = 0xffffffff;
-    for (let i = 0; i < bytes.length; i++) {
-      c = crcTable[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
-    }
-    return (c ^ 0xffffffff) >>> 0;
-  };
-
-  const srgbLut = (() => {
-    const lut = new Float32Array(256);
-    for (let i = 0; i < 256; i++) {
-      const c = i / 255;
-      lut[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-    }
-    return lut;
-  })();
-
-  // tslint:disable-next-line:no-any Optional native Rust accelerator in Boa VM.
-  const nativeEncodeRgbaPng: any =
-    typeof globalThis !== 'undefined'
-      ? (globalThis as Record<string, unknown>)[
-          '__three_live_native_encode_rgba_png__'
-        ]
-      : undefined;
-
   const NAMED_COLORS: Record<string, number> = {};
   for (const pair of (
     'black:000000,white:ffffff,red:ff0000,lime:00ff00,green:008000,blue:0000ff,' +
@@ -982,9 +945,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   };
 
   /**
-   * Encodes an RGBA8 buffer (`srcW x srcH`) into a multi-block stored-DEFLATE
-   * `data:image/png;base64,...` URI (capped at `maxDim` with box-filter
-   * downsampling when oversized) and computes linear `avgColor`.
+   * Encodes an RGBA8 buffer into a PNG data URI via the engine's shared encoder
+   * (`png-encode.ts`, published on the registry by three-author). This
+   * installer is serialized into sandbox workers, so it cannot import it.
    */
   const encodeRgbaToPngDataUri = (
     srcData: ArrayLike<number>,
@@ -994,169 +957,14 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     isLinearColorSpace: boolean,
     maxDim = MAX_BACKING_DIM,
   ): {uri: string; avgColor: RgbaTuple} => {
-    if (
-      !srcData ||
-      srcW <= 0 ||
-      srcH <= 0 ||
-      srcData.length < srcW * srcH * 4
-    ) {
-      return {uri: '', avgColor: [1, 1, 1, 1]};
-    }
-    if (typeof nativeEncodeRgbaPng === 'function') {
-      const res = nativeEncodeRgbaPng(
-        srcData,
-        srcW,
-        srcH,
-        flipY,
-        isLinearColorSpace,
-        maxDim,
-      );
-      if (Array.isArray(res) && typeof res[0] === 'string') {
-        return {uri: res[0], avgColor: [res[1], res[2], res[3], res[4]]};
-      }
-    }
-    const scale =
-      srcW > maxDim || srcH > maxDim ? maxDim / Math.max(srcW, srcH) : 1;
-    const dstW = Math.max(1, Math.round(srcW * scale));
-    const dstH = Math.max(1, Math.round(srcH * scale));
-    const stride = 1 + dstW * 4;
-    const rawLen = dstH * stride;
-    const numBlocks = Math.max(1, Math.ceil(rawLen / 65535));
-    const idatLen = 2 + numBlocks * 5 + rawLen + 4;
-    // 8 (PNG sig) + 25 (IHDR) + (12 + idatLen) (IDAT) + 12 (IEND)
-    const png = new Uint8Array(57 + idatLen);
-    const dv = new DataView(png.buffer);
-    dv.setUint32(0, 0x89504e47);
-    dv.setUint32(4, 0x0d0a1a0a);
-    dv.setUint32(8, 13);
-    dv.setUint32(12, 0x49484452); // IHDR
-    dv.setUint32(16, dstW);
-    dv.setUint32(20, dstH);
-    png[24] = 8;
-    png[25] = 6;
-    dv.setUint32(29, crc32Bytes(png.subarray(12, 29)));
-
-    dv.setUint32(33, idatLen);
-    dv.setUint32(37, 0x49444154); // IDAT
-    png[41] = 0x78;
-    png[42] = 0x01;
-
-    // Build raw scanlines first, then chunk into <=65535-byte stored DEFLATE blocks.
-    const raw = new Uint8Array(rawLen);
-    let rp = 0;
-    let s1 = 1;
-    let s2 = 0;
-    let sumLinR = 0;
-    let sumLinG = 0;
-    let sumLinB = 0;
-    let sumA = 0;
-    const exact1to1 = dstW === srcW && dstH === srcH;
-
-    for (let y = 0; y < dstH; y++) {
-      raw[rp++] = 0;
-      s2 = (s2 + s1) % 65521;
-      const py = flipY ? dstH - 1 - y : y;
-      const sy0 = exact1to1 ? py : Math.floor((py * srcH) / dstH);
-      const sy1 = exact1to1
-        ? py + 1
-        : Math.max(sy0 + 1, Math.floor(((py + 1) * srcH) / dstH));
-      for (let x = 0; x < dstW; x++) {
-        let r = 0;
-        let g = 0;
-        let b = 0;
-        let a = 0;
-        if (exact1to1) {
-          const idx = (sy0 * srcW + x) * 4;
-          r = srcData[idx] | 0;
-          g = srcData[idx + 1] | 0;
-          b = srcData[idx + 2] | 0;
-          a = srcData[idx + 3] | 0;
-        } else {
-          const sx0 = Math.floor((x * srcW) / dstW);
-          const sx1 = Math.max(sx0 + 1, Math.floor(((x + 1) * srcW) / dstW));
-          let cnt = 0;
-          for (let yy = sy0; yy < sy1 && yy < srcH; yy++) {
-            for (let xx = sx0; xx < sx1 && xx < srcW; xx++) {
-              const idx = (yy * srcW + xx) * 4;
-              r += srcData[idx] | 0;
-              g += srcData[idx + 1] | 0;
-              b += srcData[idx + 2] | 0;
-              a += srcData[idx + 3] | 0;
-              cnt++;
-            }
-          }
-          if (cnt > 1) {
-            r = (r / cnt + 0.5) | 0;
-            g = (g / cnt + 0.5) | 0;
-            b = (b / cnt + 0.5) | 0;
-            a = (a / cnt + 0.5) | 0;
-          }
-        }
-        raw[rp++] = r;
-        s1 += r;
-        s2 += s1;
-        raw[rp++] = g;
-        s1 += g;
-        s2 += s1;
-        raw[rp++] = b;
-        s1 += b;
-        s2 += s1;
-        raw[rp++] = a;
-        s1 += a;
-        s2 += s1;
-        sumLinR += isLinearColorSpace ? r / 255 : srgbLut[r];
-        sumLinG += isLinearColorSpace ? g / 255 : srgbLut[g];
-        sumLinB += isLinearColorSpace ? b / 255 : srgbLut[b];
-        sumA += a / 255;
-      }
-      s1 %= 65521;
-      s2 %= 65521;
-    }
-
-    let wp = 43;
-    let rem = rawLen;
-    let roff = 0;
-    while (rem > 0 || roff === 0) {
-      const blkLen = Math.min(65535, rem);
-      const isFinal = rem - blkLen === 0 ? 1 : 0;
-      png[wp++] = isFinal;
-      dv.setUint16(wp, blkLen, true);
-      dv.setUint16(wp + 2, ~blkLen & 0xffff, true);
-      wp += 4;
-      if (blkLen > 0) {
-        png.set(raw.subarray(roff, roff + blkLen), wp);
-        wp += blkLen;
-        roff += blkLen;
-        rem -= blkLen;
-      }
-      if (isFinal) break;
-    }
-    dv.setUint32(wp, ((s2 << 16) | s1) >>> 0);
-    wp += 4;
-    dv.setUint32(wp, crc32Bytes(png.subarray(37, wp)));
-    wp += 4;
-    dv.setUint32(wp, 0);
-    dv.setUint32(wp + 4, 0x49454e44); // IEND
-    dv.setUint32(wp + 8, 0xae426082);
-
-    const nPx = Math.max(1, dstW * dstH);
-    const avgColor: RgbaTuple = [
-      sumLinR / nPx,
-      sumLinG / nPx,
-      sumLinB / nPx,
-      sumA / nPx,
-    ];
-    const parts: string[] = ['data:image/png;base64,'];
-    for (let i = 0; i < png.length; i += 3) {
-      const n = (png[i] << 16) | ((png[i + 1] ?? 0) << 8) | (png[i + 2] ?? 0);
-      parts.push(
-        B64_CHARS[(n >> 18) & 63] +
-          B64_CHARS[(n >> 12) & 63] +
-          (i + 1 < png.length ? B64_CHARS[(n >> 6) & 63] : '=') +
-          (i + 2 < png.length ? B64_CHARS[n & 63] : '='),
-      );
-    }
-    return {uri: parts.join(''), avgColor};
+    const enc =
+      (reg && reg.encodeRgbaPng) ||
+      (typeof globalThis !== 'undefined'
+        ? (globalThis as any).__THREE_LIVE_REGISTRY__?.encodeRgbaPng
+        : undefined);
+    return typeof enc === 'function'
+      ? enc(srcData, srcW, srcH, flipY, isLinearColorSpace, maxDim)
+      : {uri: '', avgColor: [1, 1, 1, 1]};
   };
 
   const packRgba = (r: number, g: number, b: number, a: number): number =>
@@ -5124,6 +4932,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     'fabric',
     'leather',
     'rust',
+    'clapboard',
+    'shiplap',
+    'stucco',
+    'shingle',
   ];
   // [scale, color, color2, roughness] per preset.
   const PRESET_DEFAULTS: number[][] = [
@@ -5138,6 +4950,10 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     [32, 0x3b5b8c, 0, 0.9],
     [12, 0x5a3a28, 0, 0.6],
     [4, 0x8b3a1a, 0x8a9099, 0.9],
+    [8, 0xe8e4da, 0, 0.7],
+    [8, 0xa47148, 0x3b2a1e, 0.6],
+    [4, 0xe9dcc4, 0, 0.92],
+    [8, 0x4b5563, 0x1f2937, 0.85],
   ];
   const pHash = (ix: number, iy: number, seed: number): number => {
     let h =
@@ -5381,6 +5197,79 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         0,
       ];
     }
+    if (kind === 11) {
+      // clapboard: horizontally lapped bevel siding, S boards per tile.
+      const gv = v * S;
+      const row = Math.floor(gv);
+      const fv = gv - row;
+      const lap = pSmooth(0, 0.08, fv);
+      const grain = pFbm(u, v, 3, S * 24, 2, (seed + 7) >>> 0);
+      const tone = pRnd(0, pMod(row, S), (seed + 11) >>> 0);
+      const m =
+        (0.78 + 0.22 * lap) *
+        (0.94 + 0.12 * (grain - 0.5)) *
+        (0.97 + 0.06 * tone);
+      return [...k(m), 0.2 + 0.7 * fv, rough + 0.1 * (1 - lap), 0];
+    }
+    if (kind === 12) {
+      // shiplap / plank: staggered straight-grain boards with butt joints.
+      const gv = v * S;
+      const row = Math.floor(gv);
+      const fv = gv - row;
+      const bu = u * 2 + pRnd(0, pMod(row, S), (seed + 11) >>> 0);
+      const bi = Math.floor(bu);
+      const fu = bu - bi;
+      const d = Math.min(Math.min(fu, 1 - fu) * 0.5 * S, Math.min(fv, 1 - fv));
+      const gw = Math.max(0.04, (1.5 * S) / N);
+      const gap = 1 - pSmooth(gw * 0.5, gw, d);
+      const vr = pRnd(pMod(bi, 2), pMod(row, S), seed);
+      const grain = pFbm(u, v, 4, S * 24, 2, (seed + 7) >>> 0);
+      const bm = 0.8 + 0.25 * vr + 0.12 * (grain - 0.5);
+      return [
+        pMix(c[0] * bm, c2[0], gap),
+        pMix(c[1] * bm, c2[1], gap),
+        pMix(c[2] * bm, c2[2], gap),
+        (1 - gap) * (0.7 + 0.1 * grain) + gap * 0.15,
+        pMix(rough, 0.95, gap),
+        0,
+      ];
+    }
+    if (kind === 13) {
+      // stucco: isotropic sand-float plaster.
+      const n = pFbm(u, v, S, S, 5, seed);
+      const sp = pRnd(xi, yi, (seed + 31) >>> 0);
+      const trowel = pFbm(u, v, S * 8, S * 8, 2, (seed + 13) >>> 0);
+      return [
+        ...k(0.9 + 0.14 * (n - 0.5) + 0.05 * (sp - 0.5)),
+        0.5 + 0.3 * (trowel - 0.5) + 0.12 * (sp - 0.5),
+        rough + 0.05 * (trowel - 0.5),
+        0,
+      ];
+    }
+    if (kind === 14) {
+      // shingle: staggered roof shingle tabs with slots and drip-edge shadows.
+      const half = Math.floor(S / 2);
+      const gv = v * S;
+      const row = Math.floor(gv);
+      const fv = gv - row;
+      const bu = u * half + (pMod(row, 2) === 1 ? 0.5 : 0);
+      const bi = Math.floor(bu);
+      const fu = bu - bi;
+      const gap = 1 - pSmooth(0.02, 0.05, Math.min(fu, 1 - fu));
+      const vr = pRnd(pMod(bi, half), pMod(row, S), seed);
+      const grit = pFbm(u, v, S * 8, S * 8, 2, (seed + 5) >>> 0);
+      const bm =
+        (0.8 + 0.3 * vr + 0.1 * (grit - 0.5)) *
+        (1 - 0.35 * pSmooth(0.85, 1, fv));
+      return [
+        pMix(c[0] * bm, c2[0], gap),
+        pMix(c[1] * bm, c2[1], gap),
+        pMix(c[2] * bm, c2[2], gap),
+        (1 - gap) * (0.25 + 0.6 * fv) + gap * 0.1,
+        pMix(rough, 0.95, gap),
+        0,
+      ];
+    }
     const n = pFbm(u, v, S, S, 5, seed);
     const patch = pSmooth(0.45, 0.6, n);
     const detail = pFbm(u, v, S * 8, S * 8, 3, (seed + 9) >>> 0);
@@ -5502,7 +5391,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const d = PRESET_DEFAULTS[kind];
     let S = Math.max(1, Math.min(256, Math.round(finNum(o.scale, d[0]))));
     // Alternating layouts only tile with an even cell count.
-    if ((kind === 0 || kind === 7 || kind === 8) && S % 2 === 1) S++;
+    if ((kind === 0 || kind === 7 || kind === 8 || kind === 14) && S % 2 === 1) {
+      S++;
+    }
     const N = Math.max(16, Math.min(512, Math.round(finNum(o.size, 256))));
     const seed = Math.round(Math.abs(finNum(o.seed, 1))) >>> 0;
     const c = presetRgb(o.color, d[1]);
