@@ -666,6 +666,24 @@ function buildThreeLive() {
     outfile: path.join(tlDist, 'three-live-ai.min.js'),
   });
 
+  // 10e. three-live-edits (ESM, CJS, IIFE min): a la carte sub-node editing & constraint receipts
+  for (const [format, ext, globalName] of [
+    ['esm', 'js', undefined],
+    ['cjs', 'cjs', undefined],
+    ['iife', 'min.js', 'ThreeLiveEdits'],
+  ]) {
+    buildTarget({
+      entryPoints: [path.join(THREE_LIVE_DIR, 'src/edits.ts')],
+      bundle: true,
+      format,
+      globalName,
+      minify: true,
+      target: 'es2020',
+      define: {'IS_DEV': 'false'},
+      outfile: path.join(tlDist, `three-live-edits.${ext}`),
+    });
+  }
+
   // 11. three-live-animation (ESM, CJS, IIFE min)
   buildTarget({
     entryPoints: [path.join(THREE_LIVE_DIR, 'src/animation.ts')],
@@ -786,6 +804,121 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-live-procedural.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-animation.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-ai.d.ts'), rootDts);
+  fs.writeFileSync(
+      path.join(tlDist, 'three-live-edits.d.ts'),
+      [
+        '// Copyright 2026 Google LLC',
+        '// SPDX-License-Identifier: Apache-2.0',
+        '',
+        'export interface GLBData {',
+        '  gltf: any;',
+        '  bin: ArrayBuffer;',
+        '  lights?: any[];',
+        '  animations?: any[];',
+        '  animationsParsed?: boolean;',
+        '  exposure?: number;',
+        '  environmentIntensity?: number;',
+        '}',
+        '',
+        'export interface ThreeLivePlugin {',
+        '  readonly name: string;',
+        '  onRegister?(): void;',
+        '  onElementConnected?(element: any): void;',
+        '  onElementDisconnected?(element: any): void;',
+        '  [hook: string]: unknown;',
+        '}',
+        '',
+        'export type SceneEditPayload =',
+        '  | GLBData',
+        '  | ArrayBuffer',
+        '  | ArrayBufferView',
+        '  | string;',
+        '',
+        'export interface SceneEditHost {',
+        '  readonly sceneRevision?: number;',
+        '  getLoadedModel(): unknown;',
+        '  loadModel(model: GLBData): Promise<void>;',
+        '  executeScript?(code: string, options?: unknown): unknown;',
+        '  loadScriptFromSrc?(url: string, options?: unknown): unknown;',
+        '  checkCapability?(',
+        '    capability: string,',
+        '    feature: string,',
+        '    options?: {readonly url?: string; readonly dedup?: boolean},',
+        '  ): boolean;',
+        '}',
+        '',
+        'export interface SceneEditConstraints {',
+        '  preserveHeight?: boolean | {tolerance?: number};',
+        '  preserveBounds?: boolean | {tolerance?: number};',
+        '  preserveFootprint?: boolean | {tolerance?: number};',
+        '  maxBounds?: [number, number, number];',
+        '  matchMaterialOf?: string;',
+        '}',
+        '',
+        'export interface SceneEditOptions {',
+        '  target: string | string[];',
+        '  replacement: SceneEditPayload | Promise<SceneEditPayload>;',
+        '  replacementTarget?: string | string[];',
+        '  preserveTransform?: boolean;',
+        '  preserveTargetName?: boolean;',
+        '  copyMaterialFrom?: string;',
+        '  constraints?: SceneEditConstraints;',
+        '  warnings?: string[];',
+        '}',
+        '',
+        'export interface SceneEditReceipt {',
+        '  editId: number;',
+        '  revision: number;',
+        '  status: \'preview\' | \'accepted\' | \'rejected\' | \'undone\';',
+        '  applied: boolean;',
+        '  targets: string[];',
+        '  constraints: Array<{name: string; passed: boolean}>;',
+        '  errors: string[];',
+        '  warnings: string[];',
+        '  undoDepth: number;',
+        '}',
+        '',
+        'export interface SceneEditableElement extends SceneEditHost {',
+        '  sceneEditor?: SceneEditor;',
+        '  previewNodeEdit?: (options: SceneEditOptions) => Promise<SceneEditReceipt>;',
+        '  acceptNodeEdit?: () => SceneEditReceipt;',
+        '  rejectNodeEdit?: () => Promise<SceneEditReceipt>;',
+        '  undoNodeEdit?: () => Promise<SceneEditReceipt>;',
+        '  __tlEditsInstalled?: boolean;',
+        '}',
+        '',
+        'export interface SubtreeBounds {',
+        '  min: [number, number, number];',
+        '  max: [number, number, number];',
+        '  size: [number, number, number];',
+        '}',
+        '',
+        'export declare function computeSubtreeBounds(',
+        '  data: GLBData,',
+        '  roots: number[],',
+        '): SubtreeBounds;',
+        'export declare function computeSubtreeBoundsSize(',
+        '  data: GLBData,',
+        '  roots: number[],',
+        '): [number, number, number];',
+        'export declare function prepareSceneEdit(',
+        '  input: GLBData,',
+        '  replacement: GLBData,',
+        '  options: SceneEditOptions,',
+        '): {model: GLBData; constraints: SceneEditReceipt[\'constraints\']};',
+        '',
+        'export declare class SceneEditor {',
+        '  previewEdit: (options: SceneEditOptions) => Promise<SceneEditReceipt>;',
+        '  acceptEdit: () => SceneEditReceipt;',
+        '  rejectEdit: () => Promise<SceneEditReceipt>;',
+        '  undoEdit: () => Promise<SceneEditReceipt>;',
+        '  dispose: (options?: {restorePreview?: boolean}) => Promise<void>;',
+        '  constructor(host: SceneEditHost, maxUndoSteps?: number);',
+        '}',
+        '',
+        'export declare const sceneEditsPlugin: ThreeLivePlugin;',
+        '',
+      ].join('\n'));
   fs.writeFileSync(path.join(tlDist, 'three-live-webgpu.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-tsl.d.ts'), rootDts);
   fs.writeFileSync(
@@ -841,6 +974,9 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-ai.min.js'),
       path.join(DIST_DIR, 'three-live-ai.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-edits.min.js'),
+      path.join(DIST_DIR, 'three-live-edits.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-webgpu.min.js'),
       path.join(DIST_DIR, 'three-live-webgpu.min.js'));
@@ -1238,6 +1374,7 @@ function reportSizes() {
     {name: 'three-live-procedural.min.js', budgetKb: '30'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-ai.min.js', budgetKb: '35'},
+    {name: 'three-live-edits.min.js', budgetKb: '11'},
     {name: 'three-live-webgpu.min.js', budgetKb: '23'},
     {name: 'three-live-tsl.min.js', budgetKb: '19'},
     {name: 'three-live-full.min.js', budgetKb: '242'},
@@ -1328,6 +1465,7 @@ function reportSizes() {
                'three-live-studio.min.js',
                'three-live-cad.min.js',
                'three-live-full.min.js',
+               'three-live-compiler-bundle.min.js',
                'xr-live-viewer.min.js',
                'xr-live.min.js',
                'xr-live-full.min.js',
@@ -1335,17 +1473,23 @@ function reportSizes() {
     const filePath = path.join(DIST_DIR, name);
     if (!fs.existsSync(filePath)) continue;
     const text = fs.readFileSync(filePath, 'utf8');
-    for (const sentinel
-             of ['MAX_PART_TEETH',
-                 'MAX_ARCH_STEPS',
-                 'MAX_IND_WAYPOINTS',
-                 'MAX_SCI_ATOMS',
-                 'MAX_ECAD_PINS',
-    ]) {
-      if (text.includes(sentinel)) {
-        failures.push(`dist/${name} unexpectedly bundles domain kit classes (${
-            sentinel})`);
+    if (name !== 'three-live-compiler-bundle.min.js') {
+      for (const sentinel
+               of ['MAX_PART_TEETH',
+                   'MAX_ARCH_STEPS',
+                   'MAX_IND_WAYPOINTS',
+                   'MAX_SCI_ATOMS',
+                   'MAX_ECAD_PINS',
+      ]) {
+        if (text.includes(sentinel)) {
+          failures.push(`dist/${name} unexpectedly bundles domain kit classes (${
+              sentinel})`);
+        }
       }
+    }
+    if (text.includes('__tlEditsInstalled')) {
+      failures.push(
+          `dist/${name} unexpectedly bundles three-live-edits (__tlEditsInstalled)`);
     }
   }
   if (failures.length > 0) {

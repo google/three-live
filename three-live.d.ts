@@ -453,6 +453,8 @@ export * from './xr-live/src/webgpu';
 export * from './three-live/src/webgpu';
 /** Optional Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`three-live/tsl`, `three-live-tsl.min.js`). */
 export * from './three-live/src/tsl';
+/** Optional targeted glTF sub-node scene editing & constraint add-on (`three-live/edits`, `three-live-edits.min.js`). */
+export * from './three-live/src/edits';
 
 /**
  * Declarative JSX / HTML attributes supported by the <three-live> custom element.

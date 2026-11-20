@@ -147,6 +147,11 @@
       "import": "./three-live/dist/three-live-tsl.js",
       "require": "./three-live/dist/three-live-tsl.cjs"
     },
+    "./edits": {
+      "types": "./three-live/dist/three-live-edits.d.ts",
+      "import": "./three-live/dist/three-live-edits.js",
+      "require": "./three-live/dist/three-live-edits.cjs"
+    },
     "./element": {
       "types": "./three-live/dist/three-live-element.d.ts",
       "import": "./three-live/dist/three-live-element.js",

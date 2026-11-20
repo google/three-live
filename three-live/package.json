@@ -155,6 +155,11 @@
       "import": "./dist/three-live-tsl.js",
       "require": "./dist/three-live-tsl.cjs"
     },
+    "./edits": {
+      "types": "./dist/three-live-edits.d.ts",
+      "import": "./dist/three-live-edits.js",
+      "require": "./dist/three-live-edits.cjs"
+    },
     "./element": {
       "types": "./dist/three-live-element.d.ts",
       "import": "./dist/three-live-element.js",
