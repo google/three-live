@@ -271,16 +271,19 @@ fn shade(p: &PresetParams, u: f64, v: f64, xi: i64, yi: i64) -> [f64; 6] {
             let dx = fu.min(1.0 - fu) * 2.0;
             let dy = fv.min(1.0 - fv);
             let d = dx.min(dy);
-            let mw = 0.06f64.max(1.5 * sf / p.size as f64);
-            let mortar = 1.0 - smooth(mw * 0.5, mw, d);
-            let var = rnd(bi.rem_euclid(half), row.rem_euclid(s), seed);
+            let mw = 0.075f64.max(2.8 * sf / p.size as f64);
+            let mortar = 1.0 - smooth(mw * 0.1, mw * 1.45, d);
+            let bx = bi.rem_euclid(half);
+            let by = row.rem_euclid(s);
+            let var = rnd(bx, by, seed);
+            let kt = rnd(bx, by, seed.wrapping_add(19)) - 0.5;
             let n = fbm(u, v, s, s, 3, seed.wrapping_add(5));
             let bm = 0.8 + 0.25 * var + 0.15 * (n - 0.5);
             let mm = 0.9 + 0.1 * n;
             [
-                mix(c[0] * bm, c2[0] * mm, mortar),
-                mix(c[1] * bm, c2[1] * mm, mortar),
-                mix(c[2] * bm, c2[2] * mm, mortar),
+                mix(c[0] * bm * (1.0 + 0.08 * kt), c2[0] * mm, mortar),
+                mix(c[1] * bm * (1.0 + 0.02 * kt), c2[1] * mm, mortar),
+                mix(c[2] * bm * (1.0 - 0.06 * kt), c2[2] * mm, mortar),
                 (1.0 - mortar) * (0.75 + 0.1 * n) + mortar * 0.2,
                 mix(rough, 0.95, mortar),
                 0.0,
@@ -647,7 +650,7 @@ pub(crate) const PARITY_HASHES: [[u32; 3]; 15] = [
     [2185805582, 4034745237, 2813262117],
     [1265016261, 4205602757, 4063555013],
     [2375540222, 4017094934, 479134790],
-    [4050570107, 1948544486, 3373758917],
+    [1449572113, 660517082, 1374078405],
     [2095234875, 3455663557, 2500509125],
     [716167143, 2720860795, 1956285490],
     [1433902205, 225922196, 1140331227],

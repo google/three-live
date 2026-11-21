@@ -99,7 +99,7 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     -   `three-live-procedural.min.js`: `< 30 KB gz`
     -   `three-live-animation.min.js`: `< 11 KB gz`
     -   `three-live-ai.min.js`: `< 35 KB gz`
-    -   `three-live-webgpu.min.js`: `< 23 KB gz`
+    -   `three-live-webgpu.min.js`: `< 24 KB gz`
     -   `three-live-tsl.min.js`: `< 19 KB gz`
     -   `three-live-full.min.js`: `< 244 KB gz`
     -   `three-live-compiler-bundle.min.js`: `< 262 KB gz`

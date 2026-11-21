@@ -5137,16 +5137,19 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       const bi = Math.floor(bu);
       const fu = bu - bi;
       const d = Math.min(Math.min(fu, 1 - fu) * 2, Math.min(fv, 1 - fv));
-      const mw = Math.max(0.06, (1.5 * S) / N);
-      const mortar = 1 - pSmooth(mw * 0.5, mw, d);
-      const vr = pRnd(pMod(bi, half), pMod(row, S), seed);
+      const mw = Math.max(0.075, (2.8 * S) / N);
+      const mortar = 1 - pSmooth(mw * 0.1, mw * 1.45, d);
+      const bx = pMod(bi, half);
+      const by = pMod(row, S);
+      const vr = pRnd(bx, by, seed);
+      const kt = pRnd(bx, by, (seed + 19) >>> 0) - 0.5;
       const n = pFbm(u, v, S, S, 3, (seed + 5) >>> 0);
       const bm = 0.8 + 0.25 * vr + 0.15 * (n - 0.5);
       const mm = 0.9 + 0.1 * n;
       return [
-        pMix(c[0] * bm, c2[0] * mm, mortar),
-        pMix(c[1] * bm, c2[1] * mm, mortar),
-        pMix(c[2] * bm, c2[2] * mm, mortar),
+        pMix(c[0] * bm * (1 + 0.08 * kt), c2[0] * mm, mortar),
+        pMix(c[1] * bm * (1 + 0.02 * kt), c2[1] * mm, mortar),
+        pMix(c[2] * bm * (1 - 0.06 * kt), c2[2] * mm, mortar),
         (1 - mortar) * (0.75 + 0.1 * n) + mortar * 0.2,
         pMix(rough, 0.95, mortar),
         0,

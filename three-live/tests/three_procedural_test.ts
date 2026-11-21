@@ -1289,7 +1289,7 @@ function runProceduralTests(): void {
     [2185805582, 4034745237, 2813262117],
     [1265016261, 4205602757, 4063555013],
     [2375540222, 4017094934, 479134790],
-    [4050570107, 1948544486, 3373758917],
+    [1449572113, 660517082, 1374078405],
     [2095234875, 3455663557, 2500509125],
     [716167143, 2720860795, 1956285490],
     [1433902205, 225922196, 1140331227],
@@ -1326,6 +1326,32 @@ function runProceduralTests(): void {
 
   // Parameter canonicalization: odd checker/brick/fabric scales round up to even
   // (seamless tiling), sizes clamp to 16..512, and junk input never throws.
+  {
+    const brick256 = PT.brick({
+      size: 256,
+      scale: 8,
+      seed: 11,
+      color: 0x9a3b2e,
+      color2: 0xc8c2b8,
+    });
+    const bData = brick256.map.image._data as Uint8Array;
+    // Across a horizontal mortar joint (x = 32, y = 0..8), verify >= 2 intermediate
+    // feathered transition texels exist between mortar and full brick interior.
+    const lums: number[] = [];
+    for (let y = 0; y <= 8; y++) {
+      const o = (y * 256 + 32) * 4;
+      lums.push(0.299 * bData[o] + 0.587 * bData[o + 1] + 0.114 * bData[o + 2]);
+    }
+    const minL = Math.min(...lums);
+    const maxL = Math.max(...lums);
+    const midCount = lums.filter(
+      (l) => l > minL + 0.15 * (maxL - minL) && l < minL + 0.85 * (maxL - minL),
+    ).length;
+    assert(
+      midCount >= 2,
+      `ProceduralTexture.brick feathers mortar joints across >= 2 intermediate texels (got ${midCount})`,
+    );
+  }
   const evenA = PT.checkerboard({scale: 7, size: 16, seed: 3});
   const evenB = PT.checkerboard({scale: 8, size: 16, seed: 3});
   const junk = PT.wood({

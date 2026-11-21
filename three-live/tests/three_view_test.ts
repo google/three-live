@@ -3312,6 +3312,143 @@ async function runThreeViewTests() {
     }
   }
 
+  // WebGL2 glTF texture sampler filters, trilinear mipmaps, and anisotropic filtering.
+  {
+    const texParamCalls: Array<{
+      tex: unknown;
+      pname: number;
+      param: number;
+    }> = [];
+    const mipmappedTexes: unknown[] = [];
+    const activeUnits: number[] = [];
+    let boundTex: unknown = null;
+    let nextTexId = 1;
+    const ANISO_PNAME = 0x84fe;
+    const MAX_ANISO_PNAME = 0x84ff;
+    const baseGl = mockCanvas.getContext('webgl2');
+    const customGl = Object.assign(Object.create(baseGl), {
+      REPEAT: 10497,
+      CLAMP_TO_EDGE: 33071,
+      MIRRORED_REPEAT: 33648,
+      NEAREST: 9728,
+      LINEAR: 9729,
+      LINEAR_MIPMAP_LINEAR: 9987,
+      TEXTURE_2D: 3553,
+      TEXTURE_MAG_FILTER: 10240,
+      TEXTURE_MIN_FILTER: 10241,
+      TEXTURE_WRAP_S: 10242,
+      TEXTURE_WRAP_T: 10243,
+      TEXTURE0: 33984,
+      createTexture: () => ({id: nextTexId++}),
+      activeTexture: (unit: number) => {
+        activeUnits.push(unit);
+      },
+      bindTexture: (_target: number, tex: unknown) => {
+        boundTex = tex;
+      },
+      texParameteri: (_target: number, pname: number, param: number) => {
+        texParamCalls.push({tex: boundTex, pname, param});
+      },
+      texParameterf: (_target: number, pname: number, param: number) => {
+        texParamCalls.push({tex: boundTex, pname, param});
+      },
+      generateMipmap: () => {
+        mipmappedTexes.push(boundTex);
+      },
+      getExtension: (name: string) =>
+        name === 'EXT_texture_filter_anisotropic'
+          ? {
+              TEXTURE_MAX_ANISOTROPY_EXT: ANISO_PNAME,
+              MAX_TEXTURE_MAX_ANISOTROPY_EXT: MAX_ANISO_PNAME,
+            }
+          : null,
+      getParameter: (pname: number) =>
+        pname === MAX_ANISO_PNAME ? 16 : baseGl.getParameter?.(pname),
+    });
+    const customCanvas = Object.assign(Object.create(mockCanvas), {
+      getContext: () => customGl,
+    });
+    const gAny = globalThis as Record<string, unknown>;
+    const prevBitmap = gAny['createImageBitmap'];
+    gAny['createImageBitmap'] = async () => ({width: 256, height: 256});
+    const mView = new ThreeView(customCanvas, customCanvas, {autoRotate: false});
+    try {
+      mView.loadGLBData({
+        gltf: {
+          asset: {version: '2.0'},
+          meshes: [],
+          samplers: [
+            {
+              magFilter: 9728,
+              minFilter: 9728,
+              wrapS: 33071,
+              wrapT: 33648,
+            },
+          ],
+          textures: [{source: 0}, {source: 0, sampler: 0}],
+          images: [{bufferView: 0, mimeType: 'image/png'}],
+          bufferViews: [{buffer: 0, byteOffset: 0, byteLength: 4}],
+        },
+        bin: new ArrayBuffer(4),
+      } as unknown as Parameters<ThreeView['loadGLBData']>[0]);
+      await mView.whenTexturesReady(2000);
+      const viewInternal = mView as unknown as {gpuTextures?: unknown[]};
+      const tex0 = viewInternal.gpuTextures?.[0];
+      const tex1 = viewInternal.gpuTextures?.[1];
+      const lastParam = (tex: unknown, pname: number) => {
+        const hits = texParamCalls.filter(
+          (c) => c.tex === tex && c.pname === pname,
+        );
+        return hits.length > 0 ? hits[hits.length - 1].param : undefined;
+      };
+      assert(
+        mipmappedTexes.includes(tex0) &&
+          activeUnits.includes(33984) &&
+          lastParam(tex0, 10241) === 9987 &&
+          lastParam(tex0, ANISO_PNAME) === 8,
+        'Default glTF texture selects TEXTURE0, switches TEXTURE_MIN_FILTER to LINEAR_MIPMAP_LINEAR after generateMipmap, and caps anisotropy at 8x',
+      );
+      assert(
+        !mipmappedTexes.includes(tex1) &&
+          lastParam(tex1, 10241) === 9728 &&
+          lastParam(tex1, 10240) === 9728 &&
+          lastParam(tex1, 10242) === 33071 &&
+          lastParam(tex1, 10243) === 33648 &&
+          lastParam(tex1, ANISO_PNAME) === undefined,
+        'Explicit NEAREST/CLAMP glTF sampler preserves filter/wrap modes without generating mipmaps or forcing anisotropy',
+      );
+      // Verify clearScene() marks old textures __disposed so late createImageBitmap resolution is a no-op.
+      let resolveLate!: (bmp: {width: number; height: number}) => void;
+      gAny['createImageBitmap'] = () =>
+        new Promise<{width: number; height: number}>((r) => {
+          resolveLate = r;
+        });
+      mView.loadGLBData({
+        gltf: {
+          asset: {version: '2.0'},
+          meshes: [],
+          textures: [{source: 0}],
+          images: [{bufferView: 0, mimeType: 'image/png'}],
+          bufferViews: [{buffer: 0, byteOffset: 0, byteLength: 4}],
+        },
+        bin: new ArrayBuffer(4),
+      } as unknown as Parameters<ThreeView['loadGLBData']>[0]);
+      const lateTex = viewInternal.gpuTextures?.[0];
+      const mipCountBefore = mipmappedTexes.length;
+      mView.clearScene();
+      resolveLate({width: 128, height: 128});
+      await Promise.resolve();
+      assert(
+        (lateTex as {__disposed?: boolean})?.__disposed === true &&
+          mipmappedTexes.length === mipCountBefore,
+        'Disposed texture skips late async uploadTex after clearScene()',
+      );
+    } finally {
+      gAny['createImageBitmap'] = prevBitmap;
+      mView.destroy?.();
+    }
+  }
+
   console.log(
     `\n🏆 three-view Test Results: ${passed} Passed, ${failed} Failed.`,
   );
