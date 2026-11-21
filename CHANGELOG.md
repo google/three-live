@@ -92,6 +92,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+-   **WebGL2 & WebGPU trilinear/anisotropic mipmapping + `ProceduralTexture.brick`
+    joint anti-aliasing:** `ThreeView` now honors `gltf.samplers` (`minFilter`,
+    `magFilter`, `wrapS`, `wrapT`), switches `TEXTURE_MIN_FILTER` to
+    `LINEAR_MIPMAP_LINEAR` after `gl.generateMipmap()` instead of leaving
+    textures on `LINEAR` level-0 sampling, and enables up to `8×`
+    `EXT_texture_filter_anisotropic` on mipmapped repeat textures; WebGPU
+    (`scene-accelerator.ts`) now builds full GPU mip chains with `maxAnisotropy:
+    8`; and `ProceduralTexture.brick` softens mortar joint transitions across
+    `>= 2.5` texels with subtle per-brick warm/cool kiln tint variation (mirrored
+    byte-identically in `compiler/src/material_preset.rs`), eliminating Nyquist
+    moiré rings on brick and siding walls at oblique viewing angles.
 -   **No untextured first frame:** `loadModel()` now waits (up to 1.5 s, via
     the new `ThreeView.whenTexturesReady()`) for embedded and URI glTF
     textures to decode and upload before hiding the poster and firing

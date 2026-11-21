@@ -212,6 +212,7 @@ export interface GPUSceneDeviceLike {
       | {width: number; height: number; depthOrArrayLayers?: number};
     format: string;
     usage: number;
+    mipLevelCount?: number;
     sampleCount?: number;
   }): GPUSceneTextureLike;
   createSampler(descriptor?: unknown): unknown;
@@ -373,6 +374,7 @@ interface DevicePipelines {
   tslPipelinesByFormat: Map<string, {opaque: unknown; blend: unknown}>;
   texCache: WeakMap<object, UploadedTexEntry>;
   ownedTextures: Set<GPUSceneTextureLike>;
+  mipGen?: {bgl: unknown; pipe: unknown; samp: unknown} | null;
 }
 
 interface CompiledTslUniformSlot {
@@ -879,6 +881,7 @@ function getDevicePipelines(dev: GPUSceneDeviceLike): DevicePipelines {
     mipmapFilter: 'linear',
     addressModeU: 'repeat',
     addressModeV: 'repeat',
+    maxAnisotropy: 8,
   });
   const shadowSampler = dev.createSampler({
     compare: 'less-equal',
@@ -1257,10 +1260,52 @@ function resolveGPUTextureView(
   }
 
   const [w, h] = dims;
+  const fullMips = (Math.log2(Math.max(1, w, h)) | 0) + 1;
+  if (fullMips > 1 && pipes.mipGen === undefined) {
+    pipes.mipGen = null;
+    if (
+      dev.createCommandEncoder &&
+      dev.createRenderPipeline &&
+      dev.createBindGroup
+    ) {
+      safe(() => {
+        const bgl = dev.createBindGroupLayout({
+          entries: [
+            {binding: 0, visibility: STAGE_FRAGMENT, sampler: {}},
+            {binding: 1, visibility: STAGE_FRAGMENT, texture: {}},
+          ],
+        });
+        const mod = dev.createShaderModule({
+          code: 'struct V{@builtin(position)p:vec4f,@location(0)u:vec2f}@vertex fn v(@builtin(vertex_index)i:u32)->V{let x=f32((i<<1u)&2u);let y=f32(i&2u);return V(vec4f(x*2.-1.,1.-y*2.,0.,1.),vec2f(x,y));}@group(0)@binding(0)var s:sampler;@group(0)@binding(1)var t:texture_2d<f32>;@fragment fn f(q:V)->@location(0)vec4f{return textureSampleLevel(t,s,q.u,0.);}',
+        });
+        const ce = 'clamp-to-edge';
+        pipes.mipGen = {
+          bgl,
+          samp: dev.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear',
+            addressModeU: ce,
+            addressModeV: ce,
+          }),
+          pipe: dev.createRenderPipeline({
+            layout: dev.createPipelineLayout({bindGroupLayouts: [bgl]}),
+            vertex: {module: mod, entryPoint: 'v'},
+            fragment: {
+              module: mod,
+              entryPoint: 'f',
+              targets: [{format: 'rgba8unorm'}],
+            },
+          }),
+        };
+      });
+    }
+  }
+  const mipLevelCount = fullMips > 1 && pipes.mipGen ? fullMips : 1;
   const gpuTex = dev.createTexture({
     size: {width: w, height: h, depthOrArrayLayers: 1},
     format: 'rgba8unorm',
     usage: TEX_BINDING | TEX_COPY_DST | TEX_RENDER_ATTACHMENT,
+    mipLevelCount,
   });
   let uploaded = false;
   if (typeof dev.queue.copyExternalImageToTexture === 'function') {
@@ -1297,6 +1342,44 @@ function resolveGPUTextureView(
   if (!uploaded) {
     safe(() => gpuTex.destroy());
     return {view: pipes.whiteView, src: null, valid: false};
+  }
+
+  const mg = pipes.mipGen;
+  if (mipLevelCount > 1 && mg) {
+    safe(() => {
+      const enc = dev.createCommandEncoder();
+      for (let lvl = 1; lvl < mipLevelCount; lvl++) {
+        const pass = enc.beginRenderPass({
+          colorAttachments: [
+            {
+              view: gpuTex.createView({baseMipLevel: lvl, mipLevelCount: 1}),
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+        pass.setPipeline(mg.pipe);
+        pass.setBindGroup(
+          0,
+          dev.createBindGroup({
+            layout: mg.bgl,
+            entries: [
+              {binding: 0, resource: mg.samp},
+              {
+                binding: 1,
+                resource: gpuTex.createView({
+                  baseMipLevel: lvl - 1,
+                  mipLevelCount: 1,
+                }),
+              },
+            ],
+          }),
+        );
+        pass.draw(3);
+        pass.end();
+      }
+      dev.queue.submit([enc.finish()]);
+    });
   }
 
   const view = gpuTex.createView();

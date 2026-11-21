@@ -1211,6 +1211,7 @@ function deleteMeshListGl(
   const deleteTex = (tex: WebGLTexture | null | undefined) => {
     if (tex && !deletedTextures.has(tex)) {
       deletedTextures.add(tex);
+      (tex as {__disposed?: boolean}).__disposed = true;
       gl.deleteTexture(tex);
     }
   };
@@ -1404,13 +1405,50 @@ function buildGpuSceneUnchecked(
         `SecurityError: GLB scene exceeds host texture limit (${limits.maxTextures}). Found: ${gltf.textures.length}`,
       );
     }
+    const anisoExt =
+      typeof gl.getExtension === 'function'
+        ? gl.getExtension('EXT_texture_filter_anisotropic') ||
+          gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic')
+        : null;
+    const maxAniso =
+      anisoExt && typeof gl.getParameter === 'function'
+        ? Number(
+            gl.getParameter(anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1,
+          )
+        : 1;
+    const clampWrap = (w: unknown): number =>
+      w === 33071 || w === 33648 || w === 10497 ? w : gl.REPEAT || 10497;
+    const clampMinFilter = (f: unknown): number =>
+      f === 9728 ||
+      f === 9729 ||
+      f === 9984 ||
+      f === 9985 ||
+      f === 9986 ||
+      f === 9987
+        ? f
+        : gl.LINEAR_MIPMAP_LINEAR || 9987;
+
     for (let tIdx = 0; tIdx < gltf.textures.length; tIdx++) {
       const texDef = gltf.textures[tIdx];
       const imgDef = gltf.images[texDef.source];
       if (imgDef) {
+        const samplerDef =
+          texDef.sampler !== undefined
+            ? gltf.samplers?.[texDef.sampler]
+            : undefined;
+        const wrapS = clampWrap(samplerDef?.wrapS);
+        const wrapT = clampWrap(samplerDef?.wrapT);
+        const magFilter =
+          samplerDef?.magFilter === 9728
+            ? gl.NEAREST || 9728
+            : gl.LINEAR || 9729;
+        const minFilter = clampMinFilter(samplerDef?.minFilter);
+        const placeholderMin =
+          minFilter === 9728 ? gl.NEAREST || 9728 : gl.LINEAR || 9729;
+
         const tex = gl.createTexture()!;
         gl.bindTexture(gl.TEXTURE_2D, tex);
-        // Default 1x1 white texture while loading
+        // Default 1x1 white texture while loading (non-mipmapped until uploadTex).
         gl.texImage2D(
           gl.TEXTURE_2D,
           0,
@@ -1423,17 +1461,19 @@ function buildGpuSceneUnchecked(
           new Uint8Array([255, 255, 255, 255]),
         );
         for (const [p, v] of [
-          [gl.TEXTURE_WRAP_S, gl.REPEAT],
-          [gl.TEXTURE_WRAP_T, gl.REPEAT],
-          [gl.TEXTURE_MIN_FILTER, gl.LINEAR],
-          [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+          [gl.TEXTURE_WRAP_S, wrapS],
+          [gl.TEXTURE_WRAP_T, wrapT],
+          [gl.TEXTURE_MIN_FILTER, placeholderMin],
+          [gl.TEXTURE_MAG_FILTER, magFilter],
         ]) {
           gl.texParameteri(gl.TEXTURE_2D, p, v);
         }
 
         const uploadTex = (source: TexImageSource) => {
+          if ((tex as {__disposed?: boolean}).__disposed) return;
           (tex as {__gpuImageSource?: TexImageSource}).__gpuImageSource =
             source;
+          if (gl.TEXTURE0 !== undefined) gl.activeTexture?.(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, tex);
           gl.texImage2D(
             gl.TEXTURE_2D,
@@ -1443,7 +1483,32 @@ function buildGpuSceneUnchecked(
             gl.UNSIGNED_BYTE,
             source,
           );
-          gl.generateMipmap(gl.TEXTURE_2D);
+          const usesMipmaps = minFilter >= 9984;
+          if (usesMipmaps) {
+            gl.generateMipmap(gl.TEXTURE_2D);
+          }
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter);
+          if (
+            usesMipmaps &&
+            anisoExt &&
+            maxAniso > 1 &&
+            (wrapS !== 33071 || wrapT !== 33071)
+          ) {
+            const targetAniso = Math.min(8, maxAniso);
+            if (typeof gl.texParameterf === 'function') {
+              gl.texParameterf(
+                gl.TEXTURE_2D,
+                anisoExt.TEXTURE_MAX_ANISOTROPY_EXT,
+                targetAniso,
+              );
+            } else {
+              gl.texParameteri(
+                gl.TEXTURE_2D,
+                anisoExt.TEXTURE_MAX_ANISOTROPY_EXT,
+                Math.floor(targetAniso),
+              );
+            }
+          }
           onTextureLoad?.();
         };
 

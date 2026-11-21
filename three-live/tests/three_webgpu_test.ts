@@ -104,6 +104,7 @@ class MockGPUTexture implements GPUSceneTextureLike {
     size: unknown;
     format: string;
     usage: number;
+    mipLevelCount?: number;
     sampleCount?: number;
   };
   destroyed = false;
@@ -112,12 +113,13 @@ class MockGPUTexture implements GPUSceneTextureLike {
     size: unknown;
     format: string;
     usage: number;
+    mipLevelCount?: number;
     sampleCount?: number;
   }) {
     this.desc = desc;
   }
 
-  createView(): object {
+  createView(_desc?: unknown): object {
     return {texture: this};
   }
 
@@ -155,6 +157,7 @@ function createMockGPUDevice(opts?: {
 
   const buffers: MockGPUBuffer[] = [];
   const textures: MockGPUTexture[] = [];
+  const samplers: Array<Record<string, unknown>> = [];
   const shaderCodes: string[] = [];
   const pipelines: Array<Record<string, unknown>> = [];
   const writes: RecordedWrite[] = [];
@@ -228,6 +231,7 @@ function createMockGPUDevice(opts?: {
       return t;
     },
     createSampler(desc) {
+      samplers.push((desc ?? {}) as Record<string, unknown>);
       return {sampler: desc};
     },
     createShaderModule(desc) {
@@ -306,6 +310,7 @@ function createMockGPUDevice(opts?: {
     device,
     buffers,
     textures,
+    samplers,
     shaderCodes,
     pipelines,
     writes,
@@ -1140,6 +1145,25 @@ async function runTests(): Promise<void> {
         gpu.externalCopies.length,
         1,
         'decoded __gpuImageSource uploaded via copyExternalImageToTexture',
+      );
+      const uploaded64 = gpu.textures.find(
+        (t) =>
+          (t.desc.size as {width?: number})?.width === 64 &&
+          (t.desc.size as {height?: number})?.height === 64,
+      );
+      assert.strictEqual(
+        uploaded64?.desc.mipLevelCount,
+        7,
+        '64x64 WebGPU scene texture allocates all 7 mip levels',
+      );
+      assert.ok(
+        gpu.samplers.some(
+          (s) =>
+            s['addressModeU'] === 'clamp-to-edge' &&
+            s['addressModeV'] === 'clamp-to-edge' &&
+            !s['compare'],
+        ),
+        'WebGPU mipmap generator uses a dedicated clamp-to-edge linear sampler',
       );
       const blendPass = gpu.passes[gpu.passes.length - 1];
       assert.strictEqual(

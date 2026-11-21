@@ -41,7 +41,7 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz` |
 | Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz` |
 | Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 35 KB gz` |
-| Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 23 KB gz` |
+| Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 24 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
 | Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 244 KB gz` |
 | Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 262 KB gz` |
