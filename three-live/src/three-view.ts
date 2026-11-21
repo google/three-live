@@ -236,7 +236,7 @@ import {
   type ShadowMapsMode,
   type ThreeLivePlugin,
 } from './plugin';
-import {resolveSectionPlane} from './section-plane';
+import {resolveSectionCapColor, resolveSectionPlane} from './section-plane';
 ensureCapabilityChecker();
 export {getRegisteredPlugins, registerPlugin, type ThreeLivePlugin};
 
@@ -503,7 +503,7 @@ uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclu
 uniform float uNormalScale,uOcclusionStrength;
 /*XRD_U*//*SHD_U*/
 uniform vec2 uViewportSize;
-uniform vec4 uSectionPlane;
+uniform vec4 uSectionPlane,uSectionCapColor;
 uniform int uToneMapping,uNumDirLights,uNumPointLights,uSectionEnabled;
 uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2],uPointLightSpotDir[2];
 uniform vec2 uPointLightSpotCone[2];
@@ -565,6 +565,7 @@ return b*max(dot(N,L),0.0)*0.75+vec3(pow(h,e)*w+uClearcoat.x*pow(h,mix(64.0,512.
 
 void main(){
 if(uSectionEnabled==1&&dot(vWorldPos,uSectionPlane.xyz)>uSectionPlane.w)discard;
+if(uSectionEnabled==1&&uSectionCapColor.a>0.5&&!gl_FrontFacing){float outAlpha=1.0;/*XRD_O*/fragColor=vec4(uSectionCapColor.rgb,outAlpha);return;}
 vec4 base=uBaseColor;
 if(uHasTexture==1)base*=texture(uBaseColorTexture,vUV);
 if(base.a<0.004)discard;
@@ -717,14 +718,17 @@ export function evaluateToneMapping(
 
 const VS_PICK = `#version 300 es
 layout(location=0) in vec3 aPosition;
-uniform mat4 uMVP;
-void main(){gl_Position=uMVP*vec4(aPosition,1.0);}`;
+uniform mat4 uMVP,uModel;
+out vec3 vWorldPos;
+void main(){vWorldPos=(uModel*vec4(aPosition,1.0)).xyz;gl_Position=uMVP*vec4(aPosition,1.0);}`;
 
 const FS_PICK = `#version 300 es
 precision highp float;
-uniform vec4 uColorId;
+in vec3 vWorldPos;
+uniform vec4 uColorId,uSectionPlane;
+uniform int uSectionEnabled;
 out vec4 fragColor;
-void main(){fragColor=uColorId;}`;
+void main(){if(uSectionEnabled==1&&dot(vWorldPos,uSectionPlane.xyz)>uSectionPlane.w)discard;fragColor=uColorId;}`;
 
 function getUniforms<T extends string>(
   gl: WebGL2RenderingContext,
@@ -739,7 +743,7 @@ function getUniforms<T extends string>(
 }
 
 const RENDER_UNIFORMS =
-  'uMVP uModel uInstanced uViewProj uNormalMatrix uUvTransform uBaseColor uMetallic uRoughness uClearcoat uEmissive uCameraPos uBaseColorTexture uHasTexture uMetallicRoughnessTexture uHasMetallicRoughnessTexture uNormalTexture uHasNormalTexture uNormalScale uOcclusionTexture uHasOcclusionTexture uOcclusionStrength uEmissiveFactor uEmissiveTexture uHasEmissiveTexture uToneMapping uEnvironmentMap uHasEnvironmentMap uAmbientColor uHemi uNumDirLights uDirLightDir uDirLightColor uNumPointLights uPointLightPos uPointLightColor uPointLightSpotDir uPointLightSpotCone uEnvIntensity uExposure uViewportSize uSectionPlane uSectionEnabled'.split(
+  'uMVP uModel uInstanced uViewProj uNormalMatrix uUvTransform uBaseColor uMetallic uRoughness uClearcoat uEmissive uCameraPos uBaseColorTexture uHasTexture uMetallicRoughnessTexture uHasMetallicRoughnessTexture uNormalTexture uHasNormalTexture uNormalScale uOcclusionTexture uHasOcclusionTexture uOcclusionStrength uEmissiveFactor uEmissiveTexture uHasEmissiveTexture uToneMapping uEnvironmentMap uHasEnvironmentMap uAmbientColor uHemi uNumDirLights uDirLightDir uDirLightColor uNumPointLights uPointLightPos uPointLightColor uPointLightSpotDir uPointLightSpotCone uEnvIntensity uExposure uViewportSize uSectionPlane uSectionCapColor uSectionEnabled'.split(
     ' ',
   );
 
@@ -755,7 +759,7 @@ function renderShaderSpec(): {fs: string; uniforms: readonly string[]} {
   const s = r.shadowMapShader;
   return {
     fs: FS_RENDER.replace('/*XRD_U*/', x?.uniformsGLSL || '')
-      .replace('/*XRD_O*/', x?.occlusionGLSL || '')
+      .replace(/\/\*XRD_O\*\//g, x?.occlusionGLSL || '')
       .replace('/*SHD_U*/', s?.uniformsGLSL || '')
       .replace('/*SHD_D*/', s?.dirGLSL || '')
       .replace('/*SHD_P*/', s?.ptGLSL || ''),
@@ -821,6 +825,7 @@ interface MeshGpu {
   visible?: boolean;
   castShadow?: boolean;
   receiveShadow?: boolean;
+  boundsIgnore?: boolean;
 }
 
 /** Cached `cutaway` trait data: local outward normal and local AABB center. */
@@ -1115,30 +1120,31 @@ function drawPrim(
   gl: WebGL2RenderingContext,
   prim: PrimitiveGpu,
   m?: ArrayLike<number>,
+  keepBackfaces = false,
 ): void {
-  const cull = prim.doubleSided === false;
+  const cull = prim.doubleSided === false && !keepBackfaces;
   if (cull) {
     gl.enable?.(gl.CULL_FACE);
     gl.cullFace?.(gl.BACK);
-    if (m) {
-      gl.frontFace?.(
-        m[0] * (m[5] * m[10] - m[6] * m[9]) -
-          m[4] * (m[1] * m[10] - m[2] * m[9]) +
-          m[8] * (m[1] * m[6] - m[2] * m[5]) <
-          0
-          ? gl.CW
-          : gl.CCW,
-      );
-    }
+  }
+  if ((cull || keepBackfaces) && m) {
+    gl.frontFace?.(
+      m[0] * (m[5] * m[10] - m[6] * m[9]) -
+        m[4] * (m[1] * m[10] - m[2] * m[9]) +
+        m[8] * (m[1] * m[6] - m[2] * m[5]) <
+        0
+        ? gl.CW
+        : gl.CCW,
+    );
   }
   if (prim.indices) {
     gl.drawElements(gl.TRIANGLES, prim.indexCount, prim.indexType, 0);
   } else {
     gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
   }
-  if (cull) {
+  if (cull || keepBackfaces) {
     gl.frontFace?.(gl.CCW);
-    gl.disable?.(gl.CULL_FACE);
+    if (cull) gl.disable?.(gl.CULL_FACE);
   }
 }
 
@@ -1561,8 +1567,38 @@ function buildGpuSceneUnchecked(
 
   let min: [number, number, number] = [Infinity, Infinity, Infinity];
   let max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  const allMin: [number, number, number] = [Infinity, Infinity, Infinity];
+  const allMax: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   let totalHostVertices = 0;
   let totalHostIndices = 0;
+
+  const nodeParent = new Int32Array(
+    Array.isArray(gltf.nodes) ? gltf.nodes.length : 0,
+  ).fill(-1);
+  if (Array.isArray(gltf.nodes)) {
+    for (let p = 0; p < gltf.nodes.length; p++) {
+      const kids = gltf.nodes[p]?.children;
+      if (Array.isArray(kids)) {
+        for (const c of kids) {
+          if (typeof c === 'number' && c >= 0 && c < nodeParent.length) {
+            nodeParent[c] = p;
+          }
+        }
+      }
+    }
+  }
+  const hasAncestorBoundsIgnore = (startIdx: number): boolean => {
+    let cur = startIdx >= 0 && startIdx < nodeParent.length ? nodeParent[startIdx] : -1;
+    let depth = 0;
+    while (cur >= 0 && depth++ < 64) {
+      const pEx = gltf.nodes[cur]?.extras;
+      if (pEx?.boundsIgnore === true || pEx?.xr?.boundsIgnore === true) {
+        return true;
+      }
+      cur = nodeParent[cur];
+    }
+    return false;
+  };
 
   for (let i = 0; i < itemsToBuild.length; i++) {
     const item = itemsToBuild[i];
@@ -1572,19 +1608,26 @@ function buildGpuSceneUnchecked(
     const normMat = new Float32Array(9);
     mat3NormalFromMat4(normMat, trans);
     const sh = item.node?.extras?.shadow;
+    const ex = item.node?.extras || m.extras;
+    const boundsIgnore = Boolean(
+      ex?.boundsIgnore === true ||
+        ex?.xr?.boundsIgnore === true ||
+        hasAncestorBoundsIgnore(item.nodeIdx),
+    );
     const meshGpu: MeshGpu = {
       name: item.node.name || m.name || `Mesh_${item.meshIdx}`,
       nodeIndex: item.nodeIdx,
       transform: trans,
       normalMatrix: normMat,
       primitives: [],
-      extras: item.node.extras || m.extras,
+      extras: ex,
       ...(item.node?.visible === false ||
       item.node?.extensions?.KHR_node_visibility?.visible === false
         ? {visible: false}
         : {}),
       ...(typeof sh?.cast === 'boolean' ? {castShadow: sh.cast} : {}),
       ...(typeof sh?.receive === 'boolean' ? {receiveShadow: sh.receive} : {}),
+      ...(boundsIgnore ? {boundsIgnore: true} : {}),
     };
     track.mesh = meshGpu;
 
@@ -1748,8 +1791,12 @@ function buildGpuSceneUnchecked(
               lo += a < b ? a : b;
               hi += a > b ? a : b;
             }
-            if (lo < min[c]) min[c] = lo;
-            if (hi > max[c]) max[c] = hi;
+            if (lo < allMin[c]) allMin[c] = lo;
+            if (hi > allMax[c]) allMax[c] = hi;
+            if (!meshGpu.boundsIgnore) {
+              if (lo < min[c]) min[c] = lo;
+              if (hi > max[c]) max[c] = hi;
+            }
           }
         };
         if (meshGpu.instanceMatrices && meshGpu.instanceMatrices.length >= 16) {
@@ -1933,6 +1980,10 @@ function buildGpuSceneUnchecked(
     meshes.push(meshGpu);
   }
 
+  if (!isFinite(min[0])) {
+    min = allMin;
+    max = allMax;
+  }
   if (!isFinite(min[0])) min = [-1, -1, -1];
   if (!isFinite(max[0])) max = [1, 1, 1];
   const center: [number, number, number] = [
@@ -1982,13 +2033,14 @@ function nowMs(): number {
 }
 
 function getOrbitEye(v: {
+  followTarget?: [number, number, number] | null;
   customTarget: [number, number, number] | null;
   bounds: {center: [number, number, number]};
   currDistance: number;
   currPhi: number;
   currTheta: number;
 }): [number, number, number] {
-  const c = v.customTarget || v.bounds.center;
+  const c = v.followTarget || v.customTarget || v.bounds.center;
   const cosPhi = v.currDistance * Math.cos(v.currPhi);
   return [
     c[0] + cosPhi * Math.sin(v.currTheta),
@@ -2066,6 +2118,8 @@ export class ThreeView {
 
   // Active camera state
   customTarget: [number, number, number] | null = null;
+  followTarget: [number, number, number] | null = null;
+  private followActive = false;
   /**
    * Honors `userData.xr.cutaway` dollhouse culling (`cutaway="off"` on the
    * element sets this to `false`). Toggling needs no recompile.
@@ -2290,7 +2344,13 @@ export class ThreeView {
     this.renderProg = createProgram(gl, VS_RENDER, spec.fs)!;
     this.pickProg = createProgram(gl, VS_PICK, FS_PICK)!;
     this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
-    this.uPick = getUniforms(gl, this.pickProg, ['uMVP', 'uColorId']);
+    this.uPick = getUniforms(gl, this.pickProg, [
+      'uMVP',
+      'uModel',
+      'uColorId',
+      'uSectionPlane',
+      'uSectionEnabled',
+    ]);
     this.setupPickingFbo();
   }
 
@@ -2468,8 +2528,10 @@ export class ThreeView {
     if (!this.customDistance) {
       this.initialDistance =
         this.distanceMode === 'absolute' ? 3.0 : bounds.radius * 2.5;
-      this.targetDistance = this.initialDistance;
-      this.currDistance = this.initialDistance;
+      if (!this.followActive) {
+        this.targetDistance = this.initialDistance;
+        this.currDistance = this.initialDistance;
+      }
     }
 
     const glbExposure =
@@ -2532,6 +2594,8 @@ export class ThreeView {
     this.worldMatrices = [];
     this.gltf = null;
     this.initialNodeTransforms = [];
+    this.followTarget = null;
+    this.followActive = false;
     this.turntableRotation = 0;
     this.updateTurntableMatrix();
     if (this.gl) {
@@ -2818,7 +2882,7 @@ export class ThreeView {
     z: number;
     toString(): string;
   } {
-    const c = this.customTarget || this.bounds.center;
+    const c = this.followTarget || this.customTarget || this.bounds.center;
     return {
       x: c[0],
       y: c[1],
@@ -3057,6 +3121,50 @@ export class ThreeView {
     return this.customTarget ? [...this.customTarget] : null;
   }
 
+  follow(target: readonly [number, number, number] | null): void {
+    if (
+      target &&
+      target.length >= 3 &&
+      isFinite(target[0] + target[1] + target[2])
+    ) {
+      this.followTarget = [target[0], target[1], target[2]];
+      return;
+    }
+    this.followTarget = null;
+    if (this.followActive) {
+      this.followActive = false;
+      this.targetPhi = this.clampPhi(this.initialPhi);
+      this.targetDistance = this.clampDistance(
+        this.initialDistance ??
+          (this.distanceMode === 'absolute' ? 3 : this.bounds.radius * 2.5),
+      );
+    }
+  }
+
+  frameFollow(
+    polarDeg: number,
+    distanceMeters: number,
+    thetaDeg?: number,
+  ): void {
+    this.followActive = true;
+    this.autoRotate = false;
+    this.turntableRotation = 0;
+    this.updateTurntableMatrix();
+    const k = Math.PI / 180;
+    if (thetaDeg !== undefined && isFinite(thetaDeg)) {
+      this.targetTheta = this.clampTheta(thetaDeg * k);
+    }
+    if (isFinite(polarDeg)) {
+      this.targetPhi = this.clampPhi((90 - polarDeg) * k);
+    }
+    if (isFinite(distanceMeters)) {
+      this.targetDistance = Math.max(
+        0.01,
+        Math.min(this.maxDistanceLimit ?? 1e4, distanceMeters),
+      );
+    }
+  }
+
   public setFieldOfView(fovDeg: number): void {
     const clamped = Math.max(10, Math.min(90, fovDeg));
     this.fov = (clamped * Math.PI) / 180;
@@ -3133,8 +3241,11 @@ export class ThreeView {
 
   private clampDistance(distance: number): number {
     const r = this.bounds?.radius;
+    const minD = this.followActive
+      ? 0.01
+      : (this.minDistanceLimit ?? (r ? r * 0.5 : 0.1));
     return Math.max(
-      this.minDistanceLimit ?? (r ? r * 0.5 : 0.1),
+      minD,
       Math.min(this.maxDistanceLimit ?? (r ? r * 8.0 : 100), distance),
     );
   }
@@ -3191,6 +3302,8 @@ export class ThreeView {
   }
 
   public resetCamera(): void {
+    this.followTarget = null;
+    this.followActive = false;
     this.targetTheta = this.clampTheta(this.initialTheta);
     this.targetPhi = this.clampPhi(this.initialPhi);
     this.targetDistance = this.clampDistance(
@@ -3312,10 +3425,11 @@ export class ThreeView {
       this.totalDragDist += Math.hypot(dx, dy);
 
       if (
-        this.isPanning ||
-        e.button === 2 ||
-        e.shiftKey ||
-        this.activePointers.size === 2
+        !this.followActive &&
+        (this.isPanning ||
+          e.button === 2 ||
+          e.shiftKey ||
+          this.activePointers.size === 2)
       ) {
         const right = [
           this.viewMatrix[0],
@@ -3475,6 +3589,13 @@ export class ThreeView {
     let candidateMeshes: MeshGpu[] = [];
     const clampedX = Math.max(0, Math.min(w - 1, canvasX));
     const readY = Math.max(0, Math.min(h - 1, h - 1 - canvasY));
+    const pickSection = resolveSectionPlane(this);
+    const pickHasCap = resolveSectionCapColor(this) !== null;
+    const meshAllowsCap = (m: MeshGpu): boolean =>
+      m.extras?.['sectionCap'] !== false &&
+      m.extras?.['xr']?.['sectionCap'] !== false &&
+      (m as {userData?: Record<string, unknown>}).userData?.['sectionCap'] !==
+        false;
 
     if (this.pickFbo && gl && !this.xrSessionActive) {
       if (this.pickFboWidth !== w || this.pickFboHeight !== h) {
@@ -3489,6 +3610,15 @@ export class ThreeView {
 
       gl.useProgram(this.pickProg);
       const pickEye = getOrbitEye(this);
+      if (pickSection && this.uPick.uSectionPlane) {
+        gl.uniform4f(
+          this.uPick.uSectionPlane,
+          pickSection.normal[0],
+          pickSection.normal[1],
+          pickSection.normal[2],
+          pickSection.constant,
+        );
+      }
 
       for (let i = 0; i < this.meshes.length; i++) {
         const mesh = this.meshes[i] as any;
@@ -3499,6 +3629,11 @@ export class ThreeView {
         const g = ((id >> 8) & 0xff) / 255.0;
         const b = ((id >> 16) & 0xff) / 255.0;
         gl.uniform4f(this.uPick.uColorId, r, g, b, 1.0);
+        const clipPick = pickSection !== null;
+        if (this.uPick.uSectionEnabled) {
+          gl.uniform1i(this.uPick.uSectionEnabled, clipPick ? 1 : 0);
+        }
+        const allowCap = clipPick && pickHasCap && meshAllowsCap(mesh);
 
         mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);
         // Cut-away walls are invisible, so taps pass through to the rooms.
@@ -3513,6 +3648,10 @@ export class ThreeView {
           const instCount = instMats.length >> 4;
           const instModel = mat4Create();
           for (const prim of mesh.primitives) {
+            const primCap =
+              allowCap &&
+              prim.alphaMode !== 'BLEND' &&
+              !(prim as {isTransmissive?: boolean}).isTransmissive;
             gl.bindVertexArray(prim.vao);
             for (let inst = 0; inst < instCount; inst++) {
               mat4Multiply(
@@ -3522,16 +3661,26 @@ export class ThreeView {
               );
               mat4Multiply(this.mvpMatrix, vp, instModel);
               gl.uniformMatrix4fv(this.uPick.uMVP, false, this.mvpMatrix);
-              drawPrim(gl, prim, instModel);
+              if (this.uPick.uModel) {
+                gl.uniformMatrix4fv(this.uPick.uModel, false, instModel);
+              }
+              drawPrim(gl, prim, instModel, primCap);
             }
           }
         } else {
           mat4Multiply(this.mvpMatrix, vp, this.modelMatrix);
           gl.uniformMatrix4fv(this.uPick.uMVP, false, this.mvpMatrix);
+          if (this.uPick.uModel) {
+            gl.uniformMatrix4fv(this.uPick.uModel, false, this.modelMatrix);
+          }
 
           for (const prim of mesh.primitives) {
+            const primCap =
+              allowCap &&
+              prim.alphaMode !== 'BLEND' &&
+              !(prim as {isTransmissive?: boolean}).isTransmissive;
             gl.bindVertexArray(prim.vao);
-            drawPrim(gl, prim, this.modelMatrix);
+            drawPrim(gl, prim, this.modelMatrix, primCap);
           }
         }
       }
@@ -3601,8 +3750,24 @@ export class ThreeView {
           normal: [0, 1, 0],
         };
 
+        const clipHit =
+          pickSection !== null &&
+          !(hitMesh as {isPluginMesh?: boolean}).isPluginMesh;
+        const hitAllowCap = clipHit && pickHasCap && meshAllowsCap(hitMesh);
+        const triHit: RayHit = {
+          distance: Infinity,
+          point: [0, 0, 0],
+          normal: [0, 1, 0],
+        };
+        const m = this.modelMatrix;
+
         for (const prim of hitMesh.primitives) {
           if (!prim.positions) continue;
+          const primCap =
+            hitAllowCap &&
+            prim.alphaMode !== 'BLEND' &&
+            !(prim as {isTransmissive?: boolean}).isTransmissive;
+          const cullBack = prim.doubleSided === false && !primCap;
           const pos = prim.positions;
           const idx = prim.indices;
           const numTriangles = idx
@@ -3613,27 +3778,58 @@ export class ThreeView {
             const i0 = (idx ? idx[t * 3] : t * 3) * 3;
             const i1 = (idx ? idx[t * 3 + 1] : t * 3 + 1) * 3;
             const i2 = (idx ? idx[t * 3 + 2] : t * 3 + 2) * 3;
+            triHit.distance = outHit.distance;
 
-            rayIntersectsTriangle(
-              nearP[0],
-              nearP[1],
-              nearP[2],
-              dirX,
-              dirY,
-              dirZ,
-              pos[i0],
-              pos[i0 + 1],
-              pos[i0 + 2],
-              pos[i1],
-              pos[i1 + 1],
-              pos[i1 + 2],
-              pos[i2],
-              pos[i2 + 1],
-              pos[i2 + 2],
-              outHit,
-              1e-4,
-              prim.doubleSided === false,
-            );
+            if (
+              rayIntersectsTriangle(
+                nearP[0],
+                nearP[1],
+                nearP[2],
+                dirX,
+                dirY,
+                dirZ,
+                pos[i0],
+                pos[i0 + 1],
+                pos[i0 + 2],
+                pos[i1],
+                pos[i1 + 1],
+                pos[i1 + 2],
+                pos[i2],
+                pos[i2 + 1],
+                pos[i2 + 2],
+                triHit,
+                1e-4,
+                cullBack,
+              )
+            ) {
+              if (clipHit && pickSection) {
+                const lx = triHit.point[0];
+                const ly = triHit.point[1];
+                const lz = triHit.point[2];
+                const wx = m[0] * lx + m[4] * ly + m[8] * lz + m[12];
+                const wy = m[1] * lx + m[5] * ly + m[9] * lz + m[13];
+                const wz = m[2] * lx + m[6] * ly + m[10] * lz + m[14];
+                if (
+                  wx * pickSection.normal[0] +
+                    wy * pickSection.normal[1] +
+                    wz * pickSection.normal[2] >
+                  pickSection.constant
+                ) {
+                  continue;
+                }
+              }
+              outHit.distance = triHit.distance;
+              outHit.point = [
+                triHit.point[0],
+                triHit.point[1],
+                triHit.point[2],
+              ];
+              outHit.normal = [
+                triHit.normal[0],
+                triHit.normal[1],
+                triHit.normal[2],
+              ];
+            }
           }
         }
 
@@ -3753,7 +3949,7 @@ export class ThreeView {
         : Math.max(this.bounds.radius * 20, 10);
     mat4Perspective(this.projMatrix, this.fov, aspect, 0.1, farPlane);
 
-    const c = this.customTarget || this.bounds.center;
+    const c = this.followTarget || this.customTarget || this.bounds.center;
     mat4LookAt(this.viewMatrix, getOrbitEye(this), c, [0, 1, 0]);
     mat4Multiply(this.mvpMatrix, this.projMatrix, this.viewMatrix);
     mat3NormalFromMat4(this.normalMatrix, this.modelMatrix);
@@ -4069,7 +4265,7 @@ export class ThreeView {
         this.backdropMeshes.length > 0
           ? Math.max(this.bounds.radius * 20, 120)
           : Math.max(this.bounds.radius * 20, 10);
-      const c = this.customTarget || this.bounds.center;
+      const c = this.followTarget || this.customTarget || this.bounds.center;
       const [baseEyeX, baseEyeY, baseEyeZ] = getOrbitEye(this);
       const rightVecX = Math.cos(this.currTheta);
       const rightVecZ = -Math.sin(this.currTheta);
@@ -4192,6 +4388,7 @@ export class ThreeView {
     let hasTransmissive = false;
     let hasRefraction = false;
     const sectionPlane = resolveSectionPlane(this);
+    const sectionCapColor = resolveSectionCapColor(this);
     const renderList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
     const bindTex2D = (
@@ -4349,14 +4546,21 @@ export class ThreeView {
           );
 
           this.bindLights(u);
+          const clip =
+            sectionPlane !== null &&
+            i >= numBackdrop &&
+            !(mesh as {isPluginMesh?: boolean}).isPluginMesh;
+          const noCap =
+            mesh.extras?.['sectionCap'] === false ||
+            mesh.extras?.['xr']?.['sectionCap'] === false ||
+            (mesh as {userData?: Record<string, unknown>}).userData?.[
+              'sectionCap'
+            ] === false;
+          const capOn = clip && !isTrans && !noCap && sectionCapColor !== null;
           if (u.uSectionEnabled) {
             // Core `section-plane` clipping (`<three-live section-plane=...>`),
             // matching the shadow pass. `<xr-live>`'s exploded-view plugin may
             // still override these uniforms in `onBeforeDrawPrimitive` below.
-            const clip =
-              sectionPlane !== null &&
-              i >= numBackdrop &&
-              !(mesh as any).isPluginMesh;
             gl.uniform1i(u.uSectionEnabled, clip ? 1 : 0);
             if (clip && u.uSectionPlane) {
               gl.uniform4f(
@@ -4367,6 +4571,15 @@ export class ThreeView {
                 sectionPlane.constant,
               );
             }
+          }
+          if (u.uSectionCapColor) {
+            gl.uniform4f(
+              u.uSectionCapColor,
+              capOn ? sectionCapColor[0] : 0,
+              capOn ? sectionCapColor[1] : 0,
+              capOn ? sectionCapColor[2] : 0,
+              capOn ? 1 : 0,
+            );
           }
 
           for (const plugin of registeredPlugins) {
@@ -4499,10 +4712,10 @@ export class ThreeView {
                   b[3],
                 ]);
               }
-              drawPrim(gl, prim, instModel);
+              drawPrim(gl, prim, instModel, capOn);
             }
           } else {
-            drawPrim(gl, prim, this.modelMatrix);
+            drawPrim(gl, prim, this.modelMatrix, capOn);
           }
           if (isBlend) {
             gl.depthMask?.(true);

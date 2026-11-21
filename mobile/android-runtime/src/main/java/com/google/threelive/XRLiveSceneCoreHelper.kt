@@ -259,6 +259,8 @@ data class XRLiveNodeTraits(
   val gaze: XRGazeTrait? = null,
   val explode: XRExplodeTrait? = null,
   val cutaway: XRCutawayTrait? = null,
+  /** Excludes this node from auto-framing, AR scale, and explode radius. */
+  val boundsIgnore: Boolean = false,
   val anchorPersist: XRAnchorPersistTrait? = null,
   val bloom: XRBloomTrait? = null,
   val outline: XROutlineTrait? = null,
@@ -462,16 +464,20 @@ object XRLiveSceneCoreHelper {
     val results = ArrayList<XRLiveNodeTraits>()
     for ((idx, raw) in nodes.withIndex()) {
       val node = MiniJson.asMap(raw) ?: continue
-      val rawXr = MiniJson.asMap(MiniJson.asMap(node["extras"])?.get("xr"))
+      val extras = MiniJson.asMap(node["extras"])
+      val topBoundsIgnore = extras?.get("boundsIgnore") == true
+      val rawXr = MiniJson.asMap(extras?.get("xr"))
       val extMap = MiniJson.asMap(node["extensions"])
       val sc = MiniJson.asMap(extMap?.get("ANDROID_xr_scenecore"))
       val msftLod = MiniJson.asMap(extMap?.get("MSFT_lod"))
       val khrAudioMap = extractKhrAudioEmitterMap(khrAudioRoot, node)
-      if (rawXr == null && sc == null && khrAudioMap == null && msftLod == null) continue
+      if (rawXr == null && sc == null && khrAudioMap == null && msftLod == null && !topBoundsIgnore)
+        continue
       val xr =
         if (
           (khrAudioMap != null && rawXr?.get("audioEmitter") == null) ||
-            (msftLod != null && rawXr?.get("lod") == null)
+            (msftLod != null && rawXr?.get("lod") == null) ||
+            (topBoundsIgnore && rawXr?.get("boundsIgnore") == null)
         ) {
           val merged = LinkedHashMap<String, Any?>()
           if (rawXr != null) merged.putAll(rawXr)
@@ -480,6 +486,9 @@ object XRLiveSceneCoreHelper {
           }
           if (msftLod != null && merged["lod"] == null) {
             merged["lod"] = true
+          }
+          if (topBoundsIgnore && merged["boundsIgnore"] == null) {
+            merged["boundsIgnore"] = true
           }
           merged
         } else {
@@ -1500,6 +1509,7 @@ object XRLiveSceneCoreHelper {
       gaze = parseGaze(xr["gaze"] ?: sc["gaze"]),
       explode = parseExplode(xr["explode"] ?: sc["explode"]),
       cutaway = parseCutaway(xr["cutaway"] ?: sc["cutaway"]),
+      boundsIgnore = xr["boundsIgnore"] == true || sc["boundsIgnore"] == true,
       anchorPersist = anchorPersist,
       bloom = parseBloom(xr["bloom"] ?: sc["bloom"]),
       outline = parseOutline(xr["outline"] ?: sc["outline"]),

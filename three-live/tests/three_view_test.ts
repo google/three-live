@@ -3449,6 +3449,234 @@ async function runThreeViewTests() {
     }
   }
 
+  // Follow camera (`follow` / `frameFollow`), `section-cap-color` (back-face poché), and `boundsIgnore`.
+  {
+    const capAttrs = new Map<string, string>();
+    let cullOn = false;
+    let cullDraws = 0;
+    let lastCap: number[] | null = null;
+    const capGl = new Proxy(
+      {
+        CULL_FACE: 0x0b44,
+        BACK: 0x0405,
+        CCW: 0x0901,
+        CW: 0x0900,
+        canvas: {width: 400, height: 400},
+        getShaderParameter: () => true,
+        getProgramParameter: () => true,
+        getUniformLocation: (_p: unknown, name: string) => ({name}),
+        enable: (cap: number) => {
+          if (cap === 0x0b44) cullOn = true;
+        },
+        disable: (cap: number) => {
+          if (cap === 0x0b44) cullOn = false;
+        },
+        uniform4f: (
+          loc: {name?: string} | null,
+          x: number,
+          y: number,
+          z: number,
+          w: number,
+        ) => {
+          if (loc?.name === 'uSectionCapColor') lastCap = [x, y, z, w];
+        },
+        drawElements: () => {
+          if (cullOn) cullDraws++;
+        },
+      },
+      {
+        get(t, p) {
+          return p in t
+            ? (t as Record<PropertyKey, unknown>)[p]
+            : () => ({});
+        },
+      },
+    ) as unknown as WebGL2RenderingContext;
+    const capCanvas = {
+      ...mockCanvas,
+      getContext: () => capGl,
+    } as unknown as HTMLCanvasElement;
+    const capContainer = {
+      ...mockCanvas,
+      getContext: () => capGl,
+      getAttribute: (n: string) => capAttrs.get(n) ?? null,
+      hasAttribute: (n: string) => capAttrs.has(n),
+    } as unknown as HTMLElement;
+
+    const scene = new THREE.Scene();
+    const house = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 2, 2),
+      new THREE.MeshStandardMaterial({
+        color: 0xd9cdb8,
+        side: THREE.FrontSide,
+      }),
+    );
+    house.name = 'House';
+    scene.add(house);
+    const lawn = new THREE.Mesh(
+      new THREE.BoxGeometry(40, 0.1, 40),
+      new THREE.MeshStandardMaterial({color: 0x4b7042}),
+    );
+    lawn.name = 'Lawn';
+    lawn.position.set(0, -1, 0);
+    lawn.userData = {boundsIgnore: true};
+    scene.add(lawn);
+
+    const usdzBytes = scene.toUSDZ();
+    const usdzStr = new TextDecoder('latin1').decode(usdzBytes);
+    assert(
+      usdzStr.includes('bool boundsIgnore = 1'),
+      'scene.toUSDZ() preserves userData.boundsIgnore in customData.xr',
+    );
+
+    const fView = new ThreeView(capContainer, capCanvas, {autoStart: false});
+    fView.loadGLBData(parseGLB(scene.toGLB()));
+    assert(
+      fView.bounds.radius < 2.5 &&
+        Math.abs(fView.bounds.center[0]) < 1e-4 &&
+        Math.abs(fView.bounds.center[1]) < 1e-4,
+      `boundsIgnore excludes 40m lawn from ThreeView.bounds (got radius=${fView.bounds.radius.toFixed(2)})`,
+    );
+
+    // Fallback when every mesh sets boundsIgnore.
+    const allIgnoredScene = new THREE.Scene();
+    const onlyLawn = new THREE.Mesh(
+      new THREE.BoxGeometry(10, 1, 10),
+      new THREE.MeshStandardMaterial({color: 0x4b7042}),
+    );
+    onlyLawn.userData = {xr: {boundsIgnore: true}};
+    allIgnoredScene.add(onlyLawn);
+    const fallbackView = new ThreeView(capContainer, capCanvas, {
+      autoStart: false,
+    });
+    fallbackView.loadGLBData(parseGLB(allIgnoredScene.toGLB()));
+    assert(
+      fallbackView.bounds.radius > 6.5,
+      `ThreeView.bounds falls back to full scene bounds when every mesh sets boundsIgnore (radius=${fallbackView.bounds.radius.toFixed(2)})`,
+    );
+    fallbackView.destroy?.();
+
+    // Follow camera polar-to-elevation conversion, min-distance bypass, and customTarget preservation.
+    fView.setTarget(1, 2, 3);
+    fView.follow([4, 1.5, -2]);
+    fView.frameFollow(90, 0.05, -90);
+    fView.jumpCameraToGoal();
+    const orbitFp = fView.getCameraOrbit();
+    const tgtFp = fView.getCameraTarget();
+    assert(
+      Math.abs((orbitFp.phi * 180) / Math.PI) < 0.1 &&
+        orbitFp.radius <= 0.06 &&
+        Math.abs((orbitFp.theta * 180) / Math.PI + 90) < 0.1 &&
+        Math.abs(tgtFp.x - 4) < 1e-4 &&
+        fView.getTarget()?.[0] === 1,
+      'frameFollow(90, 0.05, -90) sets horizontal phi=0, radius=0.05m, theta=-90deg while keeping customTarget',
+    );
+    fView.follow(null);
+    fView.jumpCameraToGoal();
+    const tgtRestored = fView.getCameraTarget();
+    assert(
+      Math.abs(tgtRestored.x - 1) < 1e-4 &&
+        Math.abs(tgtRestored.y - 2) < 1e-4 &&
+        fView.getCameraOrbit().radius > 1,
+      'follow(null) restores customTarget and initial orbit distance',
+    );
+
+    // FrontSide CULL_FACE is enabled normally, then bypassed when section-plane + section-cap-color are active.
+    cullDraws = 0;
+    fView.render();
+    assert(
+      cullDraws === 1 && lastCap?.[3] === 0,
+      'FrontSide solid enables CULL_FACE when section-cap-color is inactive',
+    );
+    capAttrs.set('section-plane', 'y:0.2');
+    capAttrs.set('section-cap-color', '#1e293b');
+    cullDraws = 0;
+    fView.render();
+    assert(
+      cullDraws === 0 &&
+        lastCap !== null &&
+        Math.abs(lastCap[0] - 0x1e / 255) < 1e-3 &&
+        Math.abs(lastCap[1] - 0x29 / 255) < 1e-3 &&
+        Math.abs(lastCap[2] - 0x3b / 255) < 1e-3 &&
+        lastCap[3] === 1,
+      'section-cap-color="#1e293b" binds matte RGB uniform and keeps FrontSide back-faces unculled for poché shading',
+    );
+    fView.destroy?.();
+
+    // Parent Group `boundsIgnore`, translucent glass skipping `section-cap-color`, and `pickMesh` section clipping.
+    const grpScene = new THREE.Scene();
+    const siteGrp = new THREE.Group();
+    siteGrp.userData = {boundsIgnore: true};
+    const grpLawn = new THREE.Mesh(
+      new THREE.BoxGeometry(50, 0.1, 50),
+      new THREE.MeshStandardMaterial({color: 0x4b7042}),
+    );
+    grpLawn.position.set(0, -1, 0);
+    siteGrp.add(grpLawn);
+    grpScene.add(siteGrp);
+
+    const floorChair = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 0.4, 1),
+      new THREE.MeshStandardMaterial({color: 0xeab308}),
+    );
+    floorChair.name = 'InteriorChair';
+    floorChair.position.set(0, 0, 0);
+    grpScene.add(floorChair);
+
+    const upperRoof = new THREE.Mesh(
+      new THREE.BoxGeometry(3, 0.2, 3),
+      new THREE.MeshStandardMaterial({color: 0x991b1b}),
+    );
+    upperRoof.name = 'UpperRoof';
+    upperRoof.position.set(0, 1.5, 0);
+    grpScene.add(upperRoof);
+
+    const glassPane = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 0.02),
+      new THREE.MeshStandardMaterial({
+        color: 0xbae6fd,
+        transparent: true,
+        opacity: 0.3,
+        side: THREE.FrontSide,
+      }),
+    );
+    glassPane.name = 'WindowGlass';
+    glassPane.position.set(0, 0, 1.2);
+    grpScene.add(glassPane);
+
+    const grpUsdz = new TextDecoder('latin1').decode(grpScene.toUSDZ());
+    assert(
+      grpUsdz.includes('bool boundsIgnore = 1'),
+      'Parent Group userData.boundsIgnore propagates to child meshes in USDZ export',
+    );
+
+    const gView = new ThreeView(capContainer, capCanvas, {autoStart: false});
+    gView.loadGLBData(parseGLB(grpScene.toGLB()));
+    assert(
+      gView.bounds.radius < 3.0,
+      `Parent Group boundsIgnore excludes 50m child lawn from ThreeView.bounds (radius=${gView.bounds.radius.toFixed(2)})`,
+    );
+
+    // Top-down camera looking straight down through UpperRoof (y=1.5) onto InteriorChair (y=0) with section-plane="y:0.8".
+    capAttrs.set('section-plane', 'y:0.8');
+    capAttrs.set('section-cap-color', '#1e293b');
+    gView.setTarget(0, 0, 0);
+    gView.setCamera(0, 86, 6);
+    gView.jumpCameraToGoal();
+    cullDraws = 0;
+    gView.render();
+    assert(
+      cullDraws === 1,
+      'Translucent BLEND glass primitive skips section-cap-color poché and keeps FrontSide CULL_FACE enabled',
+    );
+    const hitSliced = gView.raycastFromScreenPoint(200, 200);
+    assert(
+      hitSliced?.meshName === 'InteriorChair',
+      `raycastFromScreenPoint skips UpperRoof sliced away by section-plane="y:0.8" and hits InteriorChair (got ${hitSliced?.meshName ?? 'null'})`,
+    );
+    gView.destroy?.();
+  }
+
   console.log(
     `\n🏆 three-view Test Results: ${passed} Passed, ${failed} Failed.`,
   );

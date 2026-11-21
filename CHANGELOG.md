@@ -73,6 +73,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     architectural / CAD scenes). Host override `character-camera="on-input" |
     "immediate"` on `<xr-live>` and `XRSimWorld.characterCamera` on Android and
     iOS. The default (`immediate`) is unchanged.
+-   **`section-gizmo` and `section-cap-color` attributes:** `section-gizmo="auto
+    | always | none"` (default `"auto"`) hides the `__xr_section_gizmo__` frame
+    on static declarative cuts (`section-plane="y:1.65"`) across Web, Android
+    (`XRSpatialFeatures.sectionGizmoMode`), and iOS / visionOS
+    (`XRSpatialRealityKitFeatures.sectionGizmoMode`) while keeping it visible on
+    `section-plane="interactive"`. `section-cap-color="#rrggbb"` shades exposed
+    back-faces of sliced watertight solids with a matte poché fill on WebGL2 and
+    WebGPU.
+-   **`userData.boundsIgnore` / `userData.xr.boundsIgnore`:** Excludes ground
+    lawns, shadow-catchers, sky domes, and context meshes from auto-framing
+    bounds, shadow-map frustum fitting, tabletop AR scale, and `exploded-view`
+    assembly radius across Web, Android, and iOS / visionOS (with automatic
+    fallback to full scene bounds when every mesh sets `boundsIgnore`).
 
 ### Changed
 
@@ -113,6 +126,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `/images/poster.webp`) render without `remote_content` and no longer emit
     a capability denial. Cross-origin, protocol-relative, traversal, encoded,
     and opaque-origin cases still require `remote_content`.
+-   **`character-controller` follow camera pitch, distance, yaw, and cleanup:**
+    Web `character-controller` now routes through `ThreeView.follow()` /
+    `frameFollow()` (converting polar `phiDeg` via `90 - polarDeg` so
+    `first-person` looks horizontally instead of `+86.4°` at the floor,
+    bypassing the `bounds.radius * 0.5` min-distance clamp on large scenes,
+    aligning initial `first-person` azimuth to `body.yaw` across Web/Android/iOS,
+    and restoring `camera-target` and character visibility when switching to
+    `character-controller="none"`).
 
 --------------------------------------------------------------------------------
 

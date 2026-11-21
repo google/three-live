@@ -202,6 +202,12 @@ constructor(
    */
   var sectionPlaneSpec: String = "none"
 
+  /**
+   * Section gizmo frame visibility (`"auto"` shows only when `section-plane="interactive"`,
+   * `"always"`, or `"none"`).
+   */
+  var sectionGizmoMode: String = "auto"
+
   /** Current spring-smoothed assembly explosion factor in `[0..1]`. */
   val explodeFactor: Double
     get() = currentExplodeFactor
@@ -1324,18 +1330,34 @@ constructor(
     var maxX = Double.NEGATIVE_INFINITY
     var maxY = Double.NEGATIVE_INFINITY
     var maxZ = Double.NEGATIVE_INFINITY
+    var allMinX = Double.POSITIVE_INFINITY
+    var allMinY = Double.POSITIVE_INFINITY
+    var allMinZ = Double.POSITIVE_INFINITY
+    var allMaxX = Double.NEGATIVE_INFINITY
+    var allMaxY = Double.NEGATIVE_INFINITY
+    var allMaxZ = Double.NEGATIVE_INFINITY
 
     for (node in 0 until scene.nodeCount) {
       val b = scene.meshBounds.getOrNull(scene.nodeMesh[node]) ?: continue
       val t = session.nodeTransform(node) ?: continue
       if (!session.nodeWorldMatrix(node, world)) continue
       val wb = SpatialMeasure.computeWorldBounds(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world)
-      minX = minOf(minX, wb.min[0])
-      minY = minOf(minY, wb.min[1])
-      minZ = minOf(minZ, wb.min[2])
-      maxX = maxOf(maxX, wb.max[0])
-      maxY = maxOf(maxY, wb.max[1])
-      maxZ = maxOf(maxZ, wb.max[2])
+      allMinX = minOf(allMinX, wb.min[0])
+      allMinY = minOf(allMinY, wb.min[1])
+      allMinZ = minOf(allMinZ, wb.min[2])
+      allMaxX = maxOf(allMaxX, wb.max[0])
+      allMaxY = maxOf(allMaxY, wb.max[1])
+      allMaxZ = maxOf(allMaxZ, wb.max[2])
+      val ignored = scene.isNodeBoundsIgnored(node)
+      if (ignored && !explodeTraits.containsKey(node)) continue
+      if (!ignored) {
+        minX = minOf(minX, wb.min[0])
+        minY = minOf(minY, wb.min[1])
+        minZ = minOf(minZ, wb.min[2])
+        maxX = maxOf(maxX, wb.max[0])
+        maxY = maxOf(maxY, wb.max[1])
+        maxZ = maxOf(maxZ, wb.max[2])
+      }
       var depth = 1
       var p = scene.parents.getOrElse(node) { -1 }
       while (p >= 0 && depth < 32) {
@@ -1357,6 +1379,14 @@ constructor(
           depth = depth,
         )
       )
+    }
+    if (!minX.isFinite() && allMinX.isFinite()) {
+      minX = allMinX
+      minY = allMinY
+      minZ = allMinZ
+      maxX = allMaxX
+      maxY = allMaxY
+      maxZ = allMaxZ
     }
     if (minX.isFinite()) {
       assemblyCenter = doubleArrayOf((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
@@ -1465,7 +1495,13 @@ constructor(
       renderer.setDynamicMeshTransform(explodeLeaderMeshId, matrix)
     }
 
-    if (sec.enabled) {
+    val gizmoMode = sectionGizmoMode.trim().lowercase()
+    val showGizmo =
+      sec.enabled &&
+        (gizmoMode == "always" ||
+          gizmoMode == "true" ||
+          (gizmoMode != "none" && gizmoMode != "false" && gizmoMode != "off" && sec.interactive))
+    if (showGizmo) {
       val halfExt = Math.max(0.15, assemblyRadius * 1.15)
       if (sectionGizmoMeshId < 0 || Math.abs(halfExt - lastSectionGizmoRadius) > 1e-3) {
         if (sectionGizmoMeshId >= 0) renderer.removeDynamicMesh(sectionGizmoMeshId)

@@ -189,6 +189,8 @@ export interface XRMeshTraits {
         layer?: number;
         leaderLine?: boolean;
       };
+  /** Excludes this node from auto-framing, shadow frustum, AR scale, & explode radius. */
+  boundsIgnore?: boolean;
   /** Marks a mesh as walkable or blocked for parabolic teleportation (`spatial-locomotion`). */
   navigable?: boolean | 'walkable' | 'blocked';
   /** Syncs node transform & ownership lease across `shared-room` peers (default `true` for grabbable nodes). */
@@ -1766,6 +1768,12 @@ function serializeScene(
           nodeExtensionsUsed.add('EXT_mesh_gpu_instancing');
         }
 
+        if (
+          obj.userData?.sectionCap === false ||
+          Boolean(geo?.parameters?.cutaway)
+        ) {
+          node.extras = {...(node.extras || {}), sectionCap: false};
+        }
         if (primitives.length > 0) {
           const meshIdx = meshes.length;
           meshes.push({
@@ -2815,17 +2823,25 @@ export function extractMeshesFromGLB(
     }
 
     const seenNodes = new Set<number>();
-    const stack: Array<{idx: number; out: USDAMeshData[]}> = [];
-    const pushNodeIndices = (indices: unknown, out: USDAMeshData[]) => {
+    const stack: Array<{
+      idx: number;
+      out: USDAMeshData[];
+      parentIgnored: boolean;
+    }> = [];
+    const pushNodeIndices = (
+      indices: unknown,
+      out: USDAMeshData[],
+      parentIgnored: boolean,
+    ) => {
       if (!Array.isArray(indices)) return;
       for (let i = indices.length - 1; i >= 0; i--) {
-        stack.push({idx: indices[i], out});
+        stack.push({idx: indices[i], out, parentIgnored});
       }
     };
-    pushNodeIndices(rootIndices, result);
+    pushNodeIndices(rootIndices, result, false);
 
     while (stack.length > 0) {
-      const {idx: nIdx, out} = stack.pop()!;
+      const {idx: nIdx, out, parentIgnored} = stack.pop()!;
       if (
         typeof nIdx !== 'number' ||
         nIdx < 0 ||
@@ -2885,8 +2901,17 @@ export function extractMeshesFromGLB(
         typeof node.mesh === 'number' &&
         node.mesh >= 0 &&
         node.mesh < meshes.length;
-      const nodeXr: XRMeshTraits | undefined =
+      const rawIgnore =
+        parentIgnored ||
+        rawNodes?.[nIdx]?.userData?.boundsIgnore === true ||
+        node.extras?.boundsIgnore === true;
+      const baseXr: XRMeshTraits | undefined =
         rawNodes?.[nIdx]?.userData?.xr ?? node.extras?.xr;
+      const nodeXr: XRMeshTraits | undefined =
+        rawIgnore && !baseXr?.boundsIgnore
+          ? {...(baseXr || {}), boundsIgnore: true}
+          : baseXr;
+      const nextIgnored = Boolean(rawIgnore || nodeXr?.boundsIgnore === true);
       if (
         !hasMesh &&
         rawKids.length === 0 &&
@@ -2996,7 +3021,7 @@ export function extractMeshesFromGLB(
                 });
               }
             }
-            pushNodeIndices(rawKids, children);
+            pushNodeIndices(rawKids, children, nextIgnored);
             out.push(mkXform(instanceName, children, isInvisible));
             continue;
           }
@@ -3009,17 +3034,17 @@ export function extractMeshesFromGLB(
           primMeshes[0].timeSamples = timeSamples;
           if (rawKids.length > 0) {
             primMeshes[0].children = [];
-            pushNodeIndices(rawKids, primMeshes[0].children);
+            pushNodeIndices(rawKids, primMeshes[0].children, nextIgnored);
           }
           out.push(primMeshes[0]);
         } else {
           const children = [...primMeshes];
-          pushNodeIndices(rawKids, children);
+          pushNodeIndices(rawKids, children, nextIgnored);
           out.push(mkXform(instanceName, children, isInvisible));
         }
       } else {
         const children: USDAMeshData[] = [];
-        pushNodeIndices(rawKids, children);
+        pushNodeIndices(rawKids, children, nextIgnored);
         out.push(mkXform(node.name || `Group_${nIdx}`, children, isInvisible));
       }
     }
@@ -3410,6 +3435,9 @@ def Scope "Meshes"
               : xr[k];
           if (v !== undefined)
             xrDictLines.push(`string ${k} = "${sanitizeUsdStringLiteral(v)}"`);
+        }
+        if (xr.boundsIgnore === true) {
+          xrDictLines.push('bool boundsIgnore = 1');
         }
       }
       if (xrDictLines.length > 0) {

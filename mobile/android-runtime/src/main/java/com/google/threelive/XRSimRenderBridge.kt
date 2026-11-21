@@ -105,7 +105,7 @@ class XRSimRenderBridge(
     (projectileMeshes + fragmentMeshes).forEach { renderer.removeDynamicMesh(it) }
     projectileMeshes.clear()
     fragmentMeshes.clear()
-    if (following) renderer.setCameraFollow(null, 0.0, 0.0, false)
+    if (following) renderer.setCameraFollow(null, 0.0, 0.0, false, Double.NaN)
     following = false
     cameraMode = null
   }
@@ -113,14 +113,14 @@ class XRSimRenderBridge(
   private fun syncCamera() {
     val rig = CharacterController.cameraRig(world)
     if (rig == null) {
-      if (following) renderer.setCameraFollow(null, 0.0, 0.0, false)
+      if (following) renderer.setCameraFollow(null, 0.0, 0.0, false, Double.NaN)
       following = false
       cameraMode = null
       return
     }
     val target = world.sceneToWorld(rig.target)
     val reframe = rig.mode != cameraMode
-    renderer.setCameraFollow(target, rig.phiDeg, rig.distance * rootScale(), reframe)
+    renderer.setCameraFollow(target, rig.phiDeg, rig.distance * rootScale(), reframe, rig.thetaDeg)
     following = true
     cameraMode = rig.mode
   }

@@ -202,6 +202,17 @@ interface ThreeLiveSceneRenderer {
    */
   fun setCameraFollow(target: DoubleArray?, polarDeg: Double, distance: Double, reframe: Boolean) {}
 
+  /** Overload of [setCameraFollow] carrying an optional initial orbit azimuth [thetaDeg]. */
+  fun setCameraFollow(
+    target: DoubleArray?,
+    polarDeg: Double,
+    distance: Double,
+    reframe: Boolean,
+    thetaDeg: Double,
+  ) {
+    setCameraFollow(target, polarDeg, distance, reframe)
+  }
+
   /**
    * Whether [addSplatMesh] uses a GPU-billboarded splat shader (`splat.filamat`) where vertex
    * `positions` are local splat centers, `uvs` are signed local half-sizes `(±r, ±r)`, and only

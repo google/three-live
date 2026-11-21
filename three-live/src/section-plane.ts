@@ -26,6 +26,7 @@ export interface ResolvedSectionPlane {
 }
 
 interface SectionViewerLike {
+  readonly __xrSectionPlane?: ResolvedSectionPlane | null;
   readonly container?: {
     readonly getAttribute?: (name: string) => string | null;
   } | null;
@@ -56,6 +57,14 @@ export function resolveSectionPlane(
   viewerObj: unknown,
 ): ResolvedSectionPlane | null {
   const viewer = (viewerObj || {}) as SectionViewerLike;
+  const xrPlane = viewer.__xrSectionPlane;
+  if (xrPlane?.enabled) {
+    return {
+      enabled: true,
+      normal: [xrPlane.normal[0], xrPlane.normal[1], xrPlane.normal[2]],
+      constant: xrPlane.constant,
+    };
+  }
   for (const m of viewer.meshes ?? []) {
     if (
       m.name === '__xr_section_gizmo__' &&
@@ -112,4 +121,30 @@ export function resolveSectionPlane(
     normal: [unx, uny, unz],
     constant: unx * wpx + uny * wpy + unz * wpz,
   };
+}
+
+/**
+ * Parses a `#rgb` or `#rrggbb` `section-cap-color` string into normalized sRGB
+ * `[r, g, b]` in `[0..1]`, or `null` when unset / `"none"` / invalid.
+ */
+export function parseSectionCapColor(
+  raw: string | null | undefined,
+): [number, number, number] | null {
+  const m = raw ? /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(raw.trim()) : null;
+  if (!m) return null;
+  const h = m[1];
+  const hex = h.length === 3 ? h[0] + h[0] + h[1] + h[1] + h[2] + h[2] : h;
+  const n = Number(`0x${hex}`);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/** Resolves `section-cap-color` from `viewerObj.container` (`[r, g, b]` or `null`). */
+export function resolveSectionCapColor(
+  viewerObj: unknown,
+): [number, number, number] | null {
+  return parseSectionCapColor(
+    (viewerObj as SectionViewerLike | null)?.container?.getAttribute?.(
+      'section-cap-color',
+    ),
+  );
 }

@@ -34,6 +34,7 @@ import {
   type RendererPreference,
   type ThreeLivePlugin,
 } from '../plugin';
+import {resolveSectionCapColor} from '../section-plane';
 import {
   doesMeshCastShadow,
   doesMeshReceiveShadow,
@@ -52,6 +53,7 @@ import {
   PART_FLAG_HAS_OCC_TEX,
   PART_FLAG_HIDDEN,
   PART_FLAG_NEG_DET,
+  PART_FLAG_NO_SECTION_CAP,
   PART_FLAG_NO_SECTION_CLIP,
   PART_FLAG_RECEIVE_SHADOW,
   PART_FLAG_WORLD_SPACE,
@@ -2294,6 +2296,15 @@ function syncSceneResources(
     }
 
     const xr = mesh.extras?.xr ?? mesh.userData?.xr;
+    if (
+      nowBlend ||
+      prim.isTransmissive ||
+      mesh.extras?.['sectionCap'] === false ||
+      mesh.userData?.['sectionCap'] === false ||
+      xr?.['sectionCap'] === false
+    ) {
+      flags |= PART_FLAG_NO_SECTION_CAP;
+    }
     const stereoMode = xr?.['stereo'];
     if (stereoMode === 'sbs') flags |= 1 << PART_STEREO_SHIFT;
     else if (stereoMode === 'ou') flags |= 2 << PART_STEREO_SHIFT;
@@ -2791,6 +2802,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
 
     const sectionPlane =
       shadowPlan.sectionPlane ?? parseViewerSectionPlane(viewer);
+    const sectionCapColor = resolveSectionCapColor(viewer);
     const contactShadow = computeContactShadowInput(viewer, params.isAR);
     writeSceneUniforms(st.uniformScratch, {
       vp: params.vp,
@@ -2803,6 +2815,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
       hasEnvMap: scene.envSourceRef !== null,
       isRightEye: params.eye === 'right',
       sectionPlane,
+      sectionCapColor,
       contactShadow,
       shadowMap:
         neededSlices > 0

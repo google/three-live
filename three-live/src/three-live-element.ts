@@ -251,7 +251,7 @@ export interface ThreeLiveElement {
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
   static readonly observedAttributes =
-    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane cutaway'.split(
+    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane section-gizmo section-cap-color cutaway'.split(
       ' ',
     );
 
@@ -709,7 +709,9 @@ export class ThreeLiveElement extends BaseElement {
         break;
 
       case 'section-plane':
-        // Color, WebGPU, and shadow passes all read `section-plane` from the
+      case 'section-gizmo':
+      case 'section-cap-color':
+        // Color, WebGPU, and shadow passes read section attributes from the
         // host element each frame; just schedule a redraw.
         v?.render();
         break;
@@ -953,6 +955,34 @@ export class ThreeLiveElement extends BaseElement {
   }
   set sectionPlane(val: string | null) {
     this.setAttr('section-plane', val);
+  }
+
+  /**
+   * Visibility mode for `<xr-live>`'s `__xr_section_gizmo__` frame: `"auto"`
+   * (default, shown only when `section-plane="interactive"`), `"always"`, or
+   * `"none"`.
+   */
+  get sectionGizmo(): 'auto' | 'always' | 'none' {
+    const raw = this.getAttr('section-gizmo')?.trim().toLowerCase();
+    if (raw === 'always' || raw === 'true') return 'always';
+    if (raw === 'none' || raw === 'false' || raw === 'off') return 'none';
+    return 'auto';
+  }
+  set sectionGizmo(val: 'auto' | 'always' | 'none' | null) {
+    this.setAttr('section-gizmo', val);
+  }
+
+  /**
+   * Optional matte poché color (`#rrggbb` / `#rgb`) used to shade exposed
+   * back-faces when `section-plane` is active on WebGL2 and WebGPU.
+   */
+  get sectionCapColor(): string | null {
+    const raw = this.getAttr('section-cap-color')?.trim();
+    if (!raw || raw === 'none' || raw === 'off' || raw === 'false') return null;
+    return raw;
+  }
+  set sectionCapColor(val: string | null) {
+    this.setAttr('section-cap-color', val);
   }
 
   /**

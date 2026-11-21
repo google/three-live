@@ -111,6 +111,12 @@ class GltfSceneIndex(gltfJson: String) {
   /** Effective shadow-receiving flag for node `i` (defaults to `true` unless opted out). */
   val nodeReceiveShadow: BooleanArray
 
+  /** Whether node `i` opts out of auto-framing / explode bounds (`boundsIgnore: true`). */
+  val nodeBoundsIgnore: BooleanArray
+
+  private val nodeOwnVisible: BooleanArray
+  private val nodeLocalMatrices: List<DoubleArray>
+
   /** Punctual lights declared via `KHR_lights_punctual` (or `asset.extras.lights`). */
   val punctualLights: List<GltfPunctualLight>
 
@@ -122,6 +128,56 @@ class GltfSceneIndex(gltfJson: String) {
     val n = nodes.size
     nodeNames = nodes.map { MiniJson.asString(MiniJson.asMap(it)?.get("name")) }
     nodeMesh = IntArray(n) { index(MiniJson.asMap(nodes[it])?.get("mesh"), meshes.size) }
+    nodeBoundsIgnore =
+      BooleanArray(n) { i ->
+        val node = MiniJson.asMap(nodes[i])
+        val extras = MiniJson.asMap(node?.get("extras"))
+        val xr = MiniJson.asMap(extras?.get("xr"))
+        val sc = MiniJson.asMap(MiniJson.asMap(node?.get("extensions"))?.get("ANDROID_xr_scenecore"))
+        val mExtras = MiniJson.asMap(meshes.getOrNull(nodeMesh[i])?.let { MiniJson.asMap(it)?.get("extras") })
+        extras?.get("boundsIgnore") == true ||
+          xr?.get("boundsIgnore") == true ||
+          sc?.get("boundsIgnore") == true ||
+          mExtras?.get("boundsIgnore") == true ||
+          MiniJson.asMap(mExtras?.get("xr"))?.get("boundsIgnore") == true
+      }
+    nodeOwnVisible =
+      BooleanArray(n) { i ->
+        val node = MiniJson.asMap(nodes[i])
+        val khrVis = MiniJson.asMap(MiniJson.asMap(node?.get("extensions"))?.get("KHR_node_visibility"))
+        node?.get("visible") != false && khrVis?.get("visible") != false
+      }
+    nodeLocalMatrices =
+      List(n) { i ->
+        val node = MiniJson.asMap(nodes[i])
+        val rawMat = MiniJson.asList(node?.get("matrix"))
+        if (rawMat != null && rawMat.size >= 16) {
+          val m = DoubleArray(16) { k -> MiniJson.asFiniteDouble(rawMat[k]) ?: (if (k % 5 == 0) 1.0 else 0.0) }
+          m
+        } else {
+          val tr = MiniJson.asList(node?.get("translation"))
+          val rt = MiniJson.asList(node?.get("rotation"))
+          val sc = MiniJson.asList(node?.get("scale"))
+          XRSpatialMath.mat4FromTRS(
+            doubleArrayOf(
+              MiniJson.asFiniteDouble(tr?.getOrNull(0)) ?: 0.0,
+              MiniJson.asFiniteDouble(tr?.getOrNull(1)) ?: 0.0,
+              MiniJson.asFiniteDouble(tr?.getOrNull(2)) ?: 0.0,
+            ),
+            doubleArrayOf(
+              MiniJson.asFiniteDouble(rt?.getOrNull(0)) ?: 0.0,
+              MiniJson.asFiniteDouble(rt?.getOrNull(1)) ?: 0.0,
+              MiniJson.asFiniteDouble(rt?.getOrNull(2)) ?: 0.0,
+              MiniJson.asFiniteDouble(rt?.getOrNull(3)) ?: 1.0,
+            ),
+            doubleArrayOf(
+              MiniJson.asFiniteDouble(sc?.getOrNull(0)) ?: 1.0,
+              MiniJson.asFiniteDouble(sc?.getOrNull(1)) ?: 1.0,
+              MiniJson.asFiniteDouble(sc?.getOrNull(2)) ?: 1.0,
+            ),
+          )
+        }
+      }
     parents = IntArray(n) { -1 }
     val kids = Array(n) { ArrayList<Int>() }
     for (i in 0 until n) {
@@ -395,6 +451,88 @@ class GltfSceneIndex(gltfJson: String) {
       pairs.add(node to entityList[k])
     }
     return pairs
+  }
+
+  /** Returns `true` when [node] or any of its ancestors sets `boundsIgnore: true`. */
+  fun isNodeBoundsIgnored(node: Int): Boolean {
+    var cur = node
+    var depth = 0
+    while (cur in 0 until nodeCount && depth < 64) {
+      if (nodeBoundsIgnore[cur]) return true
+      cur = parents[cur]
+      depth++
+    }
+    return false
+  }
+
+  /**
+   * Computes world-space `(center, radius)` of visible mesh nodes, excluding `boundsIgnore` nodes
+   * (with fallback to all visible mesh nodes if every mesh sets `boundsIgnore`), matching Web
+   * (`three-view.ts`) and iOS (`XRLiveRuntimeSession.sceneBounds`). Returns `null` when no visible
+   * mesh declares `POSITION` accessor bounds.
+   */
+  fun computeSceneBounds(): Pair<DoubleArray, Double>? {
+    var minX = Double.POSITIVE_INFINITY
+    var minY = Double.POSITIVE_INFINITY
+    var minZ = Double.POSITIVE_INFINITY
+    var maxX = Double.NEGATIVE_INFINITY
+    var maxY = Double.NEGATIVE_INFINITY
+    var maxZ = Double.NEGATIVE_INFINITY
+    var allMinX = Double.POSITIVE_INFINITY
+    var allMinY = Double.POSITIVE_INFINITY
+    var allMinZ = Double.POSITIVE_INFINITY
+    var allMaxX = Double.NEGATIVE_INFINITY
+    var allMaxY = Double.NEGATIVE_INFINITY
+    var allMaxZ = Double.NEGATIVE_INFINITY
+    val chain = IntArray(64)
+    for (i in 0 until nodeCount) {
+      val mb = meshBounds.getOrNull(nodeMesh[i]) ?: continue
+      var cur = i
+      var depth = 0
+      var vis = true
+      var ignored = false
+      while (cur >= 0 && depth < chain.size) {
+        if (!nodeOwnVisible[cur]) {
+          vis = false
+          break
+        }
+        if (nodeBoundsIgnore[cur]) ignored = true
+        chain[depth++] = cur
+        cur = parents[cur]
+      }
+      if (!vis) continue
+      var world = doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+      for (k in depth - 1 downTo 0) {
+        world = XRSpatialMath.mat4Multiply(world, nodeLocalMatrices[chain[k]], DoubleArray(16))
+      }
+      val wb = SpatialMeasure.computeWorldBounds(mb.copyOfRange(0, 3), mb.copyOfRange(3, 6), world)
+      allMinX = minOf(allMinX, wb.min[0])
+      allMinY = minOf(allMinY, wb.min[1])
+      allMinZ = minOf(allMinZ, wb.min[2])
+      allMaxX = maxOf(allMaxX, wb.max[0])
+      allMaxY = maxOf(allMaxY, wb.max[1])
+      allMaxZ = maxOf(allMaxZ, wb.max[2])
+      if (!ignored) {
+        minX = minOf(minX, wb.min[0])
+        minY = minOf(minY, wb.min[1])
+        minZ = minOf(minZ, wb.min[2])
+        maxX = maxOf(maxX, wb.max[0])
+        maxY = maxOf(maxY, wb.max[1])
+        maxZ = maxOf(maxZ, wb.max[2])
+      }
+    }
+    if (!minX.isFinite() && allMinX.isFinite()) {
+      minX = allMinX
+      minY = allMinY
+      minZ = allMinZ
+      maxX = allMaxX
+      maxY = allMaxY
+      maxZ = allMaxZ
+    }
+    if (!minX.isFinite()) return null
+    val center = doubleArrayOf((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+    val radius = Math.max(0.5, XRSpatialMath.len3(maxX - minX, maxY - minY, maxZ - minZ) * 0.5)
+    return center to radius
   }
 
   private fun isAncestorOrSelf(candidate: Int, node: Int): Boolean {

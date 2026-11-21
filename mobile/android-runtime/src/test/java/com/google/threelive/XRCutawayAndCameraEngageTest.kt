@@ -127,5 +127,34 @@ class XRCutawayAndCameraEngageTest {
     val defaults = characterWorld("{}")
     defaults.run(2)
     assertNotNull("default engages immediately", CharacterController.cameraRig(defaults))
+
+    // First-person spawn yaw (`thetaDeg`) and `character-controller="none"` viewHidden cleanup.
+    val rotJson =
+      """{"asset":{"version":"2.0"},"nodes":[
+        {"name":"Spawn","translation":[0,0,0],"rotation":[0,0.70710678,0,0.70710678],
+         "extras":{"xr":{"character":{"mode":"first-person","height":1.65}}}}]}"""
+    val fpWorld = XRSimWorld(XRLiveRuntimeSession(rotJson), rotJson)
+    fpWorld.run(2)
+    val fpRig = CharacterController.cameraRig(fpWorld)!!
+    assertEquals(90.0, fpRig.phiDeg, 1e-4)
+    assertEquals(0.05, fpRig.distance, 1e-4)
+    assertEquals(-90.0, fpRig.thetaDeg, 1e-2)
+    assertTrue(fpWorld.bodies[0].viewHidden)
+
+    val orbit = OrbitCameraState()
+    orbit.setBounds(doubleArrayOf(0.0, 0.0, 0.0), 10.0)
+    orbit.follow(fpRig.target)
+    orbit.frameFollow(fpRig.phiDeg, fpRig.distance, fpRig.thetaDeg)
+    orbit.snap()
+    assertEquals(0.0, Math.toDegrees(orbit.phi), 1e-3)
+    assertEquals(0.05, orbit.distance, 1e-4)
+    assertEquals(-90.0, Math.toDegrees(orbit.theta), 1e-2)
+    orbit.follow(null)
+    orbit.snap()
+    assertTrue("follow(null) restores scene orbit distance", orbit.distance > 10.0)
+
+    fpWorld.characterMode = "none"
+    fpWorld.run(2)
+    assertFalse("character-controller=none restores viewHidden", fpWorld.bodies[0].viewHidden)
   }
 }

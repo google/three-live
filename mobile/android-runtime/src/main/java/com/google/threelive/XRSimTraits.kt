@@ -319,7 +319,7 @@ data class XRSimTraits(
         gravity = num(r["gravity"], 0.0, 50.0, 15.0),
         radius = radius,
         height = num(r["height"], radius * 2, 10.0, Math.max(1.4, radius * 2)),
-        cameraMode = oneOf(r["cameraMode"], CAMERA_MODES, "third-person"),
+        cameraMode = oneOf(r["cameraMode"] ?: r["mode"], CAMERA_MODES, "third-person"),
         cameraDistance = num(r["cameraDistance"], 0.5, 50.0, 3.5),
         cameraHeight = num(r["cameraHeight"], -10.0, 50.0, 1.8),
         clips = clips,

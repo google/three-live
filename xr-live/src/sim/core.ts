@@ -81,6 +81,8 @@ export interface SimBody {
   readonly meshes: any[];
   /** Scene-local origin when the world was built. */
   readonly initPos: Vec3;
+  /** Scene-local authored world Y rotation (radians) when the world was built. */
+  readonly initYaw: number;
   pos: Vec3;
   /** Yaw delta (radians) applied about the body origin. */
   yaw: number;
@@ -489,6 +491,7 @@ export function makeBody(
   // tslint:disable-next-line:no-any Mesh records are heterogeneous GPU structs.
   meshes: any[],
   initPos: Vec3,
+  initYaw = 0,
 ): SimBody {
   const min: Vec3 = [Infinity, Infinity, Infinity];
   const max: Vec3 = [-Infinity, -Infinity, -Infinity];
@@ -524,6 +527,7 @@ export function makeBody(
     traits,
     meshes,
     initPos: [...initPos],
+    initYaw,
     pos: [...initPos],
     yaw: 0,
     rot: [0, 0, 0, 1],
@@ -600,12 +604,14 @@ export function buildSimWorld(world: SimWorld): void {
     if (!traits) return;
     const wm = worldMats[i];
     const initPos: Vec3 = wm ? [wm[12], wm[13], wm[14]] : [0, 0, 0];
+    const initYaw = wm ? Math.atan2(wm[8], wm[10]) : 0;
     const body = makeBody(
       `node:${i}`,
       String(nodes[i]?.name || `Node_${i}`),
       traits,
       ownerMeshes.get(i) ?? [],
       initPos,
+      initYaw,
     );
     nodeBodies.set(i, body);
     world.addBody(body);
@@ -628,6 +634,7 @@ export function buildSimWorld(world: SimWorld): void {
         traits,
         [m],
         [t[12], t[13], t[14]],
+        Math.atan2(t[8], t[10]),
       ),
     );
   });

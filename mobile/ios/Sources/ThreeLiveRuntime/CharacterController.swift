@@ -80,12 +80,37 @@ public enum CharacterController {
 
   /// Camera framing for the controlled character (port of `characterCameraRig` in
   /// `character-controller.ts`): follow `target` every frame and apply `phiDeg` (polar
-  /// angle, 0 = straight down) and `distance` when `mode` changes.
+  /// angle, 0 = straight down), `distance`, and optional `thetaDeg` when `mode` changes.
   public struct CameraRig: Equatable, Sendable {
     public let mode: String
     public let target: SIMD3<Double>
     public let phiDeg: Double
     public let distance: Double
+    public let thetaDeg: Double?
+
+    public init(
+      mode: String, target: SIMD3<Double>, phiDeg: Double, distance: Double,
+      thetaDeg: Double? = nil
+    ) {
+      self.mode = mode
+      self.target = target
+      self.phiDeg = phiDeg
+      self.distance = distance
+      self.thetaDeg = thetaDeg
+    }
+  }
+
+  private static func wrapDeg180(_ deg: Double) -> Double {
+    let raw = (deg + 180).truncatingRemainder(dividingBy: 360)
+    let m = (raw < 0 ? raw + 360 : raw) - 180
+    return m == -180 ? 180 : m
+  }
+
+  private static func bodyInitYaw(_ b: XRSimWorld.Body) -> Double {
+    let q = b.initQuat
+    return atan2(
+      2 * (q.real * q.imag.y + q.imag.x * q.imag.z),
+      1 - 2 * (q.imag.y * q.imag.y + q.imag.x * q.imag.x))
   }
 
   /// The camera rig, or `nil` when there is no visible character, the camera is `fixed`, an
@@ -102,7 +127,9 @@ public enum CharacterController {
     let target = SIMD3(b.pos.x, feet + opts.height * (fp ? 0.9 : 0.6), b.pos.z)
     switch mode {
     case "first-person":
-      return CameraRig(mode: mode, target: target, phiDeg: 90, distance: 0.05)
+      return CameraRig(
+        mode: mode, target: target, phiDeg: 90, distance: 0.05,
+        thetaDeg: wrapDeg180((bodyInitYaw(b) + b.yaw + .pi) * 180 / .pi))
     case "top-down":
       return CameraRig(
         mode: mode, target: target, phiDeg: 1,
@@ -134,7 +161,8 @@ public enum CharacterController {
     b.vel.x += (dx * target - b.vel.x) * k
     b.vel.z += (dz * target - b.vel.z) * k
     if len > 0.05 {
-      b.yaw = XRSimWorld.turnToward(b.yaw, XRSimWorld.yawFromDir(dx, dz), turnSpeed * dt)
+      b.yaw = XRSimWorld.turnToward(
+        b.yaw, XRSimWorld.wrapAngle(XRSimWorld.yawFromDir(dx, dz) - bodyInitYaw(b)), turnSpeed * dt)
     }
     if jump && st.grounded && opts.jumpVelocity > 0 {
       st.vy = opts.jumpVelocity
@@ -197,6 +225,7 @@ public enum CharacterController {
     }
     guard let st = st, let base = st.body.traits.character else { return }
     guard let opts = resolve(world, base), !st.body.hidden else {
+      st.body.viewHidden = false
       world.character = resolve(world, base) != nil ? st.body : nil
       return
     }

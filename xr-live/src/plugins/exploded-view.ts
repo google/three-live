@@ -351,6 +351,9 @@ function computeNodeDepthMap(gltf: unknown): Map<number, number> {
   return depths;
 }
 
+/** Visibility mode for `__xr_section_gizmo__`. */
+export type SectionGizmoMode = 'auto' | 'always' | 'none';
+
 /** Resolved `<xr-live>` element configuration for `exploded-view`. */
 export interface ExplodedViewElementConfig {
   readonly hasExplodeAttr: boolean;
@@ -358,9 +361,10 @@ export interface ExplodedViewElementConfig {
   readonly mode: ExplodeMode;
   readonly scale: number;
   readonly sectionSpec: string;
+  readonly sectionGizmo: SectionGizmoMode;
 }
 
-/** Parses `explode`, `explode-mode`, `explode-scale`, and `section-plane` on `<xr-live>`. */
+/** Parses `explode`, `explode-mode`, `explode-scale`, `section-plane`, and `section-gizmo` on `<xr-live>`. */
 // tslint:disable-next-line:no-any Host element is `<xr-live>`.
 export function resolveExplodedViewConfig(
   element: any,
@@ -389,7 +393,16 @@ export function resolveExplodedViewConfig(
   const sectionSpec = (
     element?.getAttribute?.('section-plane') ?? 'none'
   ).trim();
-  return {hasExplodeAttr, targetFactor, mode, scale, sectionSpec};
+  const rawGizmo = (element?.getAttribute?.('section-gizmo') ?? 'auto')
+    .trim()
+    .toLowerCase();
+  const sectionGizmo: SectionGizmoMode =
+    rawGizmo === 'always' || rawGizmo === 'true'
+      ? 'always'
+      : rawGizmo === 'none' || rawGizmo === 'false' || rawGizmo === 'off'
+        ? 'none'
+        : 'auto';
+  return {hasExplodeAttr, targetFactor, mode, scale, sectionSpec, sectionGizmo};
 }
 
 /**
@@ -504,32 +517,53 @@ export class XRExplodedViewController {
     );
     const min: Vec3 = [Infinity, Infinity, Infinity];
     const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+    const allMin: Vec3 = [Infinity, Infinity, Infinity];
+    const allMax: Vec3 = [-Infinity, -Infinity, -Infinity];
 
     for (const m of sceneMeshes) {
       const traits = getMeshXRTraits(m);
+      const boundsIgnore = Boolean(
+        m.boundsIgnore ||
+          m.extras?.boundsIgnore === true ||
+          m.userData?.boundsIgnore === true ||
+          traits?.boundsIgnore === true,
+      );
+      const lb = computeLocalBounds(m);
+      for (const corner of [lb.min, lb.max]) {
+        const wc = transformPoint(m.transform, corner);
+        for (let a = 0; a < 3; a++) {
+          if (Number.isFinite(wc[a])) {
+            if (wc[a] < allMin[a]) allMin[a] = wc[a];
+            if (wc[a] > allMax[a]) allMax[a] = wc[a];
+          }
+        }
+      }
       if (traits?.explode === false) continue;
       const anchorTarget =
         typeof traits?.anchor === 'string'
           ? traits.anchor
           : (traits?.anchor as {target?: string} | null | undefined)?.target;
-      if (anchorTarget === 'floor' && !traits?.explode) continue;
+      if ((anchorTarget === 'floor' || boundsIgnore) && !traits?.explode) {
+        continue;
+      }
 
       const restLocalPos = extractPosition(m.transform);
       const restLocalQuat = extractQuaternion(m.transform);
       const restLocalScale = extractScale(m.transform);
-      const lb = computeLocalBounds(m);
       const localMid: Vec3 = [
         (lb.min[0] + lb.max[0]) * 0.5,
         (lb.min[1] + lb.max[1]) * 0.5,
         (lb.min[2] + lb.max[2]) * 0.5,
       ];
       const restCenterLocal = transformPoint(m.transform, localMid);
-      for (const corner of [lb.min, lb.max]) {
-        const wc = transformPoint(m.transform, corner);
-        for (let a = 0; a < 3; a++) {
-          if (Number.isFinite(wc[a])) {
-            if (wc[a] < min[a]) min[a] = wc[a];
-            if (wc[a] > max[a]) max[a] = wc[a];
+      if (!boundsIgnore) {
+        for (const corner of [lb.min, lb.max]) {
+          const wc = transformPoint(m.transform, corner);
+          for (let a = 0; a < 3; a++) {
+            if (Number.isFinite(wc[a])) {
+              if (wc[a] < min[a]) min[a] = wc[a];
+              if (wc[a] > max[a]) max[a] = wc[a];
+            }
           }
         }
       }
@@ -546,13 +580,15 @@ export class XRExplodedViewController {
       this.capturedMeshSet.add(m);
     }
 
-    if (Number.isFinite(min[0]) && Number.isFinite(max[0])) {
+    const useMin = Number.isFinite(min[0]) && Number.isFinite(max[0]) ? min : allMin;
+    const useMax = Number.isFinite(min[0]) && Number.isFinite(max[0]) ? max : allMax;
+    if (Number.isFinite(useMin[0]) && Number.isFinite(useMax[0])) {
       this.assemblyCenter = [
-        (min[0] + max[0]) * 0.5,
-        (min[1] + max[1]) * 0.5,
-        (min[2] + max[2]) * 0.5,
+        (useMin[0] + useMax[0]) * 0.5,
+        (useMin[1] + useMax[1]) * 0.5,
+        (useMin[2] + useMax[2]) * 0.5,
       ];
-      this.assemblyRadius = Math.max(0.05, vLen(vSub(max, min)) * 0.5);
+      this.assemblyRadius = Math.max(0.05, vLen(vSub(useMax, useMin)) * 0.5);
     } else {
       this.assemblyCenter = [0, 0, 0];
       this.assemblyRadius = 0.5;
@@ -700,6 +736,14 @@ export class XRExplodedViewController {
       this.activeSection,
       rootMatrix(viewer),
     );
+    (viewer as {__xrSectionPlane?: unknown}).__xrSectionPlane = this
+      .activeSection.enabled
+      ? {
+          enabled: true,
+          normal: [...this.worldSection.normal],
+          constant: this.worldSection.constant,
+        }
+      : null;
 
     const active =
       cfg.hasExplodeAttr ||
@@ -823,8 +867,12 @@ export class XRExplodedViewController {
       this.leaderMesh.visible = false;
     }
 
-    // Update cross-section plane gizmo frame.
-    if (this.activeSection.enabled) {
+    // Update cross-section plane gizmo frame (`section-gizmo="auto | always | none"`).
+    const showGizmo =
+      this.activeSection.enabled &&
+      (cfg.sectionGizmo === 'always' ||
+        (cfg.sectionGizmo === 'auto' && this.activeSection.interactive));
+    if (showGizmo) {
       const half = Math.max(0.12, this.assemblyRadius * 1.15);
       if (
         !this.sectionGizmoMesh ||
@@ -869,6 +917,9 @@ export class XRExplodedViewController {
   }
 
   private disposeVisuals(viewer: PluginViewer | undefined): void {
+    if (viewer) {
+      (viewer as {__xrSectionPlane?: unknown}).__xrSectionPlane = null;
+    }
     removeDynamicMesh(viewer, this.leaderMesh);
     this.leaderMesh = null;
     this.lastLeaderKey = '';

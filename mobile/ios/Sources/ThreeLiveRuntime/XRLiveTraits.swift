@@ -748,6 +748,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var gaze: XRLiveGaze?
   public var explode: XRLiveExplode?
   public var cutaway: XRLiveCutaway?
+  /// Excludes this node from auto-framing, AR scale, and explode radius (`boundsIgnore: true`).
+  public var boundsIgnore: Bool = false
   public var anchorPersist: XRLiveAnchorPersist?
   public var bloom: XRLiveBloom?
   public var outline: XRLiveOutline?
@@ -773,7 +775,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
       && audio == nil && audioEmitter == nil && dimensions == nil && snapTo == nil
       && snapSocket == nil
-      && gaze == nil && explode == nil && cutaway == nil && anchorPersist == nil && bloom == nil
+      && gaze == nil && explode == nil && cutaway == nil && !boundsIgnore && anchorPersist == nil && bloom == nil
       && outline == nil
       && ik == nil && lod == nil && navigable == nil && sync == nil && !pointerEventsNone
   }
@@ -1500,6 +1502,7 @@ public enum XRLiveTraitParser {
     out.gaze = parseGaze(r["gaze"])
     out.explode = parseExplode(r["explode"])
     out.cutaway = parseCutaway(r["cutaway"])
+    out.boundsIgnore = XRJSON.bool(r["boundsIgnore"]) == true
     out.bloom = parseBloom(r["bloom"])
     out.outline = parseOutline(r["outline"])
     out.ik = parseIK(r["ik"])
@@ -1532,7 +1535,7 @@ public enum XRLiveTraitParser {
     var r: [String: Any] = [:]
     for key in [
       "grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "navigable",
-      "sync", "pointerEvents", "schemaVersion",
+      "boundsIgnore", "sync", "pointerEvents", "schemaVersion",
     ] {
       if let v = d[key] { r[key] = v }
     }
@@ -1615,17 +1618,22 @@ public enum XRLiveTraitParser {
     var result: [Int: XRLiveNodeTraits] = [:]
     for (idx, rawNode) in nodes.prefix(XRLiveRuntimeSession.maxSceneElements).enumerated() {
       guard let node = XRJSON.object(rawNode) else { continue }
-      let rawXr = XRJSON.object(XRJSON.object(node["extras"])?["xr"])
+      let extras = XRJSON.object(node["extras"])
+      let topBoundsIgnore = XRJSON.bool(extras?["boundsIgnore"]) == true
+      let rawXr = XRJSON.object(extras?["xr"])
       let extMap = XRJSON.object(node["extensions"])
       let msftLod = XRJSON.object(extMap?["MSFT_lod"])
       let khrAudioMap = extractKhrAudioEmitterMap(khrAudioRoot: khrAudioRoot, node: node)
-      guard rawXr != nil || khrAudioMap != nil || msftLod != nil else { continue }
+      guard rawXr != nil || khrAudioMap != nil || msftLod != nil || topBoundsIgnore else { continue }
       var xrDict = rawXr ?? [:]
       if let khrAudioMap = khrAudioMap, xrDict["audioEmitter"] == nil {
         xrDict["audioEmitter"] = khrAudioMap
       }
       if msftLod != nil && xrDict["lod"] == nil {
         xrDict["lod"] = true
+      }
+      if topBoundsIgnore && xrDict["boundsIgnore"] == nil {
+        xrDict["boundsIgnore"] = true
       }
       if let traits = normalize(xrDict) {
         result[idx] = traits

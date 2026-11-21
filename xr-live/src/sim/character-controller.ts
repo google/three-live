@@ -44,6 +44,7 @@ import {
   pushCircleOutOfAABB,
   registerSimSystem,
   turnToward,
+  wrapAngle,
   yawFromDir,
   type SimBody,
   type SimSystem,
@@ -154,6 +155,13 @@ export interface CharacterCameraRig {
   readonly target: Vec3;
   readonly phiDeg: number;
   readonly distance: number;
+  /** Initial orbit azimuth (deg) when entering `first-person`, aligned to `body.yaw`. */
+  readonly thetaDeg?: number;
+}
+
+function wrapDeg180(deg: number): number {
+  const m = ((((deg + 180) % 360) + 360) % 360) - 180;
+  return m === -180 ? 180 : m;
 }
 
 /**
@@ -176,7 +184,13 @@ export function characterCameraRig(world: SimWorld): CharacterCameraRig | null {
     feet + opts.height * (fp ? 0.9 : 0.6),
     b.pos[2],
   ];
-  if (fp) return {mode, target, phiDeg: 90, distance: 0.05};
+  if (fp) {
+    // `initYaw + b.yaw` faces `[sin(yaw), 0, cos(yaw)]`; orbit `theta` looks along
+    // `[-sin(theta), 0, -cos(theta)]`, so `theta = yaw + PI` looks straight ahead.
+    const worldYaw = (b.initYaw ?? 0) + b.yaw;
+    const thetaDeg = wrapDeg180(((worldYaw + Math.PI) * 180) / Math.PI);
+    return {mode, target, phiDeg: 90, distance: 0.05, thetaDeg};
+  }
   if (mode === 'top-down') {
     return {
       mode,
@@ -194,6 +208,15 @@ export function characterCameraRig(world: SimWorld): CharacterCameraRig | null {
   };
 }
 
+function clearFollowCamera(world: SimWorld, st: CharacterState): void {
+  st.body.data['viewHidden'] = false;
+  if (st.cameraMode !== null) {
+    st.cameraMode = null;
+    // tslint:disable-next-line:no-any ThreeView camera internals.
+    (world.viewer as any)?.follow?.(null);
+  }
+}
+
 function updateCamera(
   world: SimWorld,
   st: CharacterState,
@@ -203,15 +226,29 @@ function updateCamera(
   st.body.data['viewHidden'] =
     opts.cameraMode === 'first-person' && !world.xrActive;
   const rig = characterCameraRig(world);
-  if (!rig) return;
+  if (!rig) {
+    if (st.cameraMode !== null) {
+      st.cameraMode = null;
+      // tslint:disable-next-line:no-any ThreeView camera internals.
+      (world.viewer as any)?.follow?.(null);
+    }
+    return;
+  }
   // tslint:disable-next-line:no-any ThreeView camera internals.
   const v = world.viewer as any;
-  // Assigned directly: `setTarget()` re-enters `update()`.
-  v.customTarget = [...rig.target];
+  if (typeof v.follow === 'function') {
+    v.follow(rig.target);
+  } else {
+    v.customTarget = [...rig.target];
+  }
   if (st.cameraMode === rig.mode) return;
   st.cameraMode = rig.mode;
-  v.setAutoRotate?.(false);
-  v.setCamera?.(undefined, rig.phiDeg, rig.distance);
+  if (typeof v.frameFollow === 'function') {
+    v.frameFollow(rig.phiDeg, rig.distance, rig.thetaDeg);
+  } else {
+    v.setAutoRotate?.(false);
+    v.setCamera?.(rig.thetaDeg, 90 - rig.phiDeg, rig.distance);
+  }
 }
 
 /**
@@ -254,7 +291,7 @@ export function stepCharacter(
   if (len > 0.05) {
     b.yaw = turnToward(
       b.yaw,
-      yawFromDir([dir[0], 0, dir[1]]),
+      wrapAngle(yawFromDir([dir[0], 0, dir[1]]) - (b.initYaw ?? 0)),
       CHARACTER_TURN_SPEED * dt,
     );
   }
@@ -383,9 +420,17 @@ export const characterControllerSystem: SimSystem = {
   },
   sync(world: SimWorld): void {
     const st = world.state.get(STATE_KEY) as CharacterState | undefined;
-    if (!st || st.body.hidden) return;
+    if (!st) return;
+    if (st.body.hidden) {
+      clearFollowCamera(world, st);
+      return;
+    }
     const opts = resolveCharacterOptions(world, st.body.traits.character!);
-    if (opts) updateCamera(world, st, opts);
+    if (!opts) {
+      clearFollowCamera(world, st);
+      return;
+    }
+    updateCamera(world, st, opts);
   },
   reset(world: SimWorld): void {
     const st = world.state.get(STATE_KEY) as CharacterState | undefined;
@@ -394,10 +439,12 @@ export const characterControllerSystem: SimSystem = {
       st.vy = 0;
       st.clip = null;
       st.cameraEngaged = false;
-      st.cameraMode = null;
+      clearFollowCamera(world, st);
     }
   },
   dispose(world: SimWorld): void {
+    const st = world.state.get(STATE_KEY) as CharacterState | undefined;
+    if (st) clearFollowCamera(world, st);
     disposeSimInput(world);
     world.state.delete(STATE_KEY);
     world.character = null;
