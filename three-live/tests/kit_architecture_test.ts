@@ -875,6 +875,250 @@ for (const [name, fn] of [
   );
 }
 
+// 6. Multi-material `BufferGeometry.groups` (0: frame, 1: glazing, 2: hardware) & GLB/USDZ export
+{
+  interface GroupedGeo {
+    groups?: Array<{count: number; materialIndex?: number}>;
+  }
+  const sumGroups = (g: GroupedGeo): number =>
+    (g.groups ?? []).reduce((acc, gr) => acc + gr.count, 0);
+  const groupMats = (g: GroupedGeo): Array<number | undefined> =>
+    (g.groups ?? []).map((gr) => gr.materialIndex);
+
+  const frenchDoor = new Arch.DoorGeometry({
+    style: 'french',
+    operation: 'swing',
+    leaves: 2,
+    handle: 'lever',
+    width: 1.6,
+    height: 2.1,
+    openFraction: 0.35,
+  });
+  assert(
+    sumGroups(frenchDoor) === frenchDoor.index.count &&
+      JSON.stringify(groupMats(frenchDoor)) === '[0,1,2]',
+    'DoorGeometry (french + lever) emits contiguous groups [0: frame, 1: glass, 2: hardware] covering 100% of indices',
+  );
+
+  const halfLiteBarn = new Arch.DoorGeometry({
+    style: 'half-lite',
+    operation: 'barn',
+    width: 1.0,
+    height: 2.1,
+  });
+  assert(
+    sumGroups(halfLiteBarn) === halfLiteBarn.index.count &&
+      JSON.stringify(groupMats(halfLiteBarn)) === '[0,1,2]',
+    'DoorGeometry (half-lite barn) emits groups [0, 1, 2] including track hardware',
+  );
+
+  const unglazedDoor = new Arch.DoorGeometry({
+    style: 'vision-lite',
+    glazing: false,
+    handle: 'push-bar',
+  });
+  assert(
+    sumGroups(unglazedDoor) === unglazedDoor.index.count &&
+      JSON.stringify(groupMats(unglazedDoor)) === '[0,2]',
+    'DoorGeometry (glazing: false) omits group 1 while preserving frame (0) & hardware (2)',
+  );
+
+  for (const wStyle of ['arched', 'double-hung', 'slider', 'casement'] as const) {
+    const winGeo = new Arch.WindowGeometry({
+      style: wStyle,
+      width: 1.3,
+      height: 1.5,
+      openFraction: 0.4,
+    });
+    assert(
+      sumGroups(winGeo) === winGeo.index.count &&
+        JSON.stringify(groupMats(winGeo)) === '[0,1]',
+      `WindowGeometry (${wStyle}) emits groups [0: frame, 1: glazing] covering 100% of indices`,
+    );
+  }
+  const unglazedWin = new Arch.WindowGeometry({
+    style: 'mullion-grid',
+    glazing: false,
+  });
+  assert(
+    JSON.stringify(groupMats(unglazedWin)) === '[0]',
+    'WindowGeometry (glazing: false) emits only frame group [0]',
+  );
+
+  const panelRail = new Arch.RailingGeometry({
+    style: 'panel',
+    length: 3.0,
+    height: 1.07,
+  });
+  assert(
+    sumGroups(panelRail) === panelRail.index.count &&
+      JSON.stringify(groupMats(panelRail)) === '[0,1]',
+    'RailingGeometry (style="panel") emits groups [0: posts/rails, 1: infill panels]',
+  );
+
+  const frameMat = new MeshStandardMaterial({
+    name: 'FrameWood',
+    color: 0xf8fafc,
+    roughness: 0.6,
+  });
+  const glassMat = new MeshStandardMaterial({
+    name: 'ClearGlass',
+    color: 0xbae6fd,
+    roughness: 0.08,
+    opacity: 0.32,
+    transparent: true,
+  });
+  const hwMat = new MeshStandardMaterial({
+    name: 'BrushedBrass',
+    color: 0xd97706,
+    metalness: 0.88,
+    roughness: 0.22,
+  });
+
+  const mmScene = new Scene();
+  const singleDoorMesh = new Mesh(frenchDoor, frameMat);
+  singleDoorMesh.name = 'SingleMatDoor';
+  mmScene.add(singleDoorMesh);
+
+  const multiDoorMesh = new Mesh(frenchDoor, [frameMat, glassMat, hwMat]);
+  multiDoorMesh.name = 'MultiMatDoor';
+  mmScene.add(multiDoorMesh);
+
+  const multiWinMesh = new Mesh(
+    new Arch.WindowGeometry({style: 'arched', width: 1.2, height: 1.6}),
+    [frameMat, glassMat],
+  );
+  multiWinMesh.name = 'MultiMatWin';
+  mmScene.add(multiWinMesh);
+
+  const multiRailMesh = new Mesh(panelRail, [hwMat, glassMat]);
+  multiRailMesh.name = 'MultiMatRail';
+  mmScene.add(multiRailMesh);
+
+  const mmGlb = parseGLB(mmScene.toGLB());
+  assert(
+    mmGlb.gltf.meshes[0].primitives.length === 1 &&
+      mmGlb.gltf.meshes[1].primitives.length === 3 &&
+      mmGlb.gltf.meshes[2].primitives.length === 2 &&
+      mmGlb.gltf.meshes[3].primitives.length === 2,
+    'Single-material Mesh stays 1 primitive while [frameMat, glassMat, hwMat] exports 3/2/2 glTF primitives',
+  );
+  const glassMatIdx = mmGlb.gltf.meshes[1].primitives[1].material;
+  assert(
+    mmGlb.gltf.materials[glassMatIdx]?.alphaMode === 'BLEND',
+    'Group-1 glazing primitive binds transparent BLEND glass material in GLB',
+  );
+  const mmUsdz = mmScene.toUSDZ();
+  const mmUsdaText = new TextDecoder().decode(mmUsdz);
+  assert(
+    mmUsdaText.includes('FrameWood') &&
+      mmUsdaText.includes('ClearGlass') &&
+      mmUsdaText.includes('BrushedBrass'),
+    'Multi-material Architecture kit assembly exports FrameWood, ClearGlass, and BrushedBrass to USDZ',
+  );
+}
+
+// 7. One-way interior cutaway on `WallGeometry` (`cutaway: 'front' | 'back'`, `curbHeight`)
+{
+  for (const side of ['front', 'back'] as const) {
+    const cutWall = new Arch.WallGeometry({
+      length: 6.0,
+      height: 2.8,
+      thickness: 0.2,
+      cutaway: side,
+      curbHeight: 0.22,
+      baseboardHeight: 0.1,
+      corniceHeight: 0.12,
+      openings: [
+        {x: -1.8, y: 0.9, width: 1.1, height: 1.2, arch: 'pointed'},
+        {x: 0, y: 0, width: 1.0, height: 2.1, arch: 'semicircular'},
+        {x: 1.8, y: 0.15, width: 1.0, height: 1.8, arch: 'segmental'},
+      ],
+    });
+    const pos = cutWall.getAttribute('position').array as Float32Array;
+    const nrm = cutWall.getAttribute('normal').array as Float32Array;
+    const idx = cutWall.index.array as Uint16Array | Uint32Array;
+    const expectedInwardZ = side === 'front' ? -1 : 1;
+    let upperTris = 0;
+    let badUpperNormals = 0;
+    let exteriorGhostVerts = 0;
+    let curbTris = 0;
+    let doorwayCurbViolations = 0;
+    const curbHalfEdges = new Map<string, number>();
+    const qKey = (vi: number) =>
+      `${Math.round(pos[vi * 3] * 1e5)},${Math.round(pos[vi * 3 + 1] * 1e5)},${Math.round(pos[vi * 3 + 2] * 1e5)}`;
+
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t];
+      const b = idx[t + 1];
+      const c = idx[t + 2];
+      const cy = (pos[a * 3 + 1] + pos[b * 3 + 1] + pos[c * 3 + 1]) / 3;
+      const cx = (pos[a * 3] + pos[b * 3] + pos[c * 3]) / 3;
+      if (cy > 0.22 + 1e-3) {
+        upperTris++;
+        for (const vi of [a, b, c]) {
+          if (
+            Math.abs(nrm[vi * 3]) > 1e-4 ||
+            Math.abs(nrm[vi * 3 + 1]) > 1e-4 ||
+            nrm[vi * 3 + 2] * expectedInwardZ < 0.99
+          ) {
+            badUpperNormals++;
+          }
+          // Every kept upper-band vertex (wall + interior cornice) must sit on the kept interior Z side (`z * expectedInwardZ >= 0.09`).
+          if (pos[vi * 3 + 2] * expectedInwardZ < 0.09) {
+            exteriorGhostVerts++;
+          }
+        }
+      } else {
+        curbTris++;
+        if (Math.abs(cx) < 0.48 && cy < 0.21) doorwayCurbViolations++;
+        const ka = qKey(a);
+        const kb = qKey(b);
+        const kc = qKey(c);
+        for (const [u, v] of [
+          [ka, kb],
+          [kb, kc],
+          [kc, ka],
+        ]) {
+          const hk = `${u}->${v}`;
+          curbHalfEdges.set(hk, (curbHalfEdges.get(hk) ?? 0) + 1);
+        }
+      }
+    }
+    let openCurbEdges = 0;
+    for (const [hk, cnt] of curbHalfEdges.entries()) {
+      const [u, v] = hk.split('->');
+      if ((curbHalfEdges.get(`${v}->${u}`) ?? 0) !== cnt) openCurbEdges++;
+    }
+    assert(
+      upperTris > 20 &&
+        badUpperNormals === 0 &&
+        exteriorGhostVerts === 0 &&
+        curbTris >= 24 &&
+        openCurbEdges === 0 &&
+        doorwayCurbViolations === 0,
+      `WallGeometry (cutaway="${side}", curbHeight=0.22) emits closed 2-manifold floor curb (${curbTris}t) + strictly inward-facing [0,0,${expectedInwardZ}] upper sheet (${upperTris}t, ghostZ=0)`,
+      `upper=${upperTris}, badNrm=${badUpperNormals}, ghostZ=${exteriorGhostVerts}, curb=${curbTris}, openCurbHE=${openCurbEdges}, doorViol=${doorwayCurbViolations}`,
+    );
+  }
+
+  const sheetOnly = new Arch.WallGeometry({
+    length: 4,
+    height: 2.6,
+    cutaway: 'front',
+    curbHeight: 0,
+  });
+  const sheetNrm = sheetOnly.getAttribute('normal').array as Float32Array;
+  let allMinusZ = sheetNrm.length > 0;
+  for (let i = 0; i < sheetNrm.length; i += 3) {
+    if (sheetNrm[i + 2] > -0.99) allMinusZ = false;
+  }
+  assert(
+    allMinusZ,
+    'WallGeometry (cutaway="front", curbHeight=0) emits pure single-sided inward sheet with zero curb faces',
+  );
+}
+
 console.log(
   `\n🏆 kit-architecture Audit Results: ${passed} Passed, ${failed} Failed.`,
 );

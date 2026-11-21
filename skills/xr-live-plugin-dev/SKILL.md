@@ -91,18 +91,18 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     -   `three-live-studio.min.js`: `< 36 KB gz`
     -   `three-live-cad.min.js`: `< 20 KB gz`
     -   `three-live-kit-mechanical.min.js`: `< 18 KB gz`
-    -   `three-live-kit-architecture.min.js`: `< 16 KB gz`
+    -   `three-live-kit-architecture.min.js`: `< 17 KB gz`
     -   `three-live-kit-industrial.min.js`: `< 14 KB gz`
     -   `three-live-kit-science.min.js`: `< 31 KB gz`
     -   `three-live-kit-electronics.min.js`: `< 14 KB gz`
-    -   `three-live-kits.min.js`: `< 82 KB gz`
+    -   `three-live-kits.min.js`: `< 84 KB gz`
     -   `three-live-procedural.min.js`: `< 30 KB gz`
     -   `three-live-animation.min.js`: `< 11 KB gz`
     -   `three-live-ai.min.js`: `< 35 KB gz`
     -   `three-live-webgpu.min.js`: `< 24 KB gz`
     -   `three-live-tsl.min.js`: `< 19 KB gz`
     -   `three-live-full.min.js`: `< 246 KB gz`
-    -   `three-live-compiler-bundle.min.js`: `< 264 KB gz`
+    -   `three-live-compiler-bundle.min.js`: `< 266 KB gz`
     -   `xr-live-viewer.min.js`: `< 64 KB gz`
     -   `xr-live.min.js`: `< 102 KB gz`
     -   `xr-live-sensors.min.js`: `< 10 KB gz`

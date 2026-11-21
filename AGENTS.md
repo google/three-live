@@ -33,18 +33,18 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Add-on: PBR Next, HDRI/SH, multi-light `shadow-maps`, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots | `<three-live>` | `three-live-studio.min.js` | `< 36 KB gz` |
 | Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `SweepGeometry`/`HelixGeometry`/`LoftGeometry`, `PatternInstancer` arrays, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry` | `<three-live>` | `three-live-cad.min.js` | `< 20 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Mechanical` gears, bevel gears, ISO bolts/nuts/washers, bearings, pillow blocks, couplers, springs | `<three-live>` | `three-live-kit-mechanical.min.js` | `< 18 KB gz` |
-| Domain Kit (a la carte): Parametric `THREE.Architecture` walls, slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways | `<three-live>` | `three-live-kit-architecture.min.js` | `< 16 KB gz` |
+| Domain Kit (a la carte): Parametric `THREE.Architecture` walls, slabs, stairs, roofs, 10-style doors & windows, railings, columns, archways | `<three-live>` | `three-live-kit-architecture.min.js` | `< 17 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Industrial` process pipes, valves, pumps, pallet racks, conveyors, ladders, catwalks, tanks | `<three-live>` | `three-live-kit-industrial.min.js` | `< 14 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Science` molecules, protein ribbons, crystal lattices, isosurfaces, streamlines, callouts | `<three-live>` | `three-live-kit-science.min.js` | `< 31 KB gz` |
 | Domain Kit (a la carte): Parametric `THREE.Electronics` PCBs, flanged/cutout enclosures, heatsinks, DIN rails, ICs, connectors, discretes | `<three-live>` | `three-live-kit-electronics.min.js` | `< 14 KB gz` |
-| Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 57 geometries) | `<three-live>` | `three-live-kits.min.js` | `< 82 KB gz` |
+| Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 57 geometries) | `<three-live>` | `three-live-kits.min.js` | `< 84 KB gz` |
 | Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz` |
 | Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz` |
 | Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 35 KB gz` |
 | Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 24 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
 | Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 246 KB gz` |
-| Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 264 KB gz` |
+| Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 266 KB gz` |
 | `.glb` / `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` (no scripting) | `<xr-live>` | `xr-live-viewer.min.js` | `< 64 KB gz` |
 | 6DoF WebXR + `<script type="text/three">` + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 102 KB gz` |
 | Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP | `<xr-live>` | `xr-live-sensors.min.js` | `< 10 KB gz` |

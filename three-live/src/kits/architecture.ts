@@ -100,6 +100,14 @@ export interface WallOptions {
   baseboardProjection?: number;
   corniceHeight?: number;
   corniceProjection?: number;
+  /**
+   * Optional one-way interior cutaway side (`'front'` cuts the `+Z` exterior
+   * face above `curbHeight` leaving inward `-Z` normals; `'back'` cuts `-Z`
+   * leaving inward `+Z` normals) for `THREE.FrontSide` room inspection.
+   */
+  cutaway?: 'front' | 'back';
+  /** Closed floor-plan curb height in meters when `cutaway` is set (default `0.22`). */
+  curbHeight?: number;
   origin?: 'floor' | 'center';
 }
 
@@ -184,6 +192,8 @@ export interface DoorOptions {
   frameDepth?: number;
   openFraction?: number;
   openAngleDeg?: number;
+  /** Whether lite styles (`vision-lite`, `half-lite`, `french`) include group-1 glazing panes (default `true`). */
+  glazing?: boolean;
   origin?: 'floor' | 'center';
 }
 
@@ -220,6 +230,8 @@ export interface WindowOptions {
   sill?: boolean;
   sillDepth?: number;
   sillThickness?: number;
+  /** Whether window lites include group-1 glazing panes (default `true`). */
+  glazing?: boolean;
   origin?: 'center' | 'sill';
 }
 
@@ -308,6 +320,17 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     nrm: number[];
     uv: number[];
     idx: number[];
+    mat?: number;
+  }
+  interface RawGroup {
+    start: number;
+    count: number;
+    mat: number;
+  }
+
+  function tagRaw(b: RawBufs, mat: number): RawBufs {
+    b.mat = mat;
+    return b;
   }
 
   function applyBuffers(
@@ -316,6 +339,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     b: RawBufs,
     typeName: string,
     params: Record<string, unknown>,
+    groups?: readonly RawGroup[],
   ): void {
     const vCount = (b.pos.length / 3) | 0;
     geom.type = typeName;
@@ -342,6 +366,9 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         1,
       ),
     );
+    if (groups) {
+      for (const gr of groups) geom.addGroup?.(gr.start, gr.count, gr.mat);
+    }
     let minX = Infinity;
     let minY = Infinity;
     let minZ = Infinity;
@@ -398,6 +425,26 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       vOff += (p.pos.length / 3) | 0;
     }
     return {pos, nrm, uv, idx};
+  }
+
+  function mergeGrouped(parts: readonly RawBufs[]): {
+    buf: RawBufs;
+    groups: RawGroup[];
+  } {
+    const sorted = parts
+      .filter((p) => p.idx.length > 0)
+      .sort((a, b) => (a.mat ?? 0) - (b.mat ?? 0));
+    const groups: RawGroup[] = [];
+    let start = 0;
+    for (const p of sorted) {
+      const m = p.mat ?? 0;
+      const n = p.idx.length;
+      const last = groups[groups.length - 1];
+      if (last && last.mat === m) last.count += n;
+      else groups.push({start, count: n, mat: m});
+      start += n;
+    }
+    return {buf: mergeRaw(sorted), groups};
   }
 
   function xformRaw(
@@ -1244,16 +1291,17 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       const rawOpenings = Array.isArray(options.openings)
         ? options.openings.slice(0, MAX_OPENINGS)
         : [];
-      interface ClampedOp {
+      interface PlacedOp {
         cx: number;
+        x0: number;
+        x1: number;
         y0: number;
+        y1: number;
         w: number;
         h: number;
         arch?: boolean | 'semicircular' | 'segmental' | 'pointed' | 'none';
       }
-      const doorNotches: ClampedOp[] = [];
-      const windowHoles: Pt2[][] = [];
-      const placed: Array<[number, number, number, number]> = [];
+      const placed: PlacedOp[] = [];
 
       for (const op of rawOpenings) {
         if (!op) continue;
@@ -1274,70 +1322,167 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const x0 = cx - w * 0.5;
         const x1 = cx + w * 0.5;
         const y1 = y0 + oh;
-        let overlaps = false;
-        for (const [px0, py0, px1, py1] of placed) {
-          if (
-            x0 < px1 + margin * 0.5 &&
-            x1 > px0 - margin * 0.5 &&
-            y0 < py1 + margin * 0.5 &&
-            y1 > py0 - margin * 0.5
-          ) {
-            overlaps = true;
-            break;
-          }
+        if (
+          placed.some(
+            (p) =>
+              x0 < p.x1 + margin * 0.5 &&
+              x1 > p.x0 - margin * 0.5 &&
+              y0 < p.y1 + margin * 0.5 &&
+              y1 > p.y0 - margin * 0.5,
+          )
+        ) {
+          continue;
         }
-        if (overlaps) continue;
-        placed.push([x0, y0, x1, y1]);
-        if (isDoor) {
-          doorNotches.push({cx, y0: 0, w, h: oh, arch: op.arch});
-        } else {
-          windowHoles.push(makeOpeningHoleCW(cx, y0, w, oh, op.arch));
-        }
+        placed.push({cx, x0, x1, y0, y1, w, h: oh, arch: op.arch});
       }
 
-      doorNotches.sort((a, b) => a.cx - b.cx);
-      const outer: Pt2[] = [[-hL, 0]];
-      for (const dn of doorNotches) {
-        const notchCW = makeOpeningHoleCW(dn.cx, 0, dn.w, dn.h, dn.arch);
-        for (const p of notchCW) outer.push(p);
-      }
-      outer.push([hL, 0], [hL, h], [-hL, h]);
-
-      const parts: RawBufs[] = [
-        extrudeProfile(outer, windowHoles, -hT, hT, 'z'),
-      ];
-
+      placed.sort((a, b) => a.cx - b.cx);
       const bbH = clamp(num(options.baseboardHeight, 0), 0, h * 0.25);
       const bbP = clamp(num(options.baseboardProjection, 0.015), 0.002, 0.2);
-      if (bbH > 1e-4) {
-        // Segment baseboards cleanly across wall runs between door openings!
-        let curX = -hL;
-        const runs: Array<[number, number]> = [];
-        for (const dn of doorNotches) {
-          const d0 = dn.cx - dn.w * 0.5 - 0.006;
-          if (d0 - curX > 0.04) runs.push([curX, d0]);
-          curX = dn.cx + dn.w * 0.5 + 0.006;
-        }
-        if (hL - curX > 0.04) runs.push([curX, hL]);
-        for (const [rx0, rx1] of runs) {
-          const rLen = rx1 - rx0;
-          const rMid = (rx0 + rx1) * 0.5;
-          parts.push(
-            buildBox(rMid, bbH * 0.5, hT + bbP * 0.5 + 1e-4, rLen, bbH, bbP),
-            buildBox(rMid, bbH * 0.5, -hT - bbP * 0.5 - 1e-4, rLen, bbH, bbP),
-          );
-        }
-      }
       const crH = clamp(num(options.corniceHeight, 0), 0, h * 0.25);
       const crP = clamp(num(options.corniceProjection, 0.03), 0.002, 0.3);
-      if (crH > 1e-4) {
-        parts.push(
-          buildBox(0, h - crH * 0.5, hT + crP * 0.5 + 1e-4, len, crH, crP),
-          buildBox(0, h - crH * 0.5, -hT - crP * 0.5 - 1e-4, len, crH, crP),
-        );
-      }
+      const cutSide =
+        options.cutaway === 'front' || options.cutaway === 'back'
+          ? options.cutaway
+          : undefined;
 
-      const merged = mergeRaw(parts);
+      const buildBand = (
+        yLo: number,
+        yHi: number,
+        onlySideZ: -1 | 0 | 1 = 0,
+      ): RawBufs => {
+        if (yHi - yLo <= 1e-3) return {pos: [], nrm: [], uv: [], idx: []};
+        const out: RawBufs[] = [];
+        const tol = Math.min(0.004, margin * 0.4);
+        let curX = -hL;
+        const spans: Array<[number, number]> = [];
+        for (const op of placed) {
+          if (op.y0 <= yLo + tol && op.y1 >= yHi - tol) {
+            if (op.x0 - curX > tol) spans.push([curX, op.x0]);
+            curX = op.x1;
+          }
+        }
+        if (hL - curX > tol) spans.push([curX, hL]);
+        for (const [sx0, sx1] of spans) {
+          const bOuter: Pt2[] = [[sx0, yLo]];
+          const topN: PlacedOp[] = [];
+          const bHoles: Pt2[][] = [];
+          for (const op of placed) {
+            if (
+              op.x0 < sx0 - 1e-5 ||
+              op.x1 > sx1 + 1e-5 ||
+              op.y1 <= yLo + tol ||
+              op.y0 >= yHi - tol
+            ) {
+              continue;
+            }
+            const cw = makeOpeningHoleCW(op.cx, op.y0, op.w, op.h, op.arch);
+            if (op.y0 <= yLo + tol) {
+              for (let i = 0; i < cw.length - 1; i++) {
+                const a = cw[i];
+                const b = cw[i + 1];
+                const inA = a[1] >= yLo - 1e-7;
+                const inB = b[1] >= yLo - 1e-7;
+                if (i === 0 && inA) bOuter.push([a[0], Math.max(yLo, a[1])]);
+                if (inA !== inB) {
+                  bOuter.push([
+                    a[0] + ((yLo - a[1]) * (b[0] - a[0])) / (b[1] - a[1]),
+                    yLo,
+                  ]);
+                }
+                if (inB) bOuter.push([b[0], Math.max(yLo, b[1])]);
+              }
+            } else if (op.y1 >= yHi - tol) {
+              topN.push(op);
+            } else {
+              bHoles.push(cw);
+            }
+          }
+          bOuter.push([sx1, yLo], [sx1, yHi]);
+          for (let i = topN.length - 1; i >= 0; i--) {
+            const tn = topN[i];
+            bOuter.push([tn.x1, yHi], [tn.x1, tn.y0], [tn.x0, tn.y0], [tn.x0, yHi]);
+          }
+          bOuter.push([sx0, yHi]);
+          out.push(extrudeProfile(bOuter, bHoles, -hT, hT, 'z'));
+        }
+        const emitTrimRuns = (
+          m0: number,
+          m1: number,
+          proj: number,
+          cutsOp: (op: PlacedOp) => boolean,
+        ) => {
+          if (m1 - m0 <= 1e-3) return;
+          const sides = onlySideZ === 0 ? [-1, 1] : [onlySideZ];
+          const addRun = (rx0: number, rx1: number) => {
+            if (rx1 - rx0 <= 0.04) return;
+            for (const sgn of sides) {
+              out.push(
+                buildBox(
+                  (rx0 + rx1) * 0.5,
+                  (m0 + m1) * 0.5,
+                  sgn * (hT + proj * 0.5 + 1e-4),
+                  rx1 - rx0,
+                  m1 - m0,
+                  proj,
+                ),
+              );
+            }
+          };
+          let rx = -hL;
+          for (const op of placed) {
+            if (cutsOp(op)) {
+              addRun(rx, op.x0 - 0.006);
+              rx = op.x1 + 0.006;
+            }
+          }
+          addRun(rx, hL);
+        };
+        emitTrimRuns(Math.max(yLo, 0), Math.min(yHi, bbH), bbP, (op) => op.y0 <= 0.02);
+        if (crH > 1e-4) {
+          const c0 = Math.max(yLo, h - crH);
+          emitTrimRuns(c0, Math.min(yHi, h), crP, (op) => op.y1 >= c0 - 0.006);
+        }
+        return mergeRaw(out);
+      };
+
+      const keepFaceZ = (b: RawBufs, signZ: number): RawBufs => {
+        const pos: number[] = [];
+        const nrm: number[] = [];
+        const uv: number[] = [];
+        const idx: number[] = [];
+        const map = new Int32Array((b.pos.length / 3) | 0).fill(-1);
+        let nV = 0;
+        for (let i = 0; i < b.idx.length; i += 3) {
+          const a = b.idx[i];
+          if (b.nrm[a * 3 + 2] * signZ < 0.99) continue;
+          for (let k = 0; k < 3; k++) {
+            const vi = b.idx[i + k];
+            let ni = map[vi];
+            if (ni < 0) {
+              ni = nV++;
+              map[vi] = ni;
+              pos.push(b.pos[vi * 3], b.pos[vi * 3 + 1], b.pos[vi * 3 + 2]);
+              nrm.push(b.nrm[vi * 3], b.nrm[vi * 3 + 1], b.nrm[vi * 3 + 2]);
+              uv.push(b.uv[vi * 2], b.uv[vi * 2 + 1]);
+            }
+            idx.push(ni);
+          }
+        }
+        return {pos, nrm, uv, idx};
+      };
+
+      let merged: RawBufs;
+      const curbH = clamp(num(options.curbHeight, 0.22), 0, h);
+      if (!cutSide) {
+        merged = buildBand(0, h);
+      } else {
+        const inwardZ: -1 | 1 = cutSide === 'front' ? -1 : 1;
+        merged = mergeRaw([
+          buildBand(0, curbH),
+          keepFaceZ(buildBand(curbH, h, inwardZ), inwardZ),
+        ]);
+      }
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
 
       applyBuffers(this, merged, 'WallGeometry', {
@@ -1345,6 +1490,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         height: h,
         thickness: t,
         openingCount: placed.length,
+        ...(cutSide ? {cutaway: cutSide, curbHeight: curbH} : {}),
         origin,
       });
     }
@@ -2102,7 +2248,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     z1: number,
     cols: number,
     rows: number,
-  ): RawBufs {
+    includeGlass = true,
+  ): RawBufs[] {
     const hpw = pw * 0.5;
     const outer: Pt2[] = [
       [-hpw, yBase],
@@ -2127,18 +2274,50 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     const clearW = availW - (effCols - 1) * mul;
     const clearH = availH - (effRows - 1) * mul;
     const holes: Pt2[][] = [];
+    const glass: RawBufs[] = [];
     if (clearW > 0.015 && clearH > 0.015) {
       const cw = clearW / effCols;
       const ch = clearH / effRows;
+      const gt = Math.min(0.006, Math.max(0.002, (z1 - z0) * 0.35));
+      const zMid = (z0 + z1) * 0.5;
       for (let r = 0; r < effRows; r++) {
         for (let c = 0; c < effCols; c++) {
           const lx = -hpw + sw + c * (cw + mul) + cw * 0.5;
           const ly = yBase + sw + r * (ch + mul);
           holes.push(makeOpeningHoleCW(lx, ly, cw, ch, false));
+          if (includeGlass && cw > 0.004 && ch > 0.004) {
+            glass.push(buildBox(lx, ly + ch * 0.5, zMid, cw - 1e-3, ch - 1e-3, gt));
+          }
         }
       }
     }
-    return extrudeProfile(outer, holes, z0, z1, 'z');
+    const out: RawBufs[] = [extrudeProfile(outer, holes, z0, z1, 'z')];
+    if (glass.length > 0) out.push(tagRaw(mergeRaw(glass), 1));
+    return out;
+  }
+
+  function xformList(
+    list: readonly RawBufs[],
+    dx: number,
+    dy: number,
+    dz: number,
+    rotY = 0,
+    pivotX = 0,
+    pivotZ = 0,
+  ): void {
+    for (const b of list) xformRaw(b, dx, dy, dz, rotY, pivotX, pivotZ);
+  }
+
+  function xformListX(
+    list: readonly RawBufs[],
+    dx: number,
+    dy: number,
+    dz: number,
+    rotX = 0,
+    pivotY = 0,
+    pivotZ = 0,
+  ): void {
+    for (const b of list) xformRawX(b, dx, dy, dz, rotX, pivotY, pivotZ);
   }
 
   // --- 4. DoorGeometry ---
@@ -2179,6 +2358,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       const origin = options.origin ?? 'floor';
 
       const hW = w * 0.5;
+      const hasGlazing = options.glazing !== false;
       const parts: RawBufs[] = [];
       const isArched = style === 'arched' && operation === 'swing';
 
@@ -2190,7 +2370,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         lt: number,
         latchSign: number,
         archMode: 'none' | 'full' | 'left-half' | 'right-half',
-      ): RawBufs => {
+      ): RawBufs[] => {
         const lhw = lw * 0.5;
         const leafOuter: Pt2[] = [
           [-lhw, yLeaf0],
@@ -2225,6 +2405,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
 
         const stileW = Math.min(0.13, lw * 0.16);
         const leafParts: RawBufs[] = [];
+        const glassParts: RawBufs[] = [];
+        const hwParts: RawBufs[] = [];
 
         if (
           style === 'panel-1' ||
@@ -2275,15 +2457,27 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           const liteY0 = yLeaf0 + lh * 0.48;
           const liteH = lh * 0.52 - stileW * 1.1;
           const lowerH = lh * 0.48 - stileW * 2.2;
-          const upperHoles =
-            liteW > 0.025 && liteH > 0.03
-              ? [makeOpeningHoleCW(0, liteY0, liteW, liteH, false)]
-              : [];
+          const hasUpper = liteW > 0.025 && liteH > 0.03;
+          const upperHoles = hasUpper
+            ? [makeOpeningHoleCW(0, liteY0, liteW, liteH, false)]
+            : [];
           const webT = lt * 0.4;
           const stileT = (lt - webT) * 0.5;
           leafParts.push(
             extrudeProfile(leafOuter, upperHoles, -webT * 0.5, webT * 0.5, 'z'),
           );
+          if (hasGlazing && hasUpper) {
+            glassParts.push(
+              buildBox(
+                0,
+                liteY0 + liteH * 0.5,
+                0,
+                liteW - 1e-3,
+                liteH - 1e-3,
+                Math.min(0.006, Math.max(0.002, webT * 0.5)),
+              ),
+            );
+          }
           const faceHoles =
             liteW > 0.025 && lowerH > 0.03
               ? [
@@ -2320,6 +2514,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           const clearW = lw - 2 * stileW - (cols - 1) * mul;
           const clearH = lh - stileW * 2.4 - (rows - 1) * mul;
           const fHoles: Pt2[][] = [];
+          const gt = Math.min(0.006, Math.max(0.002, lt * 0.35));
           if (clearW > 0.04 && clearH > 0.08) {
             const cw = clearW / cols;
             const ch = clearH / rows;
@@ -2328,6 +2523,11 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
                 const cx = -lhw + stileW + c * (cw + mul) + cw * 0.5;
                 const y0 = yLeaf0 + stileW * 1.4 + r * (ch + mul);
                 fHoles.push(makeOpeningHoleCW(cx, y0, cw, ch, false));
+                if (hasGlazing && cw > 0.004 && ch > 0.004) {
+                  glassParts.push(
+                    buildBox(cx, y0 + ch * 0.5, 0, cw - 1e-3, ch - 1e-3, gt),
+                  );
+                }
               }
             }
           }
@@ -2364,16 +2564,23 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           }
         } else {
           const leafHoles: Pt2[][] = [];
-          if (style === 'vision-lite' && lw * 0.3 > 0.02 && lh * 0.36 > 0.04) {
-            leafHoles.push(
-              makeOpeningHoleCW(
-                0,
-                yLeaf0 + lh * 0.52,
-                lw * 0.3,
-                lh * 0.36,
-                false,
-              ),
-            );
+          const vw = lw * 0.3;
+          const vh = lh * 0.36;
+          if (style === 'vision-lite' && vw > 0.02 && vh > 0.04) {
+            const vy0 = yLeaf0 + lh * 0.52;
+            leafHoles.push(makeOpeningHoleCW(0, vy0, vw, vh, false));
+            if (hasGlazing) {
+              glassParts.push(
+                buildBox(
+                  0,
+                  vy0 + vh * 0.5,
+                  0,
+                  vw - 1e-3,
+                  vh - 1e-3,
+                  Math.min(0.006, Math.max(0.002, lt * 0.35)),
+                ),
+              );
+            }
           }
           leafParts.push(
             extrudeProfile(leafOuter, leafHoles, -lt * 0.5, lt * 0.5, 'z'),
@@ -2389,7 +2596,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             const zSurf = zSgn * (lt * 0.5 + 3e-4);
             if (handleStyle === 'push-bar') {
               const barW = lw * 0.74;
-              leafParts.push(
+              hwParts.push(
                 buildBox(
                   -barW * 0.38,
                   hy,
@@ -2409,7 +2616,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
                 buildBox(0, hy, zSurf + zSgn * 0.045, barW, 0.034, 0.016),
               );
             } else if (handleStyle === 'pull') {
-              leafParts.push(
+              hwParts.push(
                 buildBox(
                   hx,
                   hy + 0.08,
@@ -2451,11 +2658,11 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
                 0,
                 0,
               );
-              leafParts.push(knob);
+              hwParts.push(knob);
             } else {
               // 'lever'
               const leverLen = Math.min(0.115, lw * 0.28);
-              leafParts.push(
+              hwParts.push(
                 buildBox(hx, hy, zSurf + zSgn * 0.004, 0.046, 0.046, 0.008),
                 buildBox(hx, hy, zSurf + zSgn * 0.024, 0.018, 0.018, 0.03),
                 buildBox(
@@ -2470,7 +2677,10 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             }
           }
         }
-        return mergeRaw(leafParts);
+        const out: RawBufs[] = [mergeRaw(leafParts)];
+        if (glassParts.length > 0) out.push(tagRaw(mergeRaw(glassParts), 1));
+        if (hwParts.length > 0) out.push(tagRaw(mergeRaw(hwParts), 2));
+        return out;
       };
 
       // Helper for standard 3-sided doorway portal frame
@@ -2548,8 +2758,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             latchSign,
             'none',
           );
-          xformRaw(leaf, pan.cx, 0, zMid);
-          parts.push(leaf);
+          xformList(leaf, pan.cx, 0, zMid);
+          parts.push(...leaf);
         }
       } else if (operation === 'barn') {
         if (includeFrame) emitPortalFrame();
@@ -2562,8 +2772,10 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const railShiftX = biPart
           ? 0
           : (slideSide === 'left' ? -1 : 1) * w * 0.48;
-        // Exposed flat-bar steel track rail + wall standoffs
-        parts.push(buildBox(railShiftX, railY, zRail, railLen, 0.042, 0.009));
+        // Exposed flat-bar steel track rail + wall standoffs (hardware group 2)
+        parts.push(
+          tagRaw(buildBox(railShiftX, railY, zRail, railLen, 0.042, 0.009), 2),
+        );
         const standoffLen = Math.max(
           0.012,
           zRail - 0.005 - (includeFrame ? fd * 0.5 : 0) - 4e-4,
@@ -2571,7 +2783,9 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const zStandoff = zRail - 0.005 - standoffLen * 0.5 - 2e-4;
         for (let k = 0; k < 4; k++) {
           const sx = railShiftX - railLen * 0.44 + (railLen * 0.88 * k) / 3;
-          parts.push(buildBox(sx, railY, zStandoff, 0.022, 0.022, standoffLen));
+          parts.push(
+            tagRaw(buildBox(sx, railY, zStandoff, 0.022, 0.022, standoffLen), 2),
+          );
         }
 
         const nLeaves = biPart ? 2 : 1;
@@ -2590,21 +2804,24 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             -dir,
             'none',
           );
-          xformRaw(leaf, xCur, 0, zLeafMid);
-          parts.push(leaf);
-          // Twin vertical roller strap hangers + track wheels
+          xformList(leaf, xCur, 0, zLeafMid);
+          parts.push(...leaf);
+          // Twin vertical roller strap hangers + track wheels (hardware group 2)
           for (const sgn of [-1, 1]) {
             const hx = xCur + sgn * singleW * 0.34;
             const strapBot = h - 0.14;
             const strapTop = railY + 0.055;
             parts.push(
-              buildBox(
-                hx,
-                (strapBot + strapTop) * 0.5,
-                zLeafMid + leafT * 0.5 + 0.005,
-                0.036,
-                strapTop - strapBot,
-                0.008,
+              tagRaw(
+                buildBox(
+                  hx,
+                  (strapBot + strapTop) * 0.5,
+                  zLeafMid + leafT * 0.5 + 0.005,
+                  0.036,
+                  strapTop - strapBot,
+                  0.008,
+                ),
+                2,
               ),
             );
             const wheel = revolveClosedProfile(
@@ -2620,7 +2837,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               18,
             );
             xformRawX(wheel, hx, railY + 0.032, zRail, Math.PI * 0.5, 0, 0);
-            parts.push(wheel);
+            parts.push(tagRaw(wheel, 2));
           }
         }
       } else if (operation === 'pocket') {
@@ -2651,8 +2868,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           const xClosed = nLeaves === 2 ? dir * (lw * 0.5 + 0.001) : 0;
           const xSlide = xClosed + dir * openFrac * lw * 0.88;
           const leaf = buildDoorLeaf(lw, h - 0.008, 0.004, leafT, -dir, 'none');
-          xformRaw(leaf, xSlide, 0, 0);
-          parts.push(leaf);
+          xformList(leaf, xSlide, 0, 0);
+          parts.push(...leaf);
         }
       } else if (operation === 'bifold') {
         if (includeFrame) emitPortalFrame();
@@ -2674,10 +2891,10 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             0,
             'none',
           );
-          xformRaw(panA, xPin + sgn * panelW * 0.5, 0, 0);
+          xformList(panA, xPin + sgn * panelW * 0.5, 0, 0);
           const rotA = -sgn * swingDir * theta;
-          xformRaw(panA, 0, 0, 0, rotA, xPin, swingDir * leafT * 0.5);
-          parts.push(panA);
+          xformList(panA, 0, 0, 0, rotA, xPin, swingDir * leafT * 0.5);
+          parts.push(...panA);
 
           // Hinge knuckle connecting Panel A to Panel B
           const xKnuckle = xPin + sgn * (panelW + 0.004) * Math.cos(theta);
@@ -2690,9 +2907,9 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             -sgn,
             'none',
           );
-          xformRaw(panB, xKnuckle + sgn * panelW * 0.5, 0, zKnuckle);
-          xformRaw(panB, 0, 0, 0, -rotA, xKnuckle, zKnuckle);
-          parts.push(panB);
+          xformList(panB, xKnuckle + sgn * panelW * 0.5, 0, zKnuckle);
+          xformList(panB, 0, 0, 0, -rotA, xKnuckle, zKnuckle);
+          parts.push(...panB);
         }
       } else {
         // 'swing': single or double (French/corridor/arched) hinged doors
@@ -2717,33 +2934,40 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           const leaf = buildDoorLeaf(lw, lh, 0.004, leafT, latchSign, archMode);
           const cx =
             nLeaves === 2 ? (k === 0 ? -1 : 1) * (lw * 0.5 + 0.002) : 0;
-          xformRaw(leaf, cx, 0, 0);
+          xformList(leaf, cx, 0, 0);
           if (Math.abs(angRad) > 1e-6) {
             const pivotX = cx + (isRightHinge ? lw * 0.5 : -lw * 0.5);
             const pivotZ = (angRad >= 0 ? 1 : -1) * leafT * 0.5;
             const rotY = (isRightHinge ? 1 : -1) * angRad;
-            xformRaw(leaf, 0, 0, 0, rotY, pivotX, pivotZ);
+            xformList(leaf, 0, 0, 0, rotY, pivotX, pivotZ);
           }
-          parts.push(leaf);
+          parts.push(...leaf);
         }
       }
 
-      const merged = mergeRaw(parts);
+      const {buf: merged, groups} = mergeGrouped(parts);
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
 
-      applyBuffers(this, merged, 'DoorGeometry', {
-        style,
-        operation,
-        leaves: options.leaves ?? 1,
-        hinge: hingeSide,
-        handle: handleStyle,
-        width: w,
-        height: h,
-        thickness: leafT,
-        includeFrame,
-        openFraction: openFrac,
-        openAngleDeg: openDeg,
-      });
+      applyBuffers(
+        this,
+        merged,
+        'DoorGeometry',
+        {
+          style,
+          operation,
+          leaves: options.leaves ?? 1,
+          hinge: hingeSide,
+          handle: handleStyle,
+          width: w,
+          height: h,
+          thickness: leafT,
+          includeFrame,
+          openFraction: openFrac,
+          openAngleDeg: openDeg,
+          glazing: hasGlazing,
+        },
+        groups,
+      );
     }
   }
 
@@ -2765,6 +2989,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       const hingeSide = options.hinge === 'right' ? 'right' : 'left';
       const hasSill = options.sill !== false;
       const hasCasing = Boolean(options.casing);
+      const hasGlazing = options.glazing !== false;
       const origin = options.origin ?? 'sill';
 
       const hW = w * 0.5;
@@ -2833,7 +3058,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           const yLower = fw + clr + openFrac * maxTravel;
           // Upper sash on exterior (+Z) track, lower sash on interior (-Z) track
           parts.push(
-            buildFramedLitePanel(
+            ...buildFramedLitePanel(
               sashW,
               sashH,
               yUpper,
@@ -2842,8 +3067,9 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               0.003 + sd,
               cols,
               rows,
+              hasGlazing,
             ),
-            buildFramedLitePanel(
+            ...buildFramedLitePanel(
               sashW,
               sashH,
               yLower,
@@ -2852,6 +3078,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               -0.003,
               cols,
               rows,
+              hasGlazing,
             ),
           );
         } else if (style === 'slider') {
@@ -2878,9 +3105,10 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               zMid + pThick * 0.5,
               cols,
               rows,
+              hasGlazing,
             );
-            xformRaw(sash, pan.cx, 0, 0);
-            parts.push(sash);
+            xformList(sash, pan.cx, 0, 0);
+            parts.push(...sash);
           }
         } else if (style === 'casement') {
           const nLeaves = options.leaves === 2 ? 2 : 1;
@@ -2899,15 +3127,16 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               sd * 0.5,
               cols,
               rows,
+              hasGlazing,
             );
             const cx =
               nLeaves === 2
                 ? (k === 0 ? -1 : 1) * (sashW * 0.5 + clr * 0.5)
                 : 0;
-            xformRaw(sash, cx, 0, 0);
+            xformList(sash, cx, 0, 0);
             if (ang > 1e-6) {
               const pivotX = cx + (rightHinged ? sashW * 0.5 : -sashW * 0.5);
-              xformRaw(
+              xformList(
                 sash,
                 0,
                 0,
@@ -2917,7 +3146,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
                 sd * 0.5,
               );
             }
-            parts.push(sash);
+            parts.push(...sash);
           }
         } else {
           // 'awning' (top-hinged outward +Z) or 'hopper' (bottom-hinged inward -Z)
@@ -2932,11 +3161,12 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             sd * 0.5,
             cols,
             rows,
+            hasGlazing,
           );
           const isAwning = style === 'awning';
           const tiltRad = -openFrac * (((isAwning ? 45 : 35) * Math.PI) / 180);
           if (Math.abs(tiltRad) > 1e-6) {
-            xformRawX(
+            xformListX(
               sash,
               0,
               0,
@@ -2946,7 +3176,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               isAwning ? sd * 0.5 : -sd * 0.5,
             );
           }
-          parts.push(sash);
+          parts.push(...sash);
         }
       } else {
         // 'fixed', 'picture', 'mullion-grid', or 'arched'
@@ -2988,6 +3218,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const paneW = innerW / effCols;
         const paneH = innerH / effRows;
         const holes: Pt2[][] = [];
+        const gt = Math.min(0.006, Math.max(0.002, fd * 0.35));
 
         if (paneW > 0.015 && paneH > 0.015) {
           for (let r = 0; r < effRows; r++) {
@@ -2995,6 +3226,21 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               const cx = -hW + fw + c * (paneW + mulW) + paneW * 0.5;
               const y0 = fw + r * (paneH + mulW);
               holes.push(makeOpeningHoleCW(cx, y0, paneW, paneH, false));
+              if (hasGlazing && paneW > 0.004 && paneH > 0.004) {
+                parts.push(
+                  tagRaw(
+                    buildBox(
+                      cx,
+                      y0 + paneH * 0.5,
+                      0,
+                      paneW - 1e-3,
+                      paneH - 1e-3,
+                      gt,
+                    ),
+                    1,
+                  ),
+                );
+              }
             }
           }
         }
@@ -3014,6 +3260,24 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               fanPts.push([fanRx * Math.cos(a), yCenter + fanRy * Math.sin(a)]);
             }
             holes.push(fanPts);
+            const gRx = fanRx - 1e-3;
+            const gRy = fanRy - 1e-3;
+            const gYBase = yBase + 1e-3;
+            if (hasGlazing && gRx > 0.02 && gRy > gYBase - yCenter + 0.01) {
+              const gs0 = clamp((gYBase - yCenter) / gRy, 0, 0.88);
+              const ga0 = Math.asin(gs0);
+              const fanGlassCCW: Pt2[] = [];
+              for (let i = 0; i <= arcSegs; i++) {
+                const a = ga0 + ((Math.PI - 2 * ga0) * i) / arcSegs;
+                fanGlassCCW.push([
+                  gRx * Math.cos(a),
+                  yCenter + gRy * Math.sin(a),
+                ]);
+              }
+              parts.push(
+                tagRaw(extrudeProfile(fanGlassCCW, [], -gt * 0.5, gt * 0.5, 'z'), 1),
+              );
+            }
           }
         }
         parts.push(extrudeProfile(outer, holes, -fd * 0.5, fd * 0.5, 'z'));
@@ -3065,19 +3329,26 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         );
       }
 
-      const merged = mergeRaw(parts);
+      const {buf: merged, groups} = mergeGrouped(parts);
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
 
-      applyBuffers(this, merged, 'WindowGeometry', {
-        style,
-        width: w,
-        height: h,
-        cols,
-        rows,
-        openFraction: openFrac,
-        sill: hasSill,
-        casing: hasCasing,
-      });
+      applyBuffers(
+        this,
+        merged,
+        'WindowGeometry',
+        {
+          style,
+          width: w,
+          height: h,
+          cols,
+          rows,
+          openFraction: openFrac,
+          sill: hasSill,
+          casing: hasCasing,
+          glazing: hasGlazing,
+        },
+        groups,
+      );
     }
   }
 
@@ -3148,13 +3419,16 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
 
         if (style === 'panel') {
           parts.push(
-            buildBox(
-              xMid,
-              (yInfill0 + yInfill1) * 0.5,
-              0,
-              Math.max(0.02, clearSpan - 0.03),
-              Math.max(0.02, infillH - 0.03),
-              0.014,
+            tagRaw(
+              buildBox(
+                xMid,
+                (yInfill0 + yInfill1) * 0.5,
+                0,
+                Math.max(0.02, clearSpan - 0.03),
+                Math.max(0.02, infillH - 0.03),
+                0.014,
+              ),
+              1,
             ),
           );
         } else if (style === 'horizontal-bar') {
@@ -3176,15 +3450,21 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         }
       }
 
-      const merged = mergeRaw(parts);
+      const {buf: merged, groups} = mergeGrouped(parts);
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
 
-      applyBuffers(this, merged, 'RailingGeometry', {
-        style,
-        length: len,
-        height: h,
-        bays,
-      });
+      applyBuffers(
+        this,
+        merged,
+        'RailingGeometry',
+        {
+          style,
+          length: len,
+          height: h,
+          bays,
+        },
+        groups,
+      );
     }
   }
 

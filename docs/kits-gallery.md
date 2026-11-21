@@ -32,7 +32,7 @@ parametric geometry constructors** in the **5 `three-live` Domain Kits**.
 | :---------------------------------- | :------------------- | :----------------------------------- | :----: | :----------: | :----: |
 | [**Mechanical                       | `THREE.Mechanical`   | `three-live-kit-mechanical.min.js`   | `< 18  | **15**       | **35** |
 : CAD**](#mechanical-cad)             :                      :                                      : KB gz` :              :        :
-| [**Architecture &                   | `THREE.Architecture` | `three-live-kit-architecture.min.js` | `< 16  | **9**        | **33** |
+| [**Architecture &                   | `THREE.Architecture` | `three-live-kit-architecture.min.js` | `< 17  | **9**        | **33** |
 : AEC**](#architecture-aec)           :                      :                                      : KB gz` :              :        :
 | [**Industrial & Process             | `THREE.Industrial`   | `three-live-kit-industrial.min.js`   | `< 14  | **10**       | **24** |
 : Plant**](#industrial-process-plant) :                      :                                      : KB gz` :              :        :
@@ -41,7 +41,7 @@ parametric geometry constructors** in the **5 `three-live` Domain Kits**.
 | [**Electronics &                    | `THREE.Electronics`  | `three-live-kit-electronics.min.js`  | `< 14  | **9**        | **29** |
 : ECAD**](#electronics-ecad)          :                      :                                      : KB gz` :              :        :
 
-> Load all 5 domain kits together via `three-live-kits.min.js` (`< 82 KB gz`),
+> Load all 5 domain kits together via `three-live-kits.min.js` (`< 84 KB gz`),
 > or load individual `three-live-kit-<domain>.min.js` bundles a la carte.
 
 --------------------------------------------------------------------------------
@@ -86,7 +86,7 @@ flanges, and structural extrusions.
 ## Architecture & AEC
 
 **Namespace:** `THREE.Architecture` · **Bundle:**
-`three-live-kit-architecture.min.js` (`< 16 KB gz`) · **Constructors:** 9 ·
+`three-live-kit-architecture.min.js` (`< 17 KB gz`) · **Constructors:** 9 ·
 **Styles:** 33
 
 9 watertight 2-manifold building, BIM & interior elements: walls with
