@@ -67,7 +67,7 @@ const DOMAINS = [
     icon: '🏛️',
     accent: '#a78bfa',
     bundle: 'three-live-kit-architecture.min.js',
-    budgetLabel: '< 16 KB gz',
+    budgetLabel: '< 17 KB gz',
     description:
         '9 watertight 2-manifold building, BIM & interior elements: walls with Roman/segmental/Gothic openings & moldings, floor slabs with stairwell/skylight cutouts, IBC stairs, 6 roof styles, 10-style doors across 5 operations, 10-style windows, guardrails, classical columns, and masonry archways.',
     helpers: [

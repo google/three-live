@@ -26,6 +26,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Multi-material `BufferGeometry.groups` & one-way cutaway walls in
+    `THREE.Architecture` (`three-live/kits/architecture`):** `WindowGeometry`,
+    `DoorGeometry` (`vision-lite`, `half-lite`, `french`, and hardware), and
+    `RailingGeometry({ style: 'panel' })` now emit contiguous multi-material
+    `groups` (`0`: frame/stile/rail/panel, `1`: inset 2-manifold glazing panes,
+    `2`: door handles & barn-track hardware; `glazing: false` omits glazing
+    panes) while remaining 100% backwards-compatible with single-material
+    `new THREE.Mesh(geo, mat)`. `WallGeometry` adds `cutaway: 'front' | 'back'`
+    and `curbHeight` (default `0.22` m), emitting a closed 2-manifold floor-plan
+    curb below `curbHeight` and a single-sided inward-facing elevation sheet
+    above `curbHeight` so `THREE.FrontSide` hardware culling and single-sided
+    raycasting hide camera-facing exterior walls during interior room orbits.
 -   **Domain kits inside the browser sandbox (`kits` attribute):**
     `<three-live kits="architecture">` (or `kits="all"`, comma- or
     space-separated) imports the requested a-la-carte kit bundles
