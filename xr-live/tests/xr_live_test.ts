@@ -1357,6 +1357,103 @@ async function runXRLiveTests() {
     'CPU depth resets GPU-only texture-array, linearization, and reprojection state',
   );
 
+  // Regression: XRLiveElement.attributeChangedCallback syncs `xr-simulator` and `xr-depth`.
+  {
+    XRLiveElement.registerExtras({
+      createDepthManager: () => new XRDepthManager(),
+      createPhysics: () => new XRHeightfieldPhysics(),
+      createGestureClassifier: () => ({processXRFrame() {}}),
+      createSimulator: () => new XRDesktopSimulator(),
+      createTransitionController: () => new XRModeTransitionController(),
+      createAudioController: () => new XRSpatialAudioController(),
+      captureXRViewFrame,
+      registerXRLiveWebMCPTools,
+    });
+    const simAttrs = new Map<string, string>([['xr-simulator', 'none']]);
+    const simEl = new XRLiveElement();
+    const simElRecord = simEl as unknown as Record<string, unknown>;
+    let renderCount = 0;
+    const simViewer = {
+      xrDepthState: {enabled: true},
+      render() {
+        renderCount++;
+      },
+    };
+    simElRecord['_view'] = simViewer;
+    simElRecord['hasAttribute'] = (n: string) => simAttrs.has(n);
+    simElRecord['getAttribute'] = (n: string) => simAttrs.get(n) ?? null;
+    simElRecord['setAttribute'] = (n: string, v: string) => {
+      const prev = simAttrs.get(n) ?? null;
+      simAttrs.set(n, v);
+      if (XRLiveElement.observedAttributes.includes(n)) {
+        simEl.attributeChangedCallback(n, prev, v);
+      }
+    };
+    simElRecord['removeAttribute'] = (n: string) => {
+      const prev = simAttrs.get(n) ?? null;
+      simAttrs.delete(n);
+      if (XRLiveElement.observedAttributes.includes(n)) {
+        simEl.attributeChangedCallback(n, prev, null);
+      }
+    };
+
+    let configureCalls = 0;
+    const origConfigure = simEl.simulator.configureRoom.bind(simEl.simulator);
+    simEl.simulator.configureRoom = (preset: string) => {
+      configureCalls++;
+      origConfigure(preset);
+    };
+
+    assert(
+      simEl.simulator.active === false && simEl.xrSimulator === 'none',
+      'xr-simulator="none" starts with simulator.active === false',
+    );
+
+    simEl.setAttribute('xr-simulator', 'tabletop');
+    assert(
+      simEl.simulator.active === true &&
+        simEl.xrSimulator === 'tabletop' &&
+        Math.abs(simEl.simulator.headPosition[1] - 1.25) < 1e-4 &&
+        Math.abs(simEl.simulator.room.wallZ - -1.5) < 1e-4 &&
+        configureCalls === 1 &&
+        renderCount === 1,
+      'setAttribute("xr-simulator", "tabletop") activates simulator, configures tabletop room once, and renders',
+    );
+
+    // Property setter on DOM-backed element does not double-call configureRoom.
+    simEl.xrSimulator = 'office';
+    assert(
+      simEl.simulator.active === true &&
+        simEl.xrSimulator === 'office' &&
+        Math.abs(simEl.simulator.headPosition[1] - 1.55) < 1e-4 &&
+        configureCalls === 2,
+      'el.xrSimulator = "office" configures office room exactly once',
+    );
+
+    // Removing the attribute (as AetherUX OFF_VALUES does) deactivates simulator.
+    simEl.removeAttribute('xr-simulator');
+    assert(
+      simEl.simulator.active === false && simEl.xrSimulator === 'none',
+      'removeAttribute("xr-simulator") deactivates simulator and resets xrSimulator to "none"',
+    );
+
+    // Re-applying the same preset after removal re-configures cleanly.
+    simEl.setAttribute('xr-simulator', 'office');
+    assert(
+      simEl.simulator.active === true && configureCalls === 3,
+      'Re-setting xr-simulator="office" after removal re-configures simulator',
+    );
+
+    // Disabling xr-depth clears active session depth state.
+    simEl.setAttribute('xr-depth', 'occlusion');
+    simViewer.xrDepthState.enabled = true;
+    simEl.setAttribute('xr-depth', 'none');
+    assert(
+      simViewer.xrDepthState.enabled === false,
+      'setAttribute("xr-depth", "none") clears active session depth state',
+    );
+  }
+
   console.log(`\n🏆 xr-live Test Results: ${passed} Passed, ${failed} Failed.`);
   if (failed > 0) process.exit(1);
 }

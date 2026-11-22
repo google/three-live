@@ -117,6 +117,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+-   **`<xr-live>` dynamic `xr-simulator` and `xr-depth` attribute updates:**
+    `XRLiveElement` now overrides `attributeChangedCallback` so calling
+    `el.setAttribute('xr-simulator', 'tabletop' | 'office' | 'living-room')`,
+    `el.setAttribute('xr-simulator', 'none')`, or `el.removeAttribute('xr-simulator')`
+    activates, reconfigures, or deactivates `el.simulator` (without duplicate
+    `configureRoom` resets across `connectedCallback` and the `xrSimulator`
+    property setter), and setting `xr-depth="none"` (or removing `xr-depth`)
+    clears active session depth state immediately.
 -   **WebGL2 & WebGPU trilinear/anisotropic mipmapping + `ProceduralTexture.brick`
     joint anti-aliasing:** `ThreeView` now honors `gltf.samplers` (`minFilter`,
     `magFilter`, `wrapS`, `wrapT`), switches `TEXTURE_MIN_FILTER` to
