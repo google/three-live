@@ -64,6 +64,8 @@ export const PART_FLAG_RECEIVE_SHADOW = 2048;
 export const PART_FLAG_CULL_BACK = 4096;
 /** Part flag: instance world matrix has negative 3x3 determinant (mirrored). */
 export const PART_FLAG_NEG_DET = 8192;
+/** Part flag: primitive skips `section-cap-color` poché (translucent or one-way cutaway). */
+export const PART_FLAG_NO_SECTION_CAP = 16384;
 
 /** Scene flag bit: equirectangular `environment-image` texture is bound. */
 export const SCENE_FLAG_HAS_ENV_MAP = 1;
@@ -117,6 +119,8 @@ export interface SceneUniformInput {
     readonly normal: readonly [number, number, number];
     readonly constant: number;
   } | null;
+  /** Optional sRGB `[r, g, b]` in `[0..1]` for shading sliced back-faces (`section-cap-color`). */
+  readonly sectionCapColor?: readonly [number, number, number] | null;
   readonly contactShadow?: {
     readonly centerX: number;
     readonly floorY: number;
@@ -297,6 +301,12 @@ export function writeSceneUniforms(
     f32[108] = Math.max(0.01, input.contactShadow.halfExtentZ);
     f32[109] = Math.min(1, Math.max(0, input.contactShadow.intensity));
     f32[110] = Math.min(1, Math.max(0, input.contactShadow.softness));
+  }
+  if (input.sectionCapColor && input.sectionPlane?.enabled) {
+    const c = input.sectionCapColor;
+    const b = (v: number): number =>
+      Math.min(255, Math.max(0, Math.round((v || 0) * 255)));
+    u32[111] = ((1 << 24) | (b(c[0]) << 16) | (b(c[1]) << 8) | b(c[2])) >>> 0;
   }
 
   u32[112] = Math.max(0, input.toneMappingIndex | 0) >>> 0;
@@ -659,13 +669,14 @@ fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) v
 
   let p = parts[in.instIdx];
   let pFlags = p.flags;
-  if ((pFlags & 4096u) != 0u && frontFacing == ((pFlags & 8192u) != 0u)) {
-    discard;
-  }
+  let isBack = frontFacing == ((pFlags & 8192u) != 0u);
   let secOn = (sc.flags.w & 2u) != 0u && (pFlags & 64u) == 0u;
-  if (secOn && dot(in.worldPos, sc.sectionPlane.xyz) > sc.sectionPlane.w) {
-    discard;
+  if (secOn && dot(in.worldPos, sc.sectionPlane.xyz) > sc.sectionPlane.w) { discard; }
+  let capP = bitcast<u32>(sc.shadowParams.w);
+  if (secOn && capP != 0u && (pFlags & 16384u) == 0u && isBack) {
+    return vec4<f32>(vec3<f32>(f32((capP >> 16u) & 255u), f32((capP >> 8u) & 255u), f32(capP & 255u)) / 255.0, 1.0);
   }
+  if ((pFlags & 4096u) != 0u && isBack) { discard; }
 
   var base = p.baseColor * vec4<f32>(in.vColor, 1.0);
   if ((pFlags & 2u) != 0u) {
@@ -883,13 +894,9 @@ fn vsPick(
 @fragment
 fn fsPick(in: PickVsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4<f32> {
   let p = parts[in.instIdx];
-  if ((p.flags & 4096u) != 0u && frontFacing == ((p.flags & 8192u) != 0u)) {
-    discard;
-  }
   let secOn = (sc.flags.w & 2u) != 0u && (p.flags & 64u) == 0u;
-  if (secOn && dot(in.worldPos, sc.sectionPlane.xyz) > sc.sectionPlane.w) {
-    discard;
-  }
+  if (secOn && dot(in.worldPos, sc.sectionPlane.xyz) > sc.sectionPlane.w) { discard; }
+  if ((p.flags & 4096u) != 0u && frontFacing == ((p.flags & 8192u) != 0u) && !(secOn && (p.flags & 16384u) == 0u && bitcast<u32>(sc.shadowParams.w) != 0u)) { discard; }
   let id = p.pickId;
   return vec4<f32>(
     f32(id & 255u) / 255.0,

@@ -24,6 +24,7 @@ import {
   mat4Invert,
   resolveNodeWorldMatrices,
 } from '../../three-live/src/math';
+import {ThreeView} from '../../three-live/src/three-view';
 import {AUDIO_CUES} from '../../three-live/src/xr-sim-schema';
 import {buildBoxGeometry} from '../src/plugins/common';
 import {
@@ -467,6 +468,157 @@ function testCharacterCameraEngage() {
     Array.isArray(defaults.viewer.customTarget),
     'without cameraEngage the follow camera engages immediately (unchanged default)',
   );
+
+  // End-to-end repro with real ThreeView on a 10m floor: first-person horizontal pitch,
+  // min-distance bypass (<= 0.1m without min-camera-orbit), initial yaw, and "none" cleanup.
+  const hostAttrs = new Map<string, string>([
+    ['character-controller', 'first-person'],
+  ]);
+  const keyListeners = new Map<string, Set<(e: unknown) => void>>();
+  const mockGl = new Proxy(
+    {
+      canvas: {width: 400, height: 300},
+      getShaderParameter: () => true,
+      getProgramParameter: () => true,
+      getUniformLocation: (_p: unknown, name: string) => ({name}),
+      createVertexArray: () => ({}),
+      createBuffer: () => ({}),
+      createTexture: () => ({}),
+      createFramebuffer: () => ({}),
+      createRenderbuffer: () => ({}),
+    },
+    {
+      get(t, p: string) {
+        return p in t ? (t as Record<string, unknown>)[p] : () => ({});
+      },
+    },
+  ) as unknown as WebGL2RenderingContext;
+  const canvasStub = {
+    width: 400,
+    height: 300,
+    clientWidth: 400,
+    clientHeight: 300,
+    tabIndex: 0,
+    style: {},
+    getAttribute: () => null,
+    setAttribute: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    getBoundingClientRect: () => ({left: 0, top: 0, width: 400, height: 300}),
+    getContext: () => mockGl,
+  } as unknown as HTMLCanvasElement;
+  const containerStub = {
+    ...canvasStub,
+    getAttribute: (n: string) => hostAttrs.get(n) ?? null,
+    setAttribute: (n: string, v: string) => hostAttrs.set(n, v),
+    hasAttribute: (n: string) => hostAttrs.has(n),
+    addEventListener: (t: string, fn: (e: unknown) => void) => {
+      if (!keyListeners.has(t)) keyListeners.set(t, new Set());
+      keyListeners.get(t)!.add(fn);
+    },
+    removeEventListener: (t: string, fn: (e: unknown) => void) =>
+      keyListeners.get(t)?.delete(fn),
+    dispatchEvent: () => true,
+    querySelector: () => null,
+    appendChild: () => {},
+  } as unknown as HTMLElement;
+
+  const posFloats = new Float32Array([
+    -5, 0, -5, 5, 0, -5, 5, 0.1, 5, -0.2, 0, -0.2, 0.2, 0, -0.2, 0.2, 1.65, 0.2,
+  ]);
+  const glbData = {
+    gltf: {
+      asset: {version: '2.0'},
+      scenes: [{nodes: [0, 1]}],
+      nodes: [
+        {name: 'Floor10m', mesh: 0, extras: {xr: {collidable: true}}},
+        {
+          name: 'Visitor',
+          mesh: 1,
+          translation: [0, 0.1, 0],
+          // Rotated +90 deg around Y -> authored forward is +X (yaw = +pi/2 -> thetaDeg = -90).
+          rotation: [0, Math.SQRT1_2, 0, Math.SQRT1_2],
+          extras: {xr: {character: {mode: 'first-person', height: 1.65}}},
+        },
+      ],
+      meshes: [
+        {primitives: [{attributes: {POSITION: 0}}]},
+        {primitives: [{attributes: {POSITION: 1}}]},
+      ],
+      accessors: [
+        {
+          bufferView: 0,
+          byteOffset: 0,
+          componentType: 5126,
+          count: 3,
+          type: 'VEC3',
+          min: [-5, 0, -5],
+          max: [5, 0.1, 5],
+        },
+        {
+          bufferView: 0,
+          byteOffset: 36,
+          componentType: 5126,
+          count: 3,
+          type: 'VEC3',
+          min: [-0.2, 0, -0.2],
+          max: [0.2, 1.65, 0.2],
+        },
+      ],
+      bufferViews: [
+        {buffer: 0, byteOffset: 0, byteLength: posFloats.byteLength},
+      ],
+      buffers: [{byteLength: posFloats.byteLength}],
+    },
+    bin: posFloats.buffer,
+  };
+  const realView = new ThreeView(containerStub, canvasStub, {autoStart: false});
+  realView.setTarget(1, 2, 3);
+  realView.loadGLBData(glbData);
+  const realWorld = getSimWorld(realView);
+  stepSimWorld(realWorld, 1 / 60);
+  stepSimWorld(realWorld, 1 / 60);
+  realView.jumpCameraToGoal();
+
+  const fpOrbit = realView.getCameraOrbit();
+  const phiDeg = (fpOrbit.phi * 180) / Math.PI;
+  const thetaDeg = (fpOrbit.theta * 180) / Math.PI;
+  assert(
+    Math.abs(phiDeg) <= 5 &&
+      fpOrbit.radius <= 0.1 &&
+      near(thetaDeg, -90, 0.5) &&
+      realView.meshes[1].visible === false,
+    `first-person on 10m floor sets |phi|<=5deg (got ${phiDeg.toFixed(2)}), radius<=0.1m (got ${fpOrbit.radius.toFixed(3)}), and aligns theta to authored yaw (got ${thetaDeg.toFixed(1)})`,
+  );
+
+  // Pressing W walks straight along the character's authored +X forward direction without yaw spin.
+  for (const fn of keyListeners.get('keydown') ?? []) {
+    fn({code: 'KeyW', repeat: false, target: null, preventDefault() {}});
+  }
+  for (let i = 0; i < 12; i++) stepSimWorld(realWorld, 1 / 60);
+  for (const fn of keyListeners.get('keyup') ?? []) {
+    fn({code: 'KeyW', repeat: false, target: null, preventDefault() {}});
+  }
+  const visitor = realWorld.bodies.find((b) => b.name === 'Visitor')!;
+  assert(
+    visitor.pos[0] > 0.2 && Math.abs(visitor.pos[2]) < 1e-3,
+    `W in first-person moves along authored +X forward vector (pos=${visitor.pos.map((v) => v.toFixed(3)).join(',')})`,
+  );
+
+  // Switching character-controller="none" un-hides Visitor and restores camera-target [1, 2, 3].
+  hostAttrs.set('character-controller', 'none');
+  stepSimWorld(realWorld, 1 / 60);
+  realView.jumpCameraToGoal();
+  const restoredTarget = realView.getCameraTarget();
+  assert(
+    realView.meshes[1].visible === true &&
+      near(restoredTarget.x, 1, 1e-4) &&
+      near(restoredTarget.y, 2, 1e-4) &&
+      near(restoredTarget.z, 3, 1e-4) &&
+      realView.getCameraOrbit().radius > 5,
+    'character-controller="none" unhides the character and restores camera-target + scene orbit distance',
+  );
+  realView.destroy();
 }
 
 function testPlatforms() {

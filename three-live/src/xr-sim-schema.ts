@@ -125,7 +125,11 @@ export function parseCharacter(raw: unknown): CharacterOptions | null {
     radius,
     // A capsule is never shorter than its own diameter.
     height: clampNum(r['height'], radius * 2, 10, Math.max(1.4, radius * 2)),
-    cameraMode: oneOf(r['cameraMode'], CHARACTER_CAMERA_MODES, 'third-person'),
+    cameraMode: oneOf(
+      r['cameraMode'] ?? r['mode'],
+      CHARACTER_CAMERA_MODES,
+      'third-person',
+    ),
     cameraDistance: clampNum(r['cameraDistance'], 0.5, 50, 3.5),
     cameraHeight: clampNum(r['cameraHeight'], -10, 50, 1.8),
     ...(r['cameraEngage'] === 'on-input'

@@ -34,6 +34,12 @@
     /// straight down, distance in meters, and whether to re-frame (the camera mode changed).
     public var onCameraFollow:
       ((_ target: SIMD3<Double>?, _ polarDeg: Double, _ distance: Double, _ reframe: Bool) -> Void)?
+    /// Optional extended follow callback also carrying initial orbit azimuth `thetaDeg`.
+    public var onCameraFollowTheta:
+      ((
+        _ target: SIMD3<Double>?, _ polarDeg: Double, _ distance: Double, _ reframe: Bool,
+        _ thetaDeg: Double?
+      ) -> Void)?
 
     private let world: XRSimWorld
     private let live: XRLiveRealityKitSession
@@ -131,13 +137,19 @@
       zones.removeAll()
       projectiles.removeAll()
       fragments.removeAll()
-      if cameraMode != nil { onCameraFollow?(nil, 0, 0, false) }
+      if cameraMode != nil {
+        onCameraFollow?(nil, 0, 0, false)
+        onCameraFollowTheta?(nil, 0, 0, false, nil)
+      }
       cameraMode = nil
     }
 
     private func syncCamera() {
       guard let rig = CharacterController.cameraRig(world) else {
-        if cameraMode != nil { onCameraFollow?(nil, 0, 0, false) }
+        if cameraMode != nil {
+          onCameraFollow?(nil, 0, 0, false)
+          onCameraFollowTheta?(nil, 0, 0, false, nil)
+        }
         cameraMode = nil
         return
       }
@@ -146,9 +158,11 @@
       let w = space.convert(position: t, to: nil)
       let s = space.scale(relativeTo: nil)
       let scale = Double((s.x + s.y + s.z) / 3)
-      onCameraFollow?(
-        SIMD3(Double(w.x), Double(w.y), Double(w.z)), rig.phiDeg,
-        rig.distance * (scale.isFinite && scale > 1e-9 ? scale : 1), rig.mode != cameraMode)
+      let target = SIMD3(Double(w.x), Double(w.y), Double(w.z))
+      let dist = rig.distance * (scale.isFinite && scale > 1e-9 ? scale : 1)
+      let reframe = rig.mode != cameraMode
+      onCameraFollow?(target, rig.phiDeg, dist, reframe)
+      onCameraFollowTheta?(target, rig.phiDeg, dist, reframe, rig.thetaDeg)
       cameraMode = rig.mode
     }
 

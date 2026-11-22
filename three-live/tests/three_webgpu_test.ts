@@ -1602,6 +1602,34 @@ async function runTests(): Promise<void> {
     }
   });
 
+  await test('section-cap-color packs matte sRGB into SceneUniforms u32[111] and renders back-faces in WGSL', async () => {
+    const buf = new ArrayBuffer(800);
+    writeSceneUniforms(buf, {
+      vp: new Float32Array(16),
+      modelRoot: new Float32Array(16),
+      eyePos: [0, 1, 3],
+      exposure: 1,
+      envIntensity: 1,
+      toneMappingIndex: 0,
+      lights: [],
+      hasEnvMap: false,
+      sectionPlane: {enabled: true, normal: [0, 1, 0], constant: 0.5},
+      sectionCapColor: [0x1e / 255, 0x29 / 255, 0x3b / 255],
+    });
+    const u32 = new Uint32Array(buf);
+    const expected = ((1 << 24) | (0x1e << 16) | (0x29 << 8) | 0x3b) >>> 0;
+    assert.strictEqual(
+      u32[111],
+      expected,
+      'writeSceneUniforms packs sectionCapColor into u32[111] without growing SCENE_UNIFORM_BYTES',
+    );
+    assert.ok(
+      SCENE_PBR_WGSL.includes('bitcast<u32>(sc.shadowParams.w)') &&
+        SCENE_PICK_WGSL.includes('bitcast<u32>(sc.shadowParams.w)'),
+      'SCENE_PBR_WGSL and SCENE_PICK_WGSL decode packed sectionCapColor before single-sided back-face discard',
+    );
+  });
+
   console.log(`All ${passed} three-live-webgpu test suites passed!`);
 }
 

@@ -289,9 +289,18 @@ export function computeWorldSceneBounds(viewerObj: unknown): WorldSceneBounds {
   const rm = viewer.modelRootMatrix ?? IDENTITY_MAT4;
   const wMin: [number, number, number] = [Infinity, Infinity, Infinity];
   const wMax: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  const allMin: [number, number, number] = [Infinity, Infinity, Infinity];
+  const allMax: [number, number, number] = [-Infinity, -Infinity, -Infinity];
 
   for (const mesh of viewer.meshes ?? []) {
     if (!isShadowEligibleMesh(mesh)) continue;
+    const ignored = Boolean(
+      (mesh as {boundsIgnore?: boolean}).boundsIgnore ||
+        mesh.extras?.['boundsIgnore'] === true ||
+        mesh.extras?.xr?.['boundsIgnore'] === true ||
+        mesh.userData?.['boundsIgnore'] === true ||
+        mesh.userData?.xr?.['boundsIgnore'] === true,
+    );
     if (mesh.worldSpace === true) {
       _modelScratch.set(mesh.transform);
     } else {
@@ -310,7 +319,8 @@ export function computeWorldSceneBounds(viewerObj: unknown): WorldSceneBounds {
             _modelScratch,
             instMats.subarray(i * 16, i * 16 + 16),
           );
-          expandWorldAabbByMatrix(lbox, _instScratch, wMin, wMax);
+          expandWorldAabbByMatrix(lbox, _instScratch, allMin, allMax);
+          if (!ignored) expandWorldAabbByMatrix(lbox, _instScratch, wMin, wMax);
         }
         if (step > 1) {
           const last = count - 1;
@@ -319,12 +329,23 @@ export function computeWorldSceneBounds(viewerObj: unknown): WorldSceneBounds {
             _modelScratch,
             instMats.subarray(last * 16, last * 16 + 16),
           );
-          expandWorldAabbByMatrix(lbox, _instScratch, wMin, wMax);
+          expandWorldAabbByMatrix(lbox, _instScratch, allMin, allMax);
+          if (!ignored) expandWorldAabbByMatrix(lbox, _instScratch, wMin, wMax);
         }
       } else {
-        expandWorldAabbByMatrix(lbox, _modelScratch, wMin, wMax);
+        expandWorldAabbByMatrix(lbox, _modelScratch, allMin, allMax);
+        if (!ignored) expandWorldAabbByMatrix(lbox, _modelScratch, wMin, wMax);
       }
     }
+  }
+
+  if (!Number.isFinite(wMin[0]) && Number.isFinite(allMin[0])) {
+    wMin[0] = allMin[0];
+    wMin[1] = allMin[1];
+    wMin[2] = allMin[2];
+    wMax[0] = allMax[0];
+    wMax[1] = allMax[1];
+    wMax[2] = allMax[2];
   }
 
   if (!Number.isFinite(wMin[0])) {

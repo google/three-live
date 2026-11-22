@@ -96,14 +96,22 @@ object CharacterController {
   /**
    * Camera framing for the controlled character (port of `characterCameraRig` in
    * `character-controller.ts`): follow [target] every frame and apply [phiDeg] (polar angle, 0 =
-   * straight down) and [distance] when [mode] changes.
+   * straight down), [distance], and optional [thetaDeg] when [mode] changes.
    */
-  class CameraRig(
+  class CameraRig
+  @JvmOverloads
+  constructor(
     val mode: String,
     val target: DoubleArray,
     val phiDeg: Double,
     val distance: Double,
+    val thetaDeg: Double = Double.NaN,
   )
+
+  private fun wrapDeg180(deg: Double): Double {
+    val m = (((deg + 180.0) % 360.0 + 360.0) % 360.0) - 180.0
+    return if (m == -180.0) 180.0 else m
+  }
 
   /**
    * The camera rig, or `null` when there is no visible character, the camera is `fixed`, an XR
@@ -122,7 +130,11 @@ object CharacterController {
     val fp = mode == "first-person"
     val target = doubleArrayOf(b.pos[0], feet + opts.height * if (fp) 0.9 else 0.6, b.pos[2])
     return when (mode) {
-      "first-person" -> CameraRig(mode, target, 90.0, 0.05)
+      "first-person" -> {
+        val initYaw =
+          XRSpatialMath.yawFromQuat(b.initQuat[0], b.initQuat[1], b.initQuat[2], b.initQuat[3])
+        CameraRig(mode, target, 90.0, 0.05, wrapDeg180(Math.toDegrees(initYaw + b.yaw + Math.PI)))
+      }
       "top-down" -> CameraRig(mode, target, 1.0, Math.hypot(opts.cameraDistance, opts.cameraHeight))
       else -> {
         val h = Math.max(0.01, opts.cameraHeight)
@@ -158,7 +170,14 @@ object CharacterController {
     b.vel[0] += (dx * target - b.vel[0]) * k
     b.vel[2] += (dz * target - b.vel[2]) * k
     if (len > 0.05) {
-      b.yaw = XRSimWorld.turnToward(b.yaw, XRSimWorld.yawFromDir(dx, dz), TURN_SPEED * dt)
+      val initYaw =
+        XRSpatialMath.yawFromQuat(b.initQuat[0], b.initQuat[1], b.initQuat[2], b.initQuat[3])
+      b.yaw =
+        XRSimWorld.turnToward(
+          b.yaw,
+          XRSimWorld.wrapAngle(XRSimWorld.yawFromDir(dx, dz) - initYaw),
+          TURN_SPEED * dt,
+        )
     }
     if (jump && st.grounded && opts.jumpVelocity > 0) {
       st.vy = opts.jumpVelocity
@@ -228,6 +247,7 @@ object CharacterController {
     }
     val opts = resolve(world, st.body.traits.character!!)
     if (opts == null || st.body.hidden) {
+      st.body.viewHidden = false
       world.character = if (opts != null) st.body else null
       return
     }

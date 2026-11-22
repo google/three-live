@@ -243,15 +243,23 @@ class OrbitCameraState {
       target
         ?.takeIf { it.size >= 3 && it[0].isFinite() && it[1].isFinite() && it[2].isFinite() }
         ?.copyOf(3)
-    if (followTarget == null) followFrame = null
+    if (followTarget == null && followFrame != null) {
+      followFrame = null
+      targetPhi = clampPhi(initialPhi ?: DEFAULT_PHI)
+      val defaultDist = if (distanceMode == "absolute") DEFAULT_DISTANCE else boundsRadius * 2.5
+      targetDistance = clampDistance(initialDistance ?: defaultDist)
+    }
   }
 
   /**
    * Eases to a follow framing: [polarDeg] from straight down (the web `setCamera` convention, so
-   * `90` is level) and [distanceMeters], keeping the user's azimuth. Distance limits from the scene
-   * bounds do not apply (a first-person camera sits 5 cm from its target). Stops auto-rotate.
+   * `90` is level), [distanceMeters], and optional [thetaDeg] initial azimuth. Distance limits from
+   * the scene bounds do not apply (a first-person camera sits 5 cm from its target). Stops
+   * auto-rotate.
    */
-  fun frameFollow(polarDeg: Double, distanceMeters: Double) {
+  @JvmOverloads
+  fun frameFollow(polarDeg: Double, distanceMeters: Double, thetaDeg: Double = Double.NaN) {
+    if (thetaDeg.isFinite()) targetTheta = clampTheta(Math.toRadians(thetaDeg))
     if (polarDeg.isFinite()) targetPhi = clampPhi(Math.toRadians(90.0 - polarDeg))
     if (distanceMeters.isFinite()) targetDistance = distanceMeters.coerceIn(0.01, 1e4)
     followFrame = doubleArrayOf(targetPhi, targetDistance)

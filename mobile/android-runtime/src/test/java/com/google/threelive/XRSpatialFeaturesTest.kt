@@ -477,8 +477,63 @@ class XRSpatialFeaturesTest {
     }
     assertEquals(-0.4f, b.session.nodeTransform(0)!!.translation[0], 1e-3f)
     assertEquals(0.4f, b.session.nodeTransform(1)!!.translation[0], 1e-3f)
+
+    // `sectionGizmoMode`: default "auto" hides gizmo on static plane and shows on "interactive".
+    f.sectionPlaneSpec = "y:0.2"
+    r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    val gizmoEntry = r.meshes.values.last()
+    fun col0Len(m: FloatArray) =
+      Math.hypot(m[0].toDouble(), Math.hypot(m[1].toDouble(), m[2].toDouble()))
+    assertEquals(0.0, col0Len(gizmoEntry.matrix), 1e-5)
+    f.sectionGizmoMode = "always"
+    r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    assertEquals(1.0, col0Len(gizmoEntry.matrix), 1e-4)
+    f.sectionPlaneSpec = "interactive"
+    f.sectionGizmoMode = "none"
+    r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    assertEquals(0.0, col0Len(gizmoEntry.matrix), 1e-5)
     f.dispose()
     assertTrue(r.meshes.isEmpty())
+
+    // `boundsIgnore` on GltfSceneIndex.computeSceneBounds() and all-ignored fallback.
+    val boundsJson =
+      """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0,1]}],
+      "nodes":[
+        {"name":"House","mesh":0,"translation":[0,1,0]},
+        {"name":"Lawn","mesh":1,"translation":[0,0,0],"extras":{"boundsIgnore":true}}
+      ],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]},{"primitives":[{"attributes":{"POSITION":1}}]}],
+      "accessors":[
+        {"componentType":5126,"count":8,"type":"VEC3","min":[-1,-1,-1],"max":[1,1,1]},
+        {"componentType":5126,"count":8,"type":"VEC3","min":[-20,-0.1,-20],"max":[20,0.1,20]}
+      ]}"""
+    val idx = GltfSceneIndex(boundsJson)
+    val (center, radius) = idx.computeSceneBounds()!!
+    assertEquals(1.0, center[1], 1e-4)
+    assertTrue("boundsIgnore excludes 40m lawn (got $radius)", radius < 2.0)
+
+    val allIgnoredJson =
+      """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],
+      "nodes":[{"name":"LawnOnly","mesh":0,"extras":{"xr":{"boundsIgnore":true}}}],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+      "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-10,-0.5,-10],"max":[10,0.5,10]}]}"""
+    val (_, fallbackR) = GltfSceneIndex(allIgnoredJson).computeSceneBounds()!!
+    assertTrue("all-ignored scene falls back to full bounds (got $fallbackR)", fallbackR > 10.0)
+
+    val groupIgnoredJson =
+      """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0,1]}],
+      "nodes":[
+        {"name":"House","mesh":0,"translation":[0,1,0]},
+        {"name":"SiteGroup","children":[2],"extras":{"boundsIgnore":true}},
+        {"name":"ChildLawn","mesh":1}
+      ],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]},{"primitives":[{"attributes":{"POSITION":1}}]}],
+      "accessors":[
+        {"componentType":5126,"count":8,"type":"VEC3","min":[-1,-1,-1],"max":[1,1,1]},
+        {"componentType":5126,"count":8,"type":"VEC3","min":[-20,-0.1,-20],"max":[20,0.1,20]}
+      ]}"""
+    val (_, grpR) = GltfSceneIndex(groupIgnoredJson).computeSceneBounds()!!
+    assertTrue("parent group boundsIgnore excludes child lawn (got $grpR)", grpR < 2.0)
   }
 
   @Test
@@ -711,7 +766,11 @@ class XRSpatialFeaturesTest {
     assertTrue(rB.meshes.isEmpty())
   }
 
-  private class Mesh(var positions: FloatArray, var indices: IntArray)
+  private class Mesh(
+    var positions: FloatArray,
+    var indices: IntArray,
+    var matrix: FloatArray = FloatArray(16),
+  )
 
   private class FakeRenderer : ThreeLiveSceneRenderer {
     override var listener: ThreeLiveRendererListener? = null
@@ -778,6 +837,10 @@ class XRSpatialFeaturesTest {
         it.positions = positions
         it.indices = indices
       }
+    }
+
+    override fun setDynamicMeshTransform(meshId: Int, matrix: FloatArray) {
+      meshes[meshId]?.matrix = matrix.copyOf()
     }
 
     override fun removeDynamicMesh(meshId: Int) {

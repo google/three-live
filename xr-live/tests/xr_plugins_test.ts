@@ -2115,6 +2115,70 @@ function testExplodedView(): void {
     viewer.meshes.length === 2,
     'exploded-view dispose removes leader lines and section gizmo',
   );
+
+  // `section-gizmo="auto | always | none"` and `boundsIgnore` on assemblyRadius.
+  const lawn = meshAt('SiteLawn', [0, -1, 0], {boundsIgnore: true});
+  mat4FromRotationTranslationScale(
+    lawn.transform,
+    [0, 0, 0, 1],
+    [0, -1, 0],
+    [40, 0.1, 40],
+  );
+  let secVal: string | null = 'y:0.2';
+  let gizmoVal: string | null = null;
+  const gizmoHost = {
+    hasAttribute: (k: string) =>
+      (k === 'section-plane' && secVal !== null) ||
+      (k === 'section-gizmo' && gizmoVal !== null),
+    getAttribute: (k: string) => {
+      if (k === 'section-plane') return secVal;
+      if (k === 'section-gizmo') return gizmoVal;
+      return null;
+    },
+    dispatchEvent: () => true,
+  } as unknown as Parameters<typeof getExplodedViewController>[0];
+  const gizmoMeshes: Array<{name?: string; visible?: boolean}> = [
+    left,
+    right,
+    lawn,
+  ];
+  const gizmoCtrl = getExplodedViewController(gizmoHost);
+  const gizmoViewer = {
+    meshes: gizmoMeshes,
+    container: gizmoHost,
+  } as unknown as Parameters<typeof gizmoCtrl.update>[0];
+  gizmoCtrl.update(gizmoViewer, 1 / 60, gizmoHost);
+  const gizmoMeshOf = () =>
+    gizmoMeshes.find((m) => m.name === '__xr_section_gizmo__');
+  assert(
+    !gizmoMeshOf() || gizmoMeshOf()?.visible === false,
+    'section-gizmo="auto" hides __xr_section_gizmo__ on static section-plane="y:0.2"',
+  );
+  gizmoVal = 'always';
+  gizmoCtrl.update(gizmoViewer, 1 / 60, gizmoHost);
+  assert(
+    gizmoMeshOf()?.visible === true &&
+      (gizmoCtrl as unknown as {assemblyRadius: number}).assemblyRadius < 2.0,
+    'section-gizmo="always" shows __xr_section_gizmo__ and boundsIgnore excludes 40m lawn from assemblyRadius',
+  );
+  secVal = 'interactive';
+  gizmoVal = null;
+  gizmoCtrl.update(gizmoViewer, 1 / 60, gizmoHost);
+  assert(
+    gizmoMeshOf()?.visible === true,
+    'section-gizmo="auto" shows __xr_section_gizmo__ on section-plane="interactive"',
+  );
+  gizmoVal = 'none';
+  gizmoCtrl.update(gizmoViewer, 1 / 60, gizmoHost);
+  assert(
+    gizmoMeshOf()?.visible === false &&
+      Boolean(
+        (gizmoViewer as unknown as {__xrSectionPlane?: {enabled?: boolean}})
+          .__xrSectionPlane?.enabled,
+      ),
+    'section-gizmo="none" hides __xr_section_gizmo__ while keeping __xrSectionPlane active for shadow/WebGPU/cap sync',
+  );
+  gizmoCtrl.dispose(gizmoViewer);
 }
 
 async function testPersistentAnchors(): Promise<void> {
@@ -4460,6 +4524,7 @@ function testWebGL2StrictUniformsAndAlphaBlend(): void {
   };
   const attrs = new Map<string, string>([
     ['section-plane', 'x:0.0'],
+    ['section-gizmo', 'always'],
     ['explode', '0.55'],
   ]);
   let blendActive = false;

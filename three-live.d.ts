@@ -683,6 +683,10 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'explode-scale'?: number | string;
   /** Real-time cross-section clipping plane ("none", "x:0", "y:0.2", "-z:0", "interactive"). */
   'section-plane'?: string;
+  /** Visibility mode for `__xr_section_gizmo__` ("auto", "always", or "none"; default: "auto"). */
+  'section-gizmo'?: 'auto' | 'always' | 'none';
+  /** Optional matte poché hex color (`#rrggbb` / `#rgb`) for exposed back-faces under `section-plane`. */
+  'section-cap-color'?: string;
   /**
    * Dollhouse cutaway for meshes with a `userData.xr.cutaway` trait: they hide
    * while the camera is on their outward side ("auto", default) or always

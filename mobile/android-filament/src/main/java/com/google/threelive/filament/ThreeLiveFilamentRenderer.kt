@@ -322,11 +322,16 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     mapNodes(loaded, index)
     if (!instancedAsset) loaded.releaseSourceData()
 
-    val box = loaded.boundingBox
-    val c = box.center
-    val h = box.halfExtent
-    val radius = Math.sqrt((h[0] * h[0] + h[1] * h[1] + h[2] * h[2]).toDouble())
-    orbit.setBounds(doubleArrayOf(c[0].toDouble(), c[1].toDouble(), c[2].toDouble()), radius)
+    val customBounds = if (index.nodeBoundsIgnore.any { it }) index.computeSceneBounds() else null
+    if (customBounds != null) {
+      orbit.setBounds(customBounds.first, customBounds.second)
+    } else {
+      val box = loaded.boundingBox
+      val c = box.center
+      val h = box.halfExtent
+      val radius = Math.sqrt((h[0] * h[0] + h[1] * h[1] + h[2] * h[2]).toDouble())
+      orbit.setBounds(doubleArrayOf(c[0].toDouble(), c[1].toDouble(), c[2].toDouble()), radius)
+    }
     val animCount = loaded.instance?.animator?.animationCount ?: 0
     playingAnimation = if (animCount > 0) -1 else null
     animationTime = 0.0
@@ -945,8 +950,18 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     distance: Double,
     reframe: Boolean,
   ) {
+    setCameraFollow(target, polarDeg, distance, reframe, Double.NaN)
+  }
+
+  override fun setCameraFollow(
+    target: DoubleArray?,
+    polarDeg: Double,
+    distance: Double,
+    reframe: Boolean,
+    thetaDeg: Double,
+  ) {
     orbit.follow(target)
-    if (target != null && reframe) orbit.frameFollow(polarDeg, distance)
+    if (target != null && reframe) orbit.frameFollow(polarDeg, distance, thetaDeg)
   }
 
   /** Spawned instance owning [entity] (itself or an ancestor), or `-1`. */

@@ -104,6 +104,8 @@
     public var explodeScale: Float = 1.5
     /// Cross-section cut plane specification (`"none"`, `"x:0.2"`, `"y:0.0"`, `"-z:0.1"`, `"interactive"`).
     public var sectionPlaneSpec: String = "none"
+    /// Section gizmo visibility (`"auto"` shows only when `section-plane="interactive"`, `"always"`, or `"none"`).
+    public var sectionGizmoMode: String = "auto"
     /// Current spring-smoothed assembly explosion factor in `[0..1]`.
     public var explodeFactor: Float { currentExplodeFactor }
     /// Persistence namespace (`<xr-live persistent-anchors="room-a">`).
@@ -1324,14 +1326,22 @@
       let session = live.session
       var bMin = SIMD3<Float>(repeating: .infinity)
       var bMax = SIMD3<Float>(repeating: -.infinity)
+      var allMin = SIMD3<Float>(repeating: .infinity)
+      var allMax = SIMD3<Float>(repeating: -.infinity)
       for node in 0..<session.nodeCount {
         guard let lb = resolvedNodeBounds(node), let t = session.nodeTransform(at: node) else {
           continue
         }
         let wb = SpatialMeasure.computeWorldBounds(
           localMin: lb.min, localMax: lb.max, worldMatrix: session.worldMatrix(of: node))
-        bMin = simd_min(bMin, wb.min)
-        bMax = simd_max(bMax, wb.max)
+        allMin = simd_min(allMin, wb.min)
+        allMax = simd_max(allMax, wb.max)
+        let ignored = session.isBoundsIgnored(node)
+        if ignored && explodeTraits[node] == nil { continue }
+        if !ignored {
+          bMin = simd_min(bMin, wb.min)
+          bMax = simd_max(bMax, wb.max)
+        }
         var depth = 1
         var p = session.parentIndex(of: node)
         while let cur = p, depth < 32 {
@@ -1341,6 +1351,10 @@
         restParts.append(
           RestPart(
             node: node, restTransform: t, restWorldCenter: wb.center, depth: depth))
+      }
+      if !bMin.x.isFinite && allMin.x.isFinite {
+        bMin = allMin
+        bMax = allMax
       }
       if bMin.x.isFinite {
         assemblyCenter = (bMin + bMax) * 0.5
@@ -1432,7 +1446,12 @@
         }
       }
 
-      if sec.enabled {
+      let gizmoMode = sectionGizmoMode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      let showGizmo =
+        sec.enabled
+        && (gizmoMode == "always" || gizmoMode == "true"
+          || (gizmoMode != "none" && gizmoMode != "false" && gizmoMode != "off" && sec.interactive))
+      if showGizmo {
         let halfExt = max(0.15, assemblyRadius * 1.15)
         if sectionGizmoEntity == nil || abs(halfExt - lastSectionGizmoRadius) > 1e-3 {
           sectionGizmoEntity?.removeFromParent()

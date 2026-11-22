@@ -1227,6 +1227,8 @@ export interface NormalizedXRTraits {
   gaze?: GazeOptions;
   explode?: ExplodeOptions;
   cutaway?: CutawayOptions;
+  /** Excludes this node from auto-framing, shadow frustum, AR scale, & explode radius. */
+  boundsIgnore?: boolean;
   navigable?: NavigableMode;
   text?: TextTraitOptions;
   bloom?: BloomTraitOptions;
@@ -1463,6 +1465,7 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (explode) out.explode = explode;
   const cutaway = parseCutaway(r['cutaway']);
   if (cutaway) out.cutaway = cutaway;
+  if (r['boundsIgnore'] === true) out.boundsIgnore = true;
   const navigable = parseNavigable(
     r['navigable'] ??
       (r['walkable'] !== undefined
@@ -1583,6 +1586,7 @@ export function buildXRSceneCoreExtension(
     };
   }
   if (n.cutaway) comp['cutaway'] = {normal: [...n.cutaway.normal]};
+  if (n.boundsIgnore) comp['boundsIgnore'] = true;
   if (n.navigable) comp['navigable'] = {mode: n.navigable};
   if (n.text) comp['text3d'] = {...n.text};
   if (n.bloom) comp['bloom'] = {...n.bloom};
@@ -1677,6 +1681,7 @@ export function flattenXRTraitsForUsd(
   if (n.gaze) put('gaze', n.gaze);
   if (n.explode) put('explode', n.explode);
   if (n.cutaway) put('cutaway', n.cutaway);
+  if (n.boundsIgnore) out['boundsIgnore'] = true;
   if (n.navigable) out['navigable'] = n.navigable;
   if (n.text) put('text', n.text);
   if (n.bloom) put('bloom', n.bloom);

@@ -227,7 +227,7 @@ public struct XRSimTraits: Equatable, Sendable {
     t.gravity = num(r["gravity"], 0, 50, 15)
     t.radius = radius
     t.height = num(r["height"], radius * 2, 10, Swift.max(1.4, radius * 2))
-    t.cameraMode = oneOf(r["cameraMode"], cameraModes, "third-person")
+    t.cameraMode = oneOf(r["cameraMode"] ?? r["mode"], cameraModes, "third-person")
     t.cameraDistance = num(r["cameraDistance"], 0.5, 50, 3.5)
     t.cameraHeight = num(r["cameraHeight"], -10, 50, 1.8)
     t.cameraEngage = XRJSON.string(r["cameraEngage"]) == "on-input" ? "on-input" : "immediate"

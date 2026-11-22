@@ -470,6 +470,21 @@ public final class XRLiveRuntimeSession {
         state.rawReceiveShadow = XRJSON.bool(shObj["receive"])
       }
       state.traits = XRLiveTraitParser.normalize(nodeExtras?["xr"])
+      let meshExtras: [String: Any]? = {
+        guard let mi = state.mesh,
+          let rawMeshes = XRJSON.array(root["meshes"]),
+          mi < rawMeshes.count
+        else { return nil }
+        return XRJSON.object(XRJSON.object(rawMeshes[mi])?["extras"])
+      }()
+      if XRJSON.bool(nodeExtras?["boundsIgnore"]) == true
+        || XRJSON.bool(XRJSON.object(ext?["ANDROID_xr_scenecore"])?["boundsIgnore"]) == true
+        || XRJSON.bool(meshExtras?["boundsIgnore"]) == true
+        || XRJSON.bool(XRJSON.object(meshExtras?["xr"])?["boundsIgnore"]) == true
+      {
+        if state.traits == nil { state.traits = XRLiveNodeTraits() }
+        state.traits?.boundsIgnore = true
+      }
       if state.traits?.lod == nil, XRJSON.object(ext?["MSFT_lod"]) != nil {
         if state.traits == nil { state.traits = XRLiveNodeTraits() }
         state.traits?.lod = XRLiveLod()
@@ -1017,13 +1032,28 @@ public final class XRLiveRuntimeSession {
     return meshLocalBounds[mesh]
   }
 
+  /// Returns `true` when node `index` or any of its ancestors sets `boundsIgnore: true`.
+  public func isBoundsIgnored(_ index: Int) -> Bool {
+    var cur: Int? = index
+    var depth = 0
+    while let i = cur, i >= 0, i < nodes.count, depth < 64 {
+      if nodes[i].traits?.boundsIgnore == true { return true }
+      cur = parentOf[i]
+      depth += 1
+    }
+    return false
+  }
+
   /// World-space bounding sphere (`center`, `radius`) of all visible mesh nodes in the glTF
   /// scene, computed with the exact same transformed AABB formula as Web (`three-view.ts`) and
   /// Android (`ThreeLiveFilamentRenderer.kt`).
   public var sceneBounds: (center: SIMD3<Double>, radius: Double) {
     var bMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
     var bMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+    var allMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+    var allMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
     var found = false
+    var allFound = false
     for i in 0..<nodes.count {
       guard isEffectivelyVisible(i), let local = localBounds(forNode: i) else { continue }
       let m = sceneMatrix(of: i)
@@ -1039,8 +1069,18 @@ public final class XRLiveRuntimeSession {
         wMin += simd_min(a, b)
         wMax += simd_max(a, b)
       }
-      bMin = simd_min(bMin, wMin)
-      bMax = simd_max(bMax, wMax)
+      allMin = simd_min(allMin, wMin)
+      allMax = simd_max(allMax, wMax)
+      allFound = true
+      if !isBoundsIgnored(i) {
+        bMin = simd_min(bMin, wMin)
+        bMax = simd_max(bMax, wMax)
+        found = true
+      }
+    }
+    if !found && allFound {
+      bMin = allMin
+      bMax = allMax
       found = true
     }
     guard found, bMin.x.isFinite, bMax.x.isFinite else {
@@ -2594,10 +2634,16 @@ public final class XRLiveRuntimeSession {
       {
         continue
       }
+      let untraitedMesh: Bool = {
+        guard nodes[i].mesh != nil else { return false }
+        guard var rest = t else { return true }
+        rest.boundsIgnore = false
+        return rest.isEmpty
+      }()
       let isStaticCollider =
         t?.physics?.caseInsensitiveCompare("static") == .orderedSame
         || t?.anchor != nil
-        || (t == nil && nodes[i].mesh != nil)
+        || untraitedMesh
       guard isStaticCollider,
         let meshIdx = nodes[i].mesh,
         meshIdx >= 0, meshIdx < meshLocalBounds.count,

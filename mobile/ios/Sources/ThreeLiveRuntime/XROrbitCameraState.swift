@@ -145,14 +145,20 @@ public struct XROrbitCameraState: Sendable {
       followTarget = t
     } else {
       followTarget = nil
-      followFrame = nil
+      if followFrame != nil {
+        followFrame = nil
+        targetPhi = clampPhi(initialPhi ?? 0.35)
+        let defaultDist = (distanceMode == "absolute") ? 3.0 : (boundsRadius * 2.5)
+        targetDistance = clampDistance(initialDistance ?? defaultDist)
+      }
     }
   }
 
   /// Eases to a follow framing: `polarDeg` from straight down (the web `setCamera` convention, so
-  /// `90` is level) and `distance` meters, keeping the user's azimuth. Bounds distance limits do
-  /// not apply (a first-person camera sits 5 cm from its target). Stops auto-rotate.
-  public mutating func frameFollow(polarDeg: Double, distance: Double) {
+  /// `90` is level), `distance` meters, and optional `thetaDeg` initial azimuth. Bounds distance
+  /// limits do not apply (a first-person camera sits 5 cm from its target). Stops auto-rotate.
+  public mutating func frameFollow(polarDeg: Double, distance: Double, thetaDeg: Double? = nil) {
+    if let td = thetaDeg, td.isFinite { targetTheta = clampTheta(td * .pi / 180) }
     if polarDeg.isFinite { targetPhi = clampPhi((90 - polarDeg) * .pi / 180) }
     if distance.isFinite { targetDistance = min(1e4, max(0.01, distance)) }
     followFrame = (targetPhi, targetDistance)

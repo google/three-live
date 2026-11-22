@@ -124,5 +124,65 @@ final class XRCutawayAndCameraEngageTests: XCTestCase {
     let defaults = characterWorld([:])
     run(defaults, frames: 2)
     XCTAssertNotNil(CharacterController.cameraRig(defaults), "default engages immediately")
+
+    // First-person spawn yaw (`thetaDeg`), `frameFollow`, `viewHidden` cleanup, and `boundsIgnore`.
+    let rotGltf: [String: Any] = [
+      "asset": ["version": "2.0"],
+      "nodes": [
+        [
+          "name": "Spawn",
+          "translation": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.70710678, 0.0, 0.70710678],
+          "extras": ["xr": ["character": ["mode": "first-person", "height": 1.65]]],
+        ]
+      ],
+    ]
+    let fpWorld = XRSimWorld(session: XRLiveRuntimeSession(gltf: rotGltf), gltf: rotGltf)
+    run(fpWorld, frames: 2)
+    let fpRig = try! XCTUnwrap(CharacterController.cameraRig(fpWorld))
+    XCTAssertEqual(fpRig.phiDeg, 90, accuracy: 1e-4)
+    XCTAssertEqual(fpRig.distance, 0.05, accuracy: 1e-4)
+    XCTAssertEqual(fpRig.thetaDeg ?? 0, -90, accuracy: 1e-2)
+    XCTAssertTrue(fpWorld.bodies[0].viewHidden)
+
+    var orbit = XROrbitCameraState()
+    orbit.setBounds(center: .zero, radius: 10)
+    orbit.follow(fpRig.target)
+    orbit.frameFollow(polarDeg: fpRig.phiDeg, distance: fpRig.distance, thetaDeg: fpRig.thetaDeg)
+    orbit.snap()
+    XCTAssertEqual(orbit.phi * 180 / .pi, 0, accuracy: 1e-3)
+    XCTAssertEqual(orbit.distance, 0.05, accuracy: 1e-4)
+    XCTAssertEqual(orbit.theta * 180 / .pi, -90, accuracy: 1e-2)
+    orbit.follow(nil)
+    orbit.snap()
+    XCTAssertGreaterThan(orbit.distance, 10.0, "follow(nil) restores scene orbit distance")
+
+    fpWorld.characterMode = "none"
+    run(fpWorld, frames: 2)
+    XCTAssertFalse(fpWorld.bodies[0].viewHidden, "character-controller=none restores viewHidden")
+
+    let boundsGltf: [String: Any] = [
+      "asset": ["version": "2.0"],
+      "nodes": [
+        ["name": "House", "mesh": 0, "translation": [0.0, 1.0, 0.0]],
+        ["name": "SiteGroup", "children": [2], "extras": ["boundsIgnore": true]],
+        ["name": "Lawn", "mesh": 1],
+        ["name": "Ball", "mesh": 0, "translation": [0.0, 1.5, 0.0], "extras": ["xr": ["physics": "dynamic"]]],
+      ],
+      "meshes": [
+        ["primitives": [["attributes": ["POSITION": 0]]]],
+        ["primitives": [["attributes": ["POSITION": 1]]]],
+      ],
+      "accessors": [
+        ["componentType": 5126, "count": 8, "type": "VEC3", "min": [-0.2, -0.2, -0.2], "max": [0.2, 0.2, 0.2]],
+        ["componentType": 5126, "count": 8, "type": "VEC3", "min": [-20.0, -0.1, -20.0], "max": [20.0, 0.1, 20.0]],
+      ],
+    ]
+    let bSession = XRLiveRuntimeSession(gltf: boundsGltf)
+    XCTAssertLessThan(bSession.sceneBounds.radius, 2.0)
+    for _ in 0..<120 { bSession.step(dt: 1.0 / 60.0) }
+    XCTAssertGreaterThan(
+      bSession.nodeTransform(at: 3)?.translation.y ?? -10, -0.1,
+      "boundsIgnore floor remains a static physics collider on iOS")
   }
 }
