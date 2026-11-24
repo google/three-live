@@ -54,6 +54,14 @@ export interface ThreeLivePlugin {
     gltf: any,
     bin: ArrayBuffer,
   ): any;
+  onComputePrimitiveBounds?(
+    primitiveDef: any,
+    nodeIndex: number,
+    positions: Float32Array,
+    nodeWorldMatrices: Float32Array[],
+    gltf: any,
+    bin: ArrayBuffer,
+  ): {min: [number, number, number]; max: [number, number, number]} | null;
   onUpdate?(viewer: any, dt: number): void;
   onBeforeDrawPrimitive?(
     gl: WebGL2RenderingContext,
