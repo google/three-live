@@ -163,17 +163,37 @@ export class XRLiveElement extends ThreeLiveElement {
     this.setAttribute('xr-hands', value);
   }
 
+  private appliedSimulatorRoom = 'none';
+
+  private syncSimulator(raw: string | null): void {
+    const mode = (raw ?? '').trim().toLowerCase();
+    if (mode && mode !== 'none' && mode !== 'false' && mode !== 'off') {
+      this.simulator.active = true;
+      if (this.appliedSimulatorRoom !== mode) {
+        this.simulator.configureRoom(mode);
+        this.appliedSimulatorRoom = mode;
+      }
+    } else {
+      this.simulator.active = false;
+      this.appliedSimulatorRoom = 'none';
+    }
+  }
+
   get xrSimulator(): XRSimulatorRoom {
-    return (this.getAttribute('xr-simulator') as XRSimulatorRoom) || 'none';
+    const raw = (this.getAttribute('xr-simulator') ?? '').trim().toLowerCase();
+    if (!raw || raw === 'none' || raw === 'false' || raw === 'off') {
+      return 'none';
+    }
+    return raw as XRSimulatorRoom;
   }
 
   set xrSimulator(value: XRSimulatorRoom) {
-    this.setAttribute('xr-simulator', value);
-    if (value !== 'none') {
-      this.simulator.active = true;
-      this.simulator.configureRoom(value);
+    if (value === null || value === undefined || value === 'none') {
+      this.setAttribute('xr-simulator', 'none');
+      this.syncSimulator('none');
     } else {
-      this.simulator.active = false;
+      this.setAttribute('xr-simulator', value);
+      this.syncSimulator(value);
     }
   }
 
@@ -234,10 +254,7 @@ export class XRLiveElement extends ThreeLiveElement {
     if (!this.hasAttribute('ar')) {
       this.setAttribute('ar', 'true');
     }
-    if (this.xrSimulator !== 'none') {
-      this.simulator.active = true;
-      this.simulator.configureRoom(this.xrSimulator);
-    }
+    this.syncSimulator(this.getAttribute('xr-simulator'));
     super.connectedCallback();
     if (this.hasAttribute('webmcp')) {
       getXRExtras().registerXRLiveWebMCPTools(
@@ -247,6 +264,25 @@ export class XRLiveElement extends ThreeLiveElement {
         this.depthManager,
       );
     }
+  }
+
+  override attributeChangedCallback(
+    name: string,
+    oldVal: string | null,
+    newVal: string | null,
+  ): void {
+    if (oldVal === newVal) return;
+    if (name === 'xr-simulator') {
+      this.syncSimulator(newVal);
+      this._getViewer()?.render?.();
+    } else if (name === 'xr-depth') {
+      const mode = (newVal ?? '').trim().toLowerCase();
+      if (!mode || mode === 'none') {
+        this.depthManager.clearSessionDepth?.(this._getViewer());
+        this._getViewer()?.render?.();
+      }
+    }
+    super.attributeChangedCallback(name, oldVal, newVal);
   }
 
   override disconnectedCallback(): void {
