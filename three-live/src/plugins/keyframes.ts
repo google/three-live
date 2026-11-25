@@ -371,6 +371,7 @@ export function evaluateAnimation(viewer: any, t: number): void {
   const sampledR: [number, number, number, number] = [0, 0, 0, 1];
   const sampledS: [number, number, number] = [1, 1, 1];
   const sampledWeights = new Float32Array(64);
+  const animatedTrsNodes = new Uint8Array(nodeCount);
 
   for (const state of stack) {
     const w = Math.max(0, Math.min(1, state.weight));
@@ -382,12 +383,15 @@ export function evaluateAnimation(viewer: any, t: number): void {
       if (ch.path === 'translation') {
         sampleChannel(ch, state.time, sampledT);
         vec3Lerp(trs.t, trs.t, sampledT, w);
+        animatedTrsNodes[ch.nodeIndex] = 1;
       } else if (ch.path === 'rotation') {
         sampleChannel(ch, state.time, sampledR);
         quatSlerp(trs.r, trs.r, sampledR, w);
+        animatedTrsNodes[ch.nodeIndex] = 1;
       } else if (ch.path === 'scale') {
         sampleChannel(ch, state.time, sampledS);
         vec3Lerp(trs.s, trs.s, sampledS, w);
+        animatedTrsNodes[ch.nodeIndex] = 1;
       } else if (ch.path === 'weights') {
         sampleChannel(ch, state.time, sampledWeights);
         if (viewer.meshes) {
@@ -412,8 +416,17 @@ export function evaluateAnimation(viewer: any, t: number): void {
   const localMatrices: Float32Array[] = [];
   for (let i = 0; i < nodeCount; i++) {
     const mat = mat4Create();
-    const {t: tr, r: ro, s: sc} = nodeTRS[i];
-    mat4FromRotationTranslationScale(mat, ro, tr, sc);
+    const node = viewer.gltf.nodes[i];
+    if (
+      !animatedTrsNodes[i] &&
+      Array.isArray(node?.matrix) &&
+      node.matrix.length === 16
+    ) {
+      mat.set(node.matrix);
+    } else {
+      const {t: tr, r: ro, s: sc} = nodeTRS[i];
+      mat4FromRotationTranslationScale(mat, ro, tr, sc);
+    }
     localMatrices.push(mat);
   }
 

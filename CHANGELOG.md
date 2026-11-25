@@ -117,6 +117,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+-   **WebGL2 glTF skeletal skinning, bind-pose bounds, and `node.matrix` animation
+    transforms (#125):** `skinningPlugin` now decodes `skin.inverseBindMatrices`
+    while `bin` is available, uploads `inverse(world(meshNode)) * world(joint) *
+    inverseBindMatrix[j]` (cancelling the skinned mesh node's own world transform
+    per glTF 2.0 §3.7.3.2 while preserving `modelRootMatrix`), skins vertex
+    normals, honors strided/unaligned `JOINTS_0` accessors, and computes exact
+    bind-pose world bounds via `onComputePrimitiveBounds` (fixing framing on
+    `scale=0.01` Blender/Mixamo/Meshy `Armature` rigs). `ThreeView.loadGLBData`
+    and `keyframeAnimationPlugin.evaluateAnimation` now decompose and preserve
+    `node.matrix` transforms during clip playback.
 -   **`<xr-live>` dynamic `xr-simulator` and `xr-depth` attribute updates:**
     `XRLiveElement` now overrides `attributeChangedCallback` so calling
     `el.setAttribute('xr-simulator', 'tabletop' | 'office' | 'living-room')`,

@@ -19,6 +19,7 @@
  */
 
 import {compileInteractivityGraph} from './interactivity-compiler';
+import {mat4DecomposeTRS as decomposeMat4ToTRS} from './math';
 import {getSharedRegistry} from './plugin';
 import type {
   InstancedMesh,
@@ -342,94 +343,6 @@ function quatFromMinusZ(
   if (dot < -0.999999) return [0, 1, 0, 0];
   const s = Math.sqrt((1 + dot) * 2);
   return [vy / s, -vx / s, 0, s * 0.5];
-}
-
-function decomposeMat4ToTRS(
-  m: ArrayLike<number>,
-  offset = 0,
-): {
-  t: [number, number, number];
-  r: [number, number, number, number];
-  s: [number, number, number];
-} {
-  const [m00, m01, m02, , m10, m11, m12, , m20, m21, m22, , tx, ty, tz] =
-    Array.from({length: 15}, (_, k) =>
-      finUsd(m[offset + k], k % 5 === 0 ? 1 : 0),
-    );
-
-  let sx = Math.hypot(m00, m01, m02);
-  const sy = Math.hypot(m10, m11, m12);
-  const sz = Math.hypot(m20, m21, m22);
-
-  const det =
-    m00 * (m11 * m22 - m21 * m12) -
-    m10 * (m01 * m22 - m21 * m02) +
-    m20 * (m01 * m12 - m11 * m02);
-  if (det < 0) sx = -sx;
-
-  const invSx = Math.abs(sx) > 1e-8 ? 1 / sx : 0;
-  const invSy = Math.abs(sy) > 1e-8 ? 1 / sy : 0;
-  const invSz = Math.abs(sz) > 1e-8 ? 1 / sz : 0;
-
-  const r00 = m00 * invSx;
-  const r01 = m01 * invSx;
-  const r02 = m02 * invSx;
-  const r10 = m10 * invSy;
-  const r11 = m11 * invSy;
-  const r12 = m12 * invSy;
-  const r20 = m20 * invSz;
-  const r21 = m21 * invSz;
-  const r22 = m22 * invSz;
-
-  const trace = r00 + r11 + r22;
-  let qx = 0;
-  let qy = 0;
-  let qz = 0;
-  let qw = 1;
-  if (trace > 0) {
-    const s = 0.5 / Math.sqrt(trace + 1.0);
-    qw = 0.25 / s;
-    qx = (r12 - r21) * s;
-    qy = (r20 - r02) * s;
-    qz = (r01 - r10) * s;
-  } else if (r00 > r11 && r00 > r22) {
-    const s = 2.0 * Math.sqrt(Math.max(0, 1.0 + r00 - r11 - r22));
-    if (s > 1e-8) {
-      qw = (r12 - r21) / s;
-      qx = 0.25 * s;
-      qy = (r10 + r01) / s;
-      qz = (r20 + r02) / s;
-    }
-  } else if (r11 > r22) {
-    const s = 2.0 * Math.sqrt(Math.max(0, 1.0 + r11 - r00 - r22));
-    if (s > 1e-8) {
-      qw = (r20 - r02) / s;
-      qx = (r10 + r01) / s;
-      qy = 0.25 * s;
-      qz = (r12 + r21) / s;
-    }
-  } else {
-    const s = 2.0 * Math.sqrt(Math.max(0, 1.0 + r22 - r00 - r11));
-    if (s > 1e-8) {
-      qw = (r01 - r10) / s;
-      qx = (r20 + r02) / s;
-      qy = (r12 + r21) / s;
-      qz = 0.25 * s;
-    }
-  }
-  const qLen = Math.hypot(qx, qy, qz, qw);
-  if (qLen > 1e-8 && Number.isFinite(qLen)) {
-    qx /= qLen;
-    qy /= qLen;
-    qz /= qLen;
-    qw /= qLen;
-  } else {
-    qx = 0;
-    qy = 0;
-    qz = 0;
-    qw = 1;
-  }
-  return {t: [tx, ty, tz], r: [qx, qy, qz, qw], s: [sx, sy, sz]};
 }
 
 function buildSceneCoreExtension(xr: XRMeshTraits): Record<string, any> {

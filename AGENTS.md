@@ -39,11 +39,11 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Domain Kit (a la carte): Parametric `THREE.Electronics` PCBs, flanged/cutout enclosures, heatsinks, DIN rails, ICs, connectors, discretes | `<three-live>` | `three-live-kit-electronics.min.js` | `< 14 KB gz` |
 | Domain Kits Roll-Up (a la carte): All 5 domain kits (`Mechanical`, `Architecture`, `Industrial`, `Science`, `Electronics`; 57 geometries) | `<three-live>` | `three-live-kits.min.js` | `< 84 KB gz` |
 | Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers | `<three-live>` | `three-live-procedural.min.js` | `< 30 KB gz` |
-| Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz` |
+| Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` | `<three-live>` | `three-live-animation.min.js` | `< 12 KB gz` |
 | Add-on: bring-your-own-LLM scene editing (`editScene()`, `undoEdit()`), Tap & Speak & Talk-to-Select | `<three-live>` | `three-live-ai.min.js` | `< 35 KB gz` |
 | Add-on: opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`) | `<three-live>` | `three-live-webgpu.min.js` | `< 24 KB gz` |
 | Add-on: opt-in Loop-Free `THREE.TSL` & `MeshStandardNodeMaterial` compiler (`extras.tsl` -> GLSL/WGSL/USDZ) | `<three-live>` | `three-live-tsl.min.js` | `< 19 KB gz` |
-| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 246 KB gz` |
+| Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK + AI + WebGPU + TSL (domain kits excluded) | `<three-live>` | `three-live-full.min.js` | `< 247 KB gz` |
 | Self-contained host-JS compiler bundle (`ThreeEngine.{compileToGLB, compileToUSDZ, glbToUSDZ, aiCall}` + optional `__three_live_host__` v1 native kernels) | Host JS VM | `three-live-compiler-bundle.min.js` | `< 266 KB gz` |
 | `.glb` / `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` (no scripting) | `<xr-live>` | `xr-live-viewer.min.js` | `< 64 KB gz` |
 | 6DoF WebXR + `<script type="text/three">` + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 102 KB gz` |
@@ -51,7 +51,7 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins | `<xr-live>` | `xr-live-spatial.min.js` | `< 65 KB gz` |
 | Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio) | `<xr-live>` | `xr-live-sim.min.js` | `< 30 KB gz` |
 | Add-on: opt-in WebGPU Gaussian Splatting compute & `drawIndirect` render accelerator | `<xr-live>` | `xr-live-webgpu.min.js` | `< 13 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 356 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim + WebGPU + TSL plugins | `<xr-live>` | `xr-live-full.min.js` | `< 358 KB gz` |
 <!-- mdformat on -->
 
 ---

@@ -155,6 +155,7 @@ import {createProgram} from './gl-program';
 import {
   mat3NormalFromMat4,
   mat4Create,
+  mat4DecomposeTRS,
   mat4FromRotationTranslationScale,
   mat4Invert,
   mat4LookAt,
@@ -167,6 +168,7 @@ import {
 export {
   mat3NormalFromMat4,
   mat4Create,
+  mat4DecomposeTRS,
   mat4FromRotationTranslationScale,
   mat4Invert,
   mat4LookAt,
@@ -1780,40 +1782,6 @@ function buildGpuSceneUnchecked(
         );
       }
       totalHostVertices += primVertCount;
-      if (posAcc?.min && posAcc?.max) {
-        const expand = (m: Float32Array) => {
-          for (let c = 0; c < 3; c++) {
-            let lo = m[12 + c];
-            let hi = lo;
-            for (let j = 0; j < 3; j++) {
-              const a = m[j * 4 + c] * posAcc.min[j];
-              const b = m[j * 4 + c] * posAcc.max[j];
-              lo += a < b ? a : b;
-              hi += a > b ? a : b;
-            }
-            if (lo < allMin[c]) allMin[c] = lo;
-            if (hi > allMax[c]) allMax[c] = hi;
-            if (!meshGpu.boundsIgnore) {
-              if (lo < min[c]) min[c] = lo;
-              if (hi > max[c]) max[c] = hi;
-            }
-          }
-        };
-        if (meshGpu.instanceMatrices && meshGpu.instanceMatrices.length >= 16) {
-          const instCount = meshGpu.instanceMatrices.length >> 4;
-          const instWorld = mat4Create();
-          for (let inst = 0; inst < instCount; inst++) {
-            mat4Multiply(
-              instWorld,
-              trans,
-              meshGpu.instanceMatrices.subarray(inst * 16, inst * 16 + 16),
-            );
-            expand(instWorld);
-          }
-        } else {
-          expand(trans);
-        }
-      }
       const posData = bindBufferAttribute(
         gl,
         gltf,
@@ -1915,6 +1883,77 @@ function buildGpuSceneUnchecked(
       }
 
       gl.bindVertexArray(null);
+
+      // Compute world-space bounds for camera framing. Plugins (e.g. skinning)
+      // can provide exact bind-pose bounds so skinned meshes ignore the mesh
+      // node's own world transform per glTF 2.0 §3.7.3.2.
+      let pluginBounds: {
+        min: [number, number, number];
+        max: [number, number, number];
+      } | null = null;
+      if (posData) {
+        for (const plugin of registeredPlugins) {
+          if (plugin.onComputePrimitiveBounds) {
+            const b = plugin.onComputePrimitiveBounds(
+              prim,
+              item.nodeIdx,
+              posData,
+              nodeWorldMatrices,
+              gltf,
+              bin,
+            );
+            if (b) {
+              pluginBounds = b;
+              break;
+            }
+          }
+        }
+      }
+      if (pluginBounds) {
+        for (let c = 0; c < 3; c++) {
+          const lo = pluginBounds.min[c];
+          const hi = pluginBounds.max[c];
+          if (lo < allMin[c]) allMin[c] = lo;
+          if (hi > allMax[c]) allMax[c] = hi;
+          if (!meshGpu.boundsIgnore) {
+            if (lo < min[c]) min[c] = lo;
+            if (hi > max[c]) max[c] = hi;
+          }
+        }
+      } else if (posAcc?.min && posAcc?.max) {
+        const expand = (m: Float32Array) => {
+          for (let c = 0; c < 3; c++) {
+            let lo = m[12 + c];
+            let hi = lo;
+            for (let j = 0; j < 3; j++) {
+              const a = m[j * 4 + c] * posAcc.min[j];
+              const b = m[j * 4 + c] * posAcc.max[j];
+              lo += a < b ? a : b;
+              hi += a > b ? a : b;
+            }
+            if (lo < allMin[c]) allMin[c] = lo;
+            if (hi > allMax[c]) allMax[c] = hi;
+            if (!meshGpu.boundsIgnore) {
+              if (lo < min[c]) min[c] = lo;
+              if (hi > max[c]) max[c] = hi;
+            }
+          }
+        };
+        if (meshGpu.instanceMatrices && meshGpu.instanceMatrices.length >= 16) {
+          const instCount = meshGpu.instanceMatrices.length >> 4;
+          const instWorld = mat4Create();
+          for (let inst = 0; inst < instCount; inst++) {
+            mat4Multiply(
+              instWorld,
+              trans,
+              meshGpu.instanceMatrices.subarray(inst * 16, inst * 16 + 16),
+            );
+            expand(instWorld);
+          }
+        } else {
+          expand(trans);
+        }
+      }
 
       // 4. MATERIAL
       const mat =
@@ -2502,20 +2541,25 @@ export class ThreeView {
     }
 
     // tslint:disable-next-line:no-any
-    this.initialNodeTransforms = (glbData.gltf?.nodes || []).map((n: any) => ({
-      t: [
-        n.translation?.[0] ?? 0,
-        n.translation?.[1] ?? 0,
-        n.translation?.[2] ?? 0,
-      ],
-      r: [
-        n.rotation?.[0] ?? 0,
-        n.rotation?.[1] ?? 0,
-        n.rotation?.[2] ?? 0,
-        n.rotation?.[3] ?? 1,
-      ],
-      s: [n.scale?.[0] ?? 1, n.scale?.[1] ?? 1, n.scale?.[2] ?? 1],
-    }));
+    this.initialNodeTransforms = (glbData.gltf?.nodes || []).map((n: any) => {
+      if (Array.isArray(n?.matrix) && n.matrix.length === 16) {
+        return mat4DecomposeTRS(n.matrix);
+      }
+      return {
+        t: [
+          n?.translation?.[0] ?? 0,
+          n?.translation?.[1] ?? 0,
+          n?.translation?.[2] ?? 0,
+        ],
+        r: [
+          n?.rotation?.[0] ?? 0,
+          n?.rotation?.[1] ?? 0,
+          n?.rotation?.[2] ?? 0,
+          n?.rotation?.[3] ?? 1,
+        ],
+        s: [n?.scale?.[0] ?? 1, n?.scale?.[1] ?? 1, n?.scale?.[2] ?? 1],
+      };
+    });
 
     if (this.autoplay && this.animations.length > 0) {
       this.playAnimation(this.animationName || undefined);
