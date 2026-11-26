@@ -117,28 +117,103 @@ export interface TextureTransformLike {
 }
 
 /**
- * Bakes a `KHR_texture_transform` (offset, rotation, scale; same convention as
- * three.js `Matrix3.setUvTransform`) into interleaved `uv` pairs in place.
+ * Bakes a `KHR_texture_transform` into interleaved `uv` pairs in place, in the
+ * spec order `T * R * S` (scale, then rotate, then offset) that three.js
+ * `GLTFLoader` also applies. Non-finite components fall back to identity.
  */
 export function applyTextureTransform(
   uv: Float32Array,
   t: TextureTransformLike,
 ): void {
-  const ox = Number(t.offset?.[0] ?? 0) || 0;
-  const oy = Number(t.offset?.[1] ?? 0) || 0;
-  const sx = Number(t.scale?.[0] ?? 1);
-  const sy = Number(t.scale?.[1] ?? 1);
-  const r = Number(t.rotation ?? 0) || 0;
+  const fin = (v: unknown, d: number): number => {
+    const n = Number(v ?? d);
+    return Number.isFinite(n) ? n : d;
+  };
+  const ox = fin(t.offset?.[0], 0);
+  const oy = fin(t.offset?.[1], 0);
+  const sx = fin(t.scale?.[0], 1);
+  const sy = fin(t.scale?.[1], 1);
+  const r = fin(t.rotation, 0);
   const c = Math.cos(r);
   const s = Math.sin(r);
-  const a = (Number.isFinite(sx) ? sx : 1) * c;
-  const b = (Number.isFinite(sx) ? sx : 1) * s;
-  const d = -(Number.isFinite(sy) ? sy : 1) * s;
-  const e = (Number.isFinite(sy) ? sy : 1) * c;
+  const a = c * sx;
+  const b = s * sy;
+  const d = -s * sx;
+  const e = c * sy;
   for (let i = 0; i + 1 < uv.length; i += 2) {
     const u = uv[i]!;
     const v = uv[i + 1]!;
     uv[i] = a * u + b * v + ox;
     uv[i + 1] = d * u + e * v + oy;
   }
+}
+
+/** Rounds float noise (e.g. `cos(PI/2)`) so identity checks stay exact. */
+function cleanUv(v: number): number {
+  const r = Math.round(v * 1e9) / 1e9;
+  return r === 0 ? 0 : r;
+}
+
+/**
+ * Converts three.js `Texture` UV parameters (`offset`, `repeat`, `rotation`,
+ * `center`) into a `KHR_texture_transform`, folding `center` into `offset`.
+ * The result reproduces three.js `Matrix3.setUvTransform` exactly when
+ * `repeat.x === repeat.y`, `rotation` is 0, or `rotation` is a quarter turn
+ * (the scale components swap). three.js scales after rotating while glTF
+ * scales first, so other non-uniform rotated textures export with
+ * `scale = repeat`, like three.js `GLTFExporter`. Returns `null` for identity
+ * transforms, non-texture values, and non-finite components.
+ */
+export function textureTransformOf(tex: unknown): TextureTransformLike | null {
+  if (!tex || typeof tex !== 'object') return null;
+  const t = tex as {
+    offset?: {x?: unknown; y?: unknown};
+    repeat?: {x?: unknown; y?: unknown};
+    center?: {x?: unknown; y?: unknown};
+    rotation?: unknown;
+  };
+  const num = (v: unknown, d: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : d;
+  const sx = num(t.repeat?.x, 1);
+  const sy = num(t.repeat?.y, 1);
+  const r = num(t.rotation, 0);
+  const cx = num(t.center?.x, 0);
+  const cy = num(t.center?.y, 0);
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  const ox = cleanUv(-sx * (c * cx + s * cy) + cx + num(t.offset?.x, 0));
+  const oy = cleanUv(-sy * (-s * cx + c * cy) + cy + num(t.offset?.y, 0));
+  // diag(sx, sy) * R(r) equals R(r) * diag(sy, sx) for odd quarter turns.
+  const [gx, gy] = cleanUv(c) === 0 ? [sy, sx] : [sx, sy];
+  const out: TextureTransformLike = {};
+  if (ox !== 0 || oy !== 0) out.offset = [ox, oy];
+  if (cleanUv(r) !== 0) out.rotation = r;
+  if (gx !== 1 || gy !== 1) out.scale = [gx, gy];
+  return out.offset || out.rotation !== undefined || out.scale ? out : null;
+}
+
+/**
+ * Returns the `KHR_texture_transform` of a glTF material (base color first,
+ * then the other PBR textures). Renderers that bake the transform into
+ * `TEXCOORD_0` (WebGL2 / WebGPU `ThreeView`, the USDZ exporter, and the
+ * native preview renderer) apply this one transform to every texture of the
+ * primitive.
+ */
+export function materialTextureTransform(
+  // tslint:disable-next-line:no-any glTF material JSON.
+  mat: any,
+): TextureTransformLike | null {
+  if (!mat || typeof mat !== 'object') return null;
+  const infos = [
+    mat.pbrMetallicRoughness?.baseColorTexture,
+    mat.pbrMetallicRoughness?.metallicRoughnessTexture,
+    mat.normalTexture,
+    mat.occlusionTexture,
+    mat.emissiveTexture,
+  ];
+  for (const info of infos) {
+    const t = info?.extensions?.KHR_texture_transform;
+    if (t && typeof t === 'object') return t as TextureTransformLike;
+  }
+  return null;
 }

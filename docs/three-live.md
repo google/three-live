@@ -544,7 +544,11 @@ assets to be located.
     `MeshStandardNodeMaterial` / `THREE.TSL` (when `three-live-tsl` or
     `three-live-full` is loaded; mapped to glTF PBR metallic-roughness + PBR
     Next + `extras.tsl`, plus `mesh.userData.variants` for
-    `KHR_materials_variants`).
+    `KHR_materials_variants`). Texture `repeat`, `offset`, `rotation`, and
+    `center` export as `KHR_texture_transform`, and `wrapS` / `wrapT` as glTF
+    samplers (default `RepeatWrapping`). Built-in renderers apply one transform
+    per material, so tile every map together, e.g.
+    `THREE.ProceduralTexture.brick({ repeat: [4, 2] })`.
 -   **Scene Graph & GPU Instancing:** `Scene`, `Group`, `Mesh`, `InstancedMesh`
     (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`),
     `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`,

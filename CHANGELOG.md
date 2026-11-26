@@ -26,6 +26,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **`Texture.repeat` / `offset` / `rotation` / `center` export as
+    `KHR_texture_transform`, and `wrapS` / `wrapT` as glTF samplers:**
+    `sceneToGLB` / `compileToGLB` emit `KHR_texture_transform` (in
+    `extensionsUsed` only) on every non-identity `textureInfo` (base color,
+    metallic-roughness including packed `_packPbr` maps, normal, occlusion,
+    emissive), folding `center` into `offset`. Output matches three.js
+    `Matrix3.setUvTransform` exactly for uniform `repeat`, no rotation, or
+    quarter turns; other non-uniform rotated textures export `scale = repeat`
+    like three.js `GLTFExporter`. Samplers carry the wrap modes (three.js
+    constants or GL enums), deduplicated per wrap pair, and textures deduplicate
+    by `(image, sampler)` (at most 64 glTF textures). The WebGL2 / WebGPU
+    `ThreeView`, USDZ export (`primvars:st`), and the Rust CLI/MCP preview
+    renderer bake the material's first transform into UVs in the spec order
+    `T * R * S` (also fixing rotated, non-uniformly scaled third-party GLBs), so
+    give every map of one material the same transform.
+    `THREE.ProceduralTexture.*({ repeat: 4 | [4, 2] })` returns maps tiled
+    together, `Texture.clone()` / `rotation` / `center` are new, and the sandbox
+    texture quota counts distinct images, so clones are free. `DataTexture` and
+    `CanvasTexture` default to `RepeatWrapping` (like `Texture`) so existing
+    tiled scenes look the same; set `ClampToEdgeWrapping` explicitly to clamp
+    (honored by WebGL2, USDZ, and external viewers; WebGPU and the CLI preview
+    still repeat).
 -   **Multi-material `BufferGeometry.groups` & one-way cutaway walls in
     `THREE.Architecture` (`three-live/kits/architecture`):** `WindowGeometry`,
     `DoorGeometry` (`vision-lite`, `half-lite`, `french`, and hardware), and

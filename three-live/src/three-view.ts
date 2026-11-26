@@ -148,6 +148,7 @@ export interface ViewOptions {
 
 import {
   applyTextureTransform,
+  materialTextureTransform,
   readAccessorAsFloat32,
   type TextureTransformLike,
 } from './accessor';
@@ -1054,26 +1055,15 @@ function bindInstanceAttributes(
 /**
  * Returns the `KHR_texture_transform` of the primitive's material (base color
  * first, then the other PBR textures). gltfpack uses it to dequantize
- * normalized TEXCOORD_0 attributes, so it is baked into the uploaded UVs.
+ * normalized TEXCOORD_0 attributes, and `sceneToGLB` emits it for
+ * `Texture.repeat` / `offset` / `rotation` / `center`, so it is baked into the
+ * uploaded UVs.
  */
 function primitiveTextureTransform(
   gltf: any,
   prim: any,
 ): TextureTransformLike | null {
-  const mat = gltf.materials?.[prim?.material];
-  if (!mat) return null;
-  const infos = [
-    mat.pbrMetallicRoughness?.baseColorTexture,
-    mat.pbrMetallicRoughness?.metallicRoughnessTexture,
-    mat.normalTexture,
-    mat.occlusionTexture,
-    mat.emissiveTexture,
-  ];
-  for (const info of infos) {
-    const t = info?.extensions?.KHR_texture_transform;
-    if (t && typeof t === 'object') return t as TextureTransformLike;
-  }
-  return null;
+  return materialTextureTransform(gltf.materials?.[prim?.material]);
 }
 
 /**

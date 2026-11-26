@@ -2949,8 +2949,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       // tslint:disable-next-line:no-any Accepts VirtualCanvas, HTMLCanvasElement, OffscreenCanvas, or ImageData.
       canvas: any = null,
       _mapping?: number,
-      wrapS = 1001,
-      wrapT = 1001,
+      // RepeatWrapping by default, like `THREE.Texture` in Three-Live.
+      wrapS = 1000,
+      wrapT = 1000,
       magFilter = 1006,
       minFilter = 1008,
       format = 1023,
@@ -2965,8 +2966,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       this.image = canvas;
       this.width = Number(canvas?.width ?? 0) || 0;
       this.height = Number(canvas?.height ?? 0) || 0;
-      this.wrapS = Number(wrapS) || 1001;
-      this.wrapT = Number(wrapT) || 1001;
+      this.wrapS = Number(wrapS) || 1000;
+      this.wrapT = Number(wrapT) || 1000;
       this.magFilter = Number(magFilter) || 1006;
       this.minFilter = Number(minFilter) || 1008;
       this.format = Number(format) || 1023;
@@ -5382,6 +5383,32 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
 
   // tslint:disable-next-line:no-any Cached preset texture sets.
   const presetMemo = new Map<string, any>();
+  /**
+   * `repeat: n | [x, y]` swaps every map of a preset set for a clone with that
+   * `Texture.repeat`, so albedo, normal, and ORM tile together (clones share
+   * the image and count once against the texture quota).
+   */
+  // tslint:disable-next-line:no-any Spreadable MeshStandardMaterial params.
+  const withRepeat = (set: any, rep: unknown): any => {
+    const r = Array.isArray(rep) ? rep : typeof rep === 'number' ? [rep] : null;
+    if (!r) return set;
+    const rx = Math.max(1e-3, Math.min(1e4, finNum(r[0], 1)));
+    const ry = Math.max(1e-3, Math.min(1e4, finNum(r[1], rx)));
+    if (rx === 1 && ry === 1) return set;
+    const clones = new Map<unknown, unknown>();
+    for (const k of Object.keys(set)) {
+      const t = set[k];
+      if (!t || typeof t.clone !== 'function') continue;
+      let c = clones.get(t);
+      if (!c) {
+        c = t.clone();
+        (c as {repeat: {set(x: number, y: number): void}}).repeat.set(rx, ry);
+        clones.set(t, c);
+      }
+      set[k] = c;
+    }
+    return set;
+  };
   // tslint:disable-next-line:no-any Material preset options bag.
   const makePreset = (name: string, opts: any = {}): any => {
     const kind = PRESET_NAMES.indexOf(name);
@@ -5406,7 +5433,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     // Identical options share textures (scene texture quotas count objects).
     const memoKey = [kind, N, S, seed, ...c, ...c2, rough, ns].join(',');
     const hit = presetMemo.get(memoKey);
-    if (hit) return {...hit};
+    if (hit) return withRepeat({...hit}, o.repeat);
     const [albedo, normal, orm] = presetPixels(
       kind,
       N,
@@ -5422,6 +5449,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       vc._data.set(bytes);
       vc._ver++;
       const t = new CanvasTexture(vc);
+      // Seamless tiles: repeat outside [0, 1] (e.g. world-meter wall UVs).
+      t.wrapS = t.wrapT = 1000;
       t.flipY = false;
       t.colorSpace = cs;
       t.name = `${name}_${cs === 'srgb' ? 'albedo' : bytes === normal ? 'normal' : 'orm'}`;
@@ -5436,7 +5465,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     out.metalnessMap = ormTex;
     if (presetMemo.size >= 64) presetMemo.clear();
     presetMemo.set(memoKey, out);
-    return {...out};
+    return withRepeat({...out}, o.repeat);
   };
 
   const ProceduralTexture: Record<string, unknown> = {
@@ -5714,6 +5743,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         width: n,
         height: n,
       });
+      t.wrapS = t.wrapT = 1000;
       t.flipY = false;
       t.colorSpace = cs;
       t.name = `ai_${key}_${role}`;

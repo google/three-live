@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {applyTextureTransform, textureTransformOf} from '../src/accessor';
 import THREE, {
   BoxGeometry,
   BufferGeometry,
@@ -1012,6 +1013,241 @@ async function runTests() {
       !instHiddenGltf.meshes &&
         !instHiddenGltf.nodes[0].extensions?.EXT_mesh_gpu_instancing,
       'Hidden InstancedMesh omits both mesh and EXT_mesh_gpu_instancing',
+    );
+  }
+
+  // Texture.repeat / offset / rotation / center -> KHR_texture_transform,
+  // and wrapS / wrapT -> per-texture glTF samplers.
+  {
+    console.log('\n--- Texture transforms and samplers ---');
+    const px = new Uint8Array(4 * 4 * 4).fill(180);
+    const texScene = (
+      ...maps: Array<ConstructorParameters<typeof MeshStandardMaterial>[0]>
+    ) => {
+      const sc = new Scene();
+      maps.forEach((mp, i) => {
+        const mesh = new Mesh(
+          new BoxGeometry(1, 1, 1),
+          new MeshStandardMaterial(mp),
+        );
+        mesh.position.x = i * 2;
+        sc.add(mesh);
+      });
+      return sceneToCanvas3D(sc).gltf;
+    };
+    // tslint:disable-next-line:no-any glTF JSON.
+    type Json = any;
+    const baseInfo = (g: Json, i = 0) =>
+      g.materials[i].pbrMetallicRoughness.baseColorTexture;
+    const samplerOf = (g: Json, info: Json) =>
+      g.samplers[g.textures[info.index].sampler];
+
+    const plain = new DataTexture(px, 4, 4);
+    const plainGltf = texScene({map: plain});
+    assert(
+      !baseInfo(plainGltf).extensions &&
+        !(plainGltf.extensionsUsed || []).includes('KHR_texture_transform'),
+      'Identity Texture transform emits no KHR_texture_transform',
+    );
+    const clampTex = new DataTexture(px, 4, 4);
+    clampTex.wrapS = clampTex.wrapT = THREE.ClampToEdgeWrapping;
+    const clampGltf = texScene({map: clampTex});
+    assert(
+      samplerOf(plainGltf, baseInfo(plainGltf)).wrapS === 10497 &&
+        samplerOf(plainGltf, baseInfo(plainGltf)).wrapT === 10497 &&
+        samplerOf(clampGltf, baseInfo(clampGltf)).wrapS === 33071 &&
+        samplerOf(clampGltf, baseInfo(clampGltf)).wrapT === 33071,
+      'DataTexture defaults to REPEAT; explicit ClampToEdgeWrapping exports CLAMP_TO_EDGE',
+    );
+
+    const tiled = new DataTexture(px, 4, 4);
+    tiled.wrapS = THREE.RepeatWrapping;
+    tiled.wrapT = THREE.MirroredRepeatWrapping;
+    tiled.repeat.set(0.25, 1);
+    const tiledGltf = texScene({map: tiled});
+    const tiledXf = baseInfo(tiledGltf).extensions?.KHR_texture_transform;
+    assert(
+      JSON.stringify(tiledXf) === JSON.stringify({scale: [0.25, 1]}) &&
+        tiledGltf.extensionsUsed.includes('KHR_texture_transform') &&
+        !(tiledGltf.extensionsRequired || []).includes('KHR_texture_transform'),
+      'Texture.repeat exports KHR_texture_transform.scale in extensionsUsed only',
+    );
+    assert(
+      samplerOf(tiledGltf, baseInfo(tiledGltf)).wrapS === 10497 &&
+        samplerOf(tiledGltf, baseInfo(tiledGltf)).wrapT === 33648,
+      'RepeatWrapping / MirroredRepeatWrapping map to REPEAT / MIRRORED_REPEAT',
+    );
+
+    // three.js Matrix3.setUvTransform (scale after rotation) vs the
+    // KHR_texture_transform spec order T * R * S that applyTextureTransform
+    // (and three.js GLTFLoader) use.
+    const threeUv = (
+      sx: number,
+      sy: number,
+      r: number,
+      [ox, oy]: number[],
+      [cx, cy]: number[],
+    ) => {
+      const [c, sn] = [Math.cos(r), Math.sin(r)];
+      return (u: number, v: number) => [
+        sx * c * u + sx * sn * v - sx * (c * cx + sn * cy) + cx + ox,
+        -sy * sn * u + sy * c * v - sy * (-sn * cx + c * cy) + cy + oy,
+      ];
+    };
+    const specUv = (xf: Json) => (u: number, v: number) => {
+      const [sx, sy] = xf?.scale ?? [1, 1];
+      const [ox, oy] = xf?.offset ?? [0, 0];
+      const r = xf?.rotation ?? 0;
+      const [c, sn] = [Math.cos(r), Math.sin(r)];
+      return [c * sx * u + sn * sy * v + ox, -sn * sx * u + c * sy * v + oy];
+    };
+    const probeUvs = [
+      [0, 0],
+      [1, 0],
+      [0.3, 0.8],
+      [-2, 5],
+    ];
+    const matches = (a: (u: number, v: number) => number[], xf: Json) => {
+      const probe = new Float32Array(probeUvs.flat());
+      applyTextureTransform(probe, xf);
+      return probeUvs.every(([u, v], k) => {
+        const [wa, wb] = a(u, v);
+        const [sa, sb] = specUv(xf)(u, v);
+        return (
+          Math.abs(wa - probe[2 * k]) < 1e-5 &&
+          Math.abs(wb - probe[2 * k + 1]) < 1e-5 &&
+          Math.abs(sa - wa) < 1e-5 &&
+          Math.abs(sb - wb) < 1e-5
+        );
+      });
+    };
+    const xfOf = (
+      repeat: number[],
+      rotation: number,
+      offset: number[],
+      center: number[],
+    ) => {
+      const t = new DataTexture(px, 4, 4);
+      t.repeat.set(repeat[0], repeat[1]);
+      t.rotation = rotation;
+      t.offset.set(offset[0], offset[1]);
+      t.center.set(center[0], center[1]);
+      return baseInfo(texScene({map: t})).extensions?.KHR_texture_transform;
+    };
+    // Exact cases: uniform scale, no rotation, or quarter turns (scale swap).
+    const exact: Array<[number[], number, number[], number[]]> = [
+      [[2, 2], 0.7, [0.1, -0.2], [0.5, 0.5]],
+      [[3, 0.5], 0, [0.25, 0], [0.5, 0.5]],
+      [[4, 1], Math.PI / 2, [0, 0.1], [0.5, 0.5]],
+      [[4, 1], -Math.PI / 2, [0, 0], [0, 0]],
+    ];
+    assert(
+      exact.every(([rp, r, o, ctr]) =>
+        matches(threeUv(rp[0], rp[1], r, o, ctr), xfOf(rp, r, o, ctr)),
+      ) &&
+        JSON.stringify(xfOf([4, 1], Math.PI / 2, [0, 0], [0, 0])?.scale) ===
+          '[1,4]',
+      'KHR_texture_transform matches setUvTransform and the spec (T*R*S) for exact cases',
+    );
+    // Non-uniform scale + arbitrary rotation needs shear: exports
+    // scale = repeat like three.js GLTFExporter, with an exact origin.
+    const approx = xfOf([2, 3], 0.7, [0.1, -0.2], [0.5, 0.5]);
+    const [o0, o1] = threeUv(2, 3, 0.7, [0.1, -0.2], [0.5, 0.5])(0, 0);
+    assert(
+      approx?.rotation === 0.7 &&
+        JSON.stringify(approx?.scale) === '[2,3]' &&
+        Math.abs(approx.offset[0] - o0) < 1e-6 &&
+        Math.abs(approx.offset[1] - o1) < 1e-6,
+      'Non-uniform rotated repeat exports scale = repeat with the exact UV origin',
+    );
+    const nanProbe = new Float32Array([0.5, 0.5]);
+    applyTextureTransform(nanProbe, {rotation: Infinity, scale: [NaN, 2]});
+    assert(
+      nanProbe[0] === 0.5 && nanProbe[1] === 1,
+      'applyTextureTransform treats non-finite components as identity',
+    );
+    const halfTurn = new DataTexture(px, 4, 4);
+    halfTurn.rotation = Math.PI;
+    halfTurn.center.set(0.5, 0.5);
+    const htXf = baseInfo(texScene({map: halfTurn})).extensions
+      ?.KHR_texture_transform;
+    assert(
+      JSON.stringify(htXf?.offset) === '[1,1]' && htXf?.rotation === Math.PI,
+      'Centered half-turn rotation exports offset [1, 1] without float noise',
+    );
+    assert(
+      textureTransformOf({repeat: {x: NaN, y: 1}, offset: {x: Infinity}}) ===
+        null && textureTransformOf('tex.png') === null,
+      'textureTransformOf ignores non-finite components and non-objects',
+    );
+
+    // Same image, different samplers -> separate textures sharing one image;
+    // identical wrap pairs share one sampler.
+    const clampA = new DataTexture(px, 4, 4);
+    const clampB = new DataTexture(px, 4, 4);
+    clampA.wrapS = clampA.wrapT = clampB.wrapS = clampB.wrapT = 1001;
+    const rep = new DataTexture(px, 4, 4);
+    const shareGltf = texScene({map: clampA}, {map: clampB}, {map: rep});
+    const [ia, ib, ir] = [0, 1, 2].map((i) => baseInfo(shareGltf, i).index);
+    assert(
+      shareGltf.images.length === 1 &&
+        ia === ib &&
+        ia !== ir &&
+        shareGltf.textures[ia].source === shareGltf.textures[ir].source &&
+        shareGltf.samplers.length === 2,
+      'Textures dedupe by (image, sampler); samplers dedupe by wrap pair',
+    );
+
+    // Packed metallic-roughness (`_packPbr`) keeps the source map's transform.
+    const roughTex = new DataTexture(px, 4, 4);
+    roughTex.wrapS = roughTex.wrapT = THREE.RepeatWrapping;
+    roughTex.repeat.set(4, 4);
+    const metalTex = new DataTexture(px.slice().fill(40), 4, 4);
+    const packedGltf = texScene({
+      roughnessMap: roughTex,
+      metalnessMap: metalTex,
+    });
+    const mrInfo =
+      packedGltf.materials[0].pbrMetallicRoughness.metallicRoughnessTexture;
+    assert(
+      JSON.stringify(mrInfo?.extensions?.KHR_texture_transform) ===
+        JSON.stringify({scale: [4, 4]}) &&
+        samplerOf(packedGltf, mrInfo).wrapS === 10497,
+      'Packed metallicRoughnessTexture uses the roughnessMap transform and sampler',
+    );
+
+    // USDZ bakes the transform into primvars:st (one st primvar per mesh).
+    const usdTex = new DataTexture(px, 4, 4);
+    usdTex.wrapS = usdTex.wrapT = THREE.RepeatWrapping;
+    usdTex.repeat.set(0.25, 1);
+    usdTex.offset.set(0.5, 0);
+    const usdScene = new Scene();
+    usdScene.add(
+      new Mesh(
+        new BoxGeometry(1, 1, 1),
+        new MeshStandardMaterial({map: usdTex}),
+      ),
+    );
+    const usda = generateUSDA(usdScene);
+    const stLine =
+      usda.split('\n').find((l) => l.includes('primvars:st')) || '';
+    const us = [...stLine.matchAll(/\(([-\d.e]+), [-\d.e]+\)/g)].map((m) =>
+      Number(m[1]),
+    );
+    assert(
+      us.length > 0 && us.every((u) => u >= 0.5 - 1e-6 && u <= 0.75 + 1e-6),
+      'USDZ primvars:st bakes KHR_texture_transform (u in [0.5, 0.75])',
+    );
+
+    const shared = new DataTexture(px, 4, 4);
+    const copy = shared.clone();
+    copy.repeat.set(3, 3);
+    assert(
+      shared.repeat.x === 1 &&
+        copy.repeat.x === 3 &&
+        copy instanceof DataTexture &&
+        copy.source === shared.source,
+      'Texture.clone() shares the image but not repeat/offset/center',
     );
   }
 

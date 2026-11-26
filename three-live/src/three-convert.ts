@@ -18,12 +18,16 @@
  * and Apple Universal Scene Description (USDZ with 64-byte alignment).
  */
 
+import {
+  applyTextureTransform,
+  materialTextureTransform,
+  textureTransformOf,
+} from './accessor';
 import {compileInteractivityGraph} from './interactivity-compiler';
 import {mat4DecomposeTRS as decomposeMat4ToTRS} from './math';
 import {getSharedRegistry} from './plugin';
 import type {
   InstancedMesh,
-  Light,
   Material,
   Mesh,
   Object3D,
@@ -314,6 +318,19 @@ export type SceneOrGLBSource = Scene | GLBData | ArrayBuffer | ArrayBufferView;
 // =========================================================================
 // 2. GLB Serialization (Three.js Scene -> glTF 2.0 / GLB)
 // =========================================================================
+
+/**
+ * Maps a three.js wrap constant (`RepeatWrapping` 1000, `ClampToEdgeWrapping`
+ * 1001, `MirroredRepeatWrapping` 1002) or a raw GL enum to the glTF sampler
+ * enum; anything else falls back to `REPEAT` (10497).
+ */
+function glWrap(w: unknown): number {
+  return w === 1001 || w === 33071
+    ? 33071
+    : w === 1002 || w === 33648
+      ? 33648
+      : 10497;
+}
 
 function align4(n: number): number {
   return (n + 3) & ~3;
@@ -646,6 +663,8 @@ function serializeScene(
   const images: Array<{uri: string}> = [];
   const samplers: Array<Record<string, number>> = [];
   const textures: Array<{sampler: number; source: number}> = [];
+  const imageLookup = new Map<string, number>();
+  const samplerLookup = new Map<string, number>();
   const textureLookup = new Map<string, number>();
   const variantNames: string[] = [];
   const lights: LightGpu[] = [];
@@ -698,7 +717,13 @@ function serializeScene(
       roughnessFactor: finUsd(m.roughness, 0.5),
     };
     const matExtras: Record<string, unknown> = {};
-    const addTex = (t: any): {index: number} | undefined => {
+    // `xf` supplies the sampler and UV transform when `t` is a derived URI
+    // (packed metallic-roughness or bump-to-normal maps from `_packPbr`).
+    const addTex = (
+      // tslint:disable-next-line:no-any Texture, URI string, or plain object.
+      t: any,
+      xf: unknown = t,
+    ): Record<string, unknown> | undefined => {
       if (!t) return undefined;
       const raw =
         typeof t === 'string'
@@ -800,8 +825,8 @@ function serializeScene(
           `Disallowed texture URI scheme or path traversal: ${JSON.stringify(preview)}`,
         );
       }
-      let texIdx = textureLookup.get(s);
-      if (texIdx === undefined) {
+      let imgIdx = imageLookup.get(s);
+      if (imgIdx === undefined) {
         if (images.length >= MAX_TEXTURES) {
           throw new Error(
             `Scene exceeds SECURITY_3D_MAX_TEXTURES (${MAX_TEXTURES})`,
@@ -816,30 +841,50 @@ function serializeScene(
             packed = (compressFn as (u: string) => string)(s) || s;
           }
         }
-        const imgIdx = images.length;
+        imgIdx = images.length;
         images.push({uri: packed});
-        if (samplers.length === 0) {
-          samplers.push({
-            magFilter: 9729,
-            minFilter: 9987,
-            wrapS: 10497,
-            wrapT: 10497,
-          });
+        imageLookup.set(s, imgIdx);
+      }
+      // One sampler per distinct wrap pair; one texture per (image, sampler).
+      const wraps = xf as {wrapS?: unknown; wrapT?: unknown} | null;
+      const wrapS = glWrap(wraps?.wrapS);
+      const wrapT = glWrap(wraps?.wrapT);
+      const sampKey = `${wrapS},${wrapT}`;
+      let sampIdx = samplerLookup.get(sampKey);
+      if (sampIdx === undefined) {
+        sampIdx = samplers.length;
+        samplers.push({magFilter: 9729, minFilter: 9987, wrapS, wrapT});
+        samplerLookup.set(sampKey, sampIdx);
+      }
+      const texKey = `${imgIdx}|${sampIdx}`;
+      let texIdx = textureLookup.get(texKey);
+      if (texIdx === undefined) {
+        // Matches the viewer's sandbox ceiling (`SANDBOX_HOST_SCENE_LIMITS`).
+        if (textures.length >= MAX_TEXTURES * 4) {
+          throw new Error(
+            `Scene exceeds ${MAX_TEXTURES * 4} glTF textures (image + wrap pairs)`,
+          );
         }
         texIdx = textures.length;
-        textures.push({sampler: 0, source: imgIdx});
-        textureLookup.set(s, texIdx);
+        textures.push({sampler: sampIdx, source: imgIdx});
+        textureLookup.set(texKey, texIdx);
       }
-      return {index: texIdx};
+      const info: Record<string, unknown> = {index: texIdx};
+      const uvXform = textureTransformOf(xf);
+      if (uvXform) {
+        info.extensions = {KHR_texture_transform: uvXform};
+        nodeExtensionsUsed.add('KHR_texture_transform');
+      }
+      return info;
     };
     const pk = (m as any)._packPbr?.() as
       | {mrUri?: string; normUri?: string; normScale?: number}
       | undefined;
     const baseTex = addTex(m.map);
     if (baseTex) pbr.baseColorTexture = baseTex;
-    const mrTex = addTex(
-      pk?.mrUri || (m as any).roughnessMap || (m as any).metalnessMap,
-    );
+    const mMaps = m as unknown as Record<string, unknown>;
+    const mrSrc = mMaps['roughnessMap'] || mMaps['metalnessMap'];
+    const mrTex = addTex(pk?.mrUri || mrSrc, mrSrc);
     if (mrTex) pbr.metallicRoughnessTexture = mrTex;
     const avg = (m.map as any)?.avgColor;
     if (Array.isArray(avg) && avg.length >= 3) {
@@ -849,8 +894,10 @@ function serializeScene(
         finUsd(avg[2], 1),
       ];
     }
+    const normSrc = mMaps['normalMap'] || mMaps['bumpMap'];
     const normTex: Record<string, unknown> | undefined = addTex(
       pk?.normUri || (m as any).normalMap,
+      normSrc,
     );
     const rawNs = (m as any).normalScale;
     const ns = pk?.normUri
@@ -2456,6 +2503,13 @@ export function extractMeshesFromGLB(
       if (uvAccIdx !== undefined) {
         const {acc: uvAcc, buffer: uvBuf} = getBufferSlice(uvAccIdx);
         uvs = new Float32Array(uvBuf, 0, uvAcc.count * 2);
+        // USD has one `st` primvar per mesh, so bake the material's
+        // `KHR_texture_transform` into it (same rule as `ThreeView`).
+        const uvXform = materialTextureTransform(materials[prim.material]);
+        if (uvXform) {
+          uvs = uvs.slice();
+          applyTextureTransform(uvs, uvXform);
+        }
       }
 
       let colors: Float32Array | undefined;

@@ -27,6 +27,7 @@
  * - Dual Exporter: scene.toCanvas3D() in-memory AST (0 ms) & scene.toGLB() binary writer.
  */
 
+import {applyTextureTransform, textureTransformOf} from './accessor';
 import {compileInteractivityGraph} from './interactivity-compiler';
 import {installArchitectureKit} from './kits/architecture';
 import {installElectronicsKit} from './kits/electronics';
@@ -2006,6 +2007,13 @@ export class Texture {
   public wrapT: number = 10497;
   public repeat: Vector2 = new Vector2(1, 1);
   public offset: Vector2 = new Vector2(0, 0);
+  /**
+   * UV rotation in radians about `center`. `repeat`, `offset`, `rotation`, and
+   * `center` export as glTF `KHR_texture_transform` with the
+   * `Matrix3.setUvTransform` convention (`center` is folded into `offset`).
+   */
+  rotation = 0;
+  center: Vector2 = new Vector2(0, 0);
 
   /**
    * Optional source image descriptor, mirroring `THREE.Texture.image`. Read by
@@ -2025,6 +2033,24 @@ export class Texture {
     if (source && typeof source === 'object') {
       this.image = source as {width?: number; height?: number};
     }
+  }
+
+  /**
+   * Shallow copy sharing the image (like three.js), with independent
+   * `repeat` / `offset` / `center` so shared preset textures can be tiled
+   * differently per material.
+   */
+  clone(): this {
+    const t = Object.assign(
+      Object.create(Object.getPrototypeOf(this)),
+      this,
+    ) as this;
+    const v2 = (v: {x?: unknown; y?: unknown} | undefined, d: number) =>
+      new Vector2(Number(v?.x ?? d), Number(v?.y ?? d));
+    t.repeat = v2(this.repeat, 1);
+    t.offset = v2(this.offset, 0);
+    t.center = v2(this.center, 0);
+    return t;
   }
 
   public dispose(): void {}
@@ -2060,8 +2086,10 @@ export class DataTexture extends Texture {
     format: number = 1023,
     type: number = 1009,
     _mapping?: number,
-    wrapS: number = 1001,
-    wrapT: number = 1001,
+    // Three-Live defaults to RepeatWrapping (like `Texture`) so tiled UVs keep
+    // the pre-sampler export behavior; pass ClampToEdgeWrapping to clamp.
+    wrapS = 1000,
+    wrapT = 1000,
     magFilter: number = 1003,
     minFilter: number = 1003,
     _anisotropy: number = 1,
@@ -2079,8 +2107,8 @@ export class DataTexture extends Texture {
     this.image = {data: pixelData, width: w, height: h};
     this.format = Number(format) || 1023;
     this.type = Number(type) || 1009;
-    this.wrapS = Number(wrapS) || 1001;
-    this.wrapT = Number(wrapT) || 1001;
+    this.wrapS = Number(wrapS) || 1000;
+    this.wrapT = Number(wrapT) || 1000;
     this.magFilter = Number(magFilter) || 1003;
     this.minFilter = Number(minFilter) || 1003;
     this.colorSpace = colorSpace || '';
@@ -2903,7 +2931,8 @@ export class SceneQuotaValidator {
     let totalVerts = 0;
     let totalIndices = 0;
     let meshCount = 0;
-    const textures = new Set<Texture>();
+    const textures = new Set<unknown>();
+    const textureObjs = new Set<unknown>();
     const fail = (name: string, max: number, found: number): never => {
       throw new Error(
         `SecurityError: Scene exceeds SECURITY_3D_MAX_${name} (${max}). Found: ${found}`,
@@ -2982,7 +3011,19 @@ export class SceneQuotaValidator {
               'aoMap',
               'bumpMap',
             ]) {
-              if ((mat as any)[k]) textures.add((mat as any)[k]);
+              const tex = (mat as unknown as Record<string, unknown>)[k];
+              if (!tex) continue;
+              textureObjs.add(tex);
+              // Clones share their image, so count distinct images (or URIs).
+              const img = (tex as {image?: unknown}).image;
+              const src = (tex as {source?: unknown}).source;
+              textures.add(
+                img && typeof img === 'object'
+                  ? img
+                  : typeof src === 'string' && src
+                    ? src
+                    : tex,
+              );
             }
           }
         }
@@ -2993,7 +3034,7 @@ export class SceneQuotaValidator {
       fail('TEXTURES', SECURITY_3D_MAX_TEXTURES, textures.size);
     }
 
-    for (const tex of textures) {
+    for (const tex of textureObjs) {
       const texRecord = tex as {
         image?: {width?: unknown; height?: unknown};
         width?: unknown;
@@ -6051,6 +6092,35 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       return idx;
     }
 
+    /**
+     * Bakes the material's first texture UV transform into the raw UVs read
+     * by the native preview renderer (`ThreeView` bakes the exported
+     * `KHR_texture_transform` the same way).
+     */
+    const rawUvsWithTransform = (
+      uvs: ArrayLike<number> | null,
+      mat: Material | null | undefined,
+    ): ArrayLike<number> | null => {
+      if (!uvs || !mat) return uvs;
+      const m = mat as unknown as Record<string, unknown>;
+      // First non-identity transform, in `materialTextureTransform` order.
+      let xf: ReturnType<typeof textureTransformOf> = null;
+      for (const t of [
+        m['map'],
+        m['roughnessMap'] || m['metalnessMap'],
+        m['normalMap'] || m['bumpMap'],
+        m['aoMap'],
+        m['emissiveMap'],
+      ]) {
+        xf = textureTransformOf(t);
+        if (xf) break;
+      }
+      if (!xf) return uvs;
+      const out = Float32Array.from(uvs);
+      applyTextureTransform(out, xf);
+      return out;
+    };
+
     /** Finite number or `fallback` (scripts can assign anything to a vector). */
     const fin = (v: unknown, fallback: number): number =>
       typeof v === 'number' && Number.isFinite(v) ? v : fallback;
@@ -6337,7 +6407,10 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             raw_normals: geo.attributes.normal
               ? geo.attributes.normal.array
               : null,
-            raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
+            raw_uvs: rawUvsWithTransform(
+              geo.attributes.uv ? geo.attributes.uv.array : null,
+              primaryMatIdx === null ? null : materialRefs[primaryMatIdx],
+            ),
             raw_colors: rawColors,
             raw_indices: geo.index ? geo.index.array : null,
             raw_groups: rawGroups,
