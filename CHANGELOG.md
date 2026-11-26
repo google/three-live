@@ -48,6 +48,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     tiled scenes look the same; set `ClampToEdgeWrapping` explicitly to clamp
     (honored by WebGL2, USDZ, and external viewers; WebGPU and the CLI preview
     still repeat).
+-   **Solid section caps (`section-cap="solid"`) and deterministic frames:**
+    `section-cap="solid"` (default `"none"`) on `<three-live>` / `<xr-live>`
+    slices every visible, static, opaque closed mesh with the active
+    `section-plane`, chains the cut into loops, and ear-clips them with holes
+    into flat poché caps (`section-cap-color`, default `#6b7280`) facing the
+    removed side. The renderer ships in the section-caps add-on
+    (`three-live-studio`, `xr-live-spatial`, and the full bundles); the core
+    viewer only calls a registry hook. Open or non-manifold cuts, instanced /
+    skinned / morphed meshes, `boundsIgnore` context meshes, and
+    `userData.sectionCap = false` are skipped; work is capped at 300k source
+    triangles, 20k loop vertices, and a bridging / ear-clipping step budget.
+    Caps are built in model space (cached across turntable and AR placement) for
+    meshes whose bounds the plane crosses, and mirrored or inside-out meshes are
+    handled. Caps draw in the WebGL2 pass (WebGPU scenes fall back to WebGL2
+    while caps are on) and cast no shadows. `el.whenReady()` resolves once the
+    current model or script has loaded, textures have decoded, and a frame has
+    rendered; `el.stepFrame(dt = 1 / 60)` advances animations, plugins, and
+    simulation and renders synchronously without `requestAnimationFrame`
+    (pausing the automatic loop).
+-   **Bundle budgets:** raised to fit these features (`three-live-viewer` 38,
+    `three-live` 91, `three-live-studio` 40, `three-live-kit-architecture` 18,
+    `three-live-kits` 85, `three-live-full` 252, `three-live-compiler-bundle`
+    268, `xr-live-viewer` 65, `xr-live` 103, `xr-live-spatial` 68,
+    `xr-live-full` 363 KB gz).
 -   **Door rigs: `DoorGeometry({ part, leafIndex })`, leaf metadata, and
     `THREE.Architecture.createDoorGroup()`:** `part: 'frame'` emits the
     stationary frame, casing, barn track, or pocket header and jambs;

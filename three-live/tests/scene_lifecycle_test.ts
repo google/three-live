@@ -196,6 +196,44 @@ async function main() {
       fail.currentModel === before && fail.isModelLoaded,
       'synchronous runner failure retains prior scene',
     );
+    // whenReady() waits for in-flight loads and texture decode, then renders;
+    // stepFrame() advances the viewer synchronously.
+    const ready = element();
+    const tex = deferred<void>();
+    let renders = 0;
+    const steps: number[] = [];
+    ready.viewer.whenTexturesReady = () => tex.promise;
+    ready.viewer.render = () => renders++;
+    ready.viewer.stepFrame = (dt: number) => steps.push(dt);
+    const loading = ready.loadModel(model('ready'));
+    let settled = false;
+    const whenReady = ready.whenReady(5000).then(() => (settled = true));
+    await tick();
+    await new Promise((r) => setTimeout(r, 5));
+    assert(!settled, 'whenReady() waits for the in-flight load and textures');
+    tex.resolve();
+    await loading;
+    await whenReady;
+    assert(
+      settled &&
+        renders >= 2 &&
+        ready.currentModel.gltf.extras.name === 'ready',
+      'whenReady() resolves after the load settles and renders a frame',
+    );
+    const idle = element();
+    idle.viewer.whenTexturesReady = async () => {};
+    idle.viewer.render = () => {};
+    const t0 = Date.now();
+    await idle.whenReady(5000);
+    assert(Date.now() - t0 < 1000, 'whenReady() resolves promptly when idle');
+    ready.stepFrame();
+    ready.stepFrame(0.5);
+    assert(
+      steps.length === 2 &&
+        Math.abs(steps[0] - 1 / 60) < 1e-9 &&
+        steps[1] === 0.5,
+      'stepFrame() forwards dt (default 1/60) to the viewer',
+    );
     console.log(`${passed} scene lifecycle checks passed`);
   } finally {
     globalThis.fetch = originalFetch;

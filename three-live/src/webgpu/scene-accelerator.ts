@@ -3114,7 +3114,11 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
   willRenderScene(viewerObj: object): boolean {
     if (!cachedDevice) return false;
     const v = viewerObj as ViewerLike;
-    if (v.xrSessionActive || resolveSceneRenderBackend(v, true) !== 'webgpu') {
+    if (
+      v.xrSessionActive ||
+      (v as {gpuBypass?: boolean}).gpuBypass ||
+      resolveSceneRenderBackend(v, true) !== 'webgpu'
+    ) {
       return false;
     }
     const st = this.states.get(viewerObj);

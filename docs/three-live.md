@@ -98,6 +98,7 @@ bundles and entry points.
 | `animation-name` | `string` | `three-live-viewer`+ | Name of specific glTF animation clip to play (defaults to first clip). |
 | `auto-rotate` | `boolean` | `three-live-viewer`+ | Automatically rotates the camera around the model. |
 | `renderer` | `"auto" \| "webgpu" \| "webgl2"` | `three-live-webgpu` | Renderer preference when `three-live-webgpu` is loaded (`"auto"` default accelerates compatible desktop/inline scenes via WebGPU `GPURenderBundle` and falls back to WebGL2 automatically). |
+| `section-cap` | `"none" \| "solid"` | `three-live-studio` | `"solid"` fills the cut faces of closed meshes with flat poché caps (`section-cap-color`, default `#6b7280`) while `section-plane` is active; drawn in the WebGL2 pass. |
 <!-- mdformat on -->
 
 --------------------------------------------------------------------------------
@@ -107,6 +108,12 @@ bundles and entry points.
 `<three-live>` provides full drop-in compatibility for `<model-viewer>`
 JavaScript configurators, hotspot managers, and AR launchers:
 
+-   **Deterministic Frames (headless tests):** `await viewer.whenReady()`
+    resolves after the current model or scene script has loaded, its textures
+    have decoded, and a frame has rendered;
+    `viewer.stepFrame(dtSeconds = 1 / 60)` advances animations, plugins, and
+    simulation by `dt` and renders synchronously (it pauses the
+    `requestAnimationFrame` loop).
 -   **Camera & Screenshot:** `viewer.getCameraOrbit()`,
     `viewer.getCameraTarget()`, `viewer.getFieldOfView()`,
     `viewer.jumpCameraToGoal()`, `viewer.toDataURL()`, `await viewer.toBlob()`

@@ -276,6 +276,17 @@ export interface SharedThreeLiveRegistry {
    */
   gpuSceneAccelerator?: GPUSceneAccelerator;
   /**
+   * Optional `section-cap="solid"` renderer installed by the section-caps
+   * add-on (`three-live-studio`, `xr-live-spatial`, full bundles). Returns the
+   * world-space cap mesh for `viewer` cut by `plane` (cached), or releases its
+   * GPU buffers when `plane` is `null`.
+   */
+  sectionCapRenderer?: (
+    viewer: unknown,
+    plane: {normal: readonly number[]; constant: number} | null,
+    color: readonly number[] | null,
+  ) => unknown;
+  /**
    * Optional shared WebGPU device provider so multiple WebGPU add-ons on the
    * same page reuse a single `GPUDevice`.
    */

@@ -253,6 +253,7 @@ Three.js assumptions never crash or abort a 3D/XR scene:
   explode="0.4"
   explode-mode="axial-y"
   section-plane="x:0"
+  section-cap="solid"
   persistent-anchors="cad-review"
   persist-url-hash
   locomotion="teleport snap-turn"
