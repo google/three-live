@@ -1986,7 +1986,18 @@ fn dispatch_interactivity_entry(
         "toggleTransform" => {
             states[target_idx].toggle_active = !states[target_idx].toggle_active;
             let active = states[target_idx].toggle_active;
-            if let Some(pos_val) = obj.get("position").or_else(|| obj.get("translation")) {
+            // Documented form `{ property: 'rotation' | 'scale' | 'translation', to }`.
+            let prop = match obj.get("property").and_then(|v| v.as_str()) {
+                Some("rotation") => "rotation",
+                Some("scale") => "scale",
+                _ => "translation",
+            };
+            let prop_to = |p: &str| if prop == p { obj.get("to") } else { None };
+            if let Some(pos_val) = obj
+                .get("position")
+                .or_else(|| obj.get("translation"))
+                .or_else(|| prop_to("translation"))
+            {
                 let target_pos = if active {
                     parse_vec3(pos_val, states[target_idx].base_translation)
                 } else {
@@ -2002,7 +2013,7 @@ fn dispatch_interactivity_entry(
                     tweens,
                 );
             }
-            if let Some(scl_val) = obj.get("scale") {
+            if let Some(scl_val) = obj.get("scale").or_else(|| prop_to("scale")) {
                 let target_scl = if active {
                     parse_vec3(scl_val, states[target_idx].base_scale)
                 } else {
@@ -2018,7 +2029,7 @@ fn dispatch_interactivity_entry(
                     tweens,
                 );
             }
-            if let Some(rot_val) = obj.get("rotation") {
+            if let Some(rot_val) = obj.get("rotation").or_else(|| prop_to("rotation")) {
                 let target_rot = if active {
                     parse_rot_quat(rot_val, states[target_idx].base_rotation)
                 } else {

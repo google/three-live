@@ -1419,6 +1419,334 @@ for (const [name, fn] of [
   );
 }
 
+// Door rigs: `part` / `leafIndex`, leaf hinge metadata, and createDoorGroup.
+{
+  console.log('\n--- Door rig parts and leaf metadata ---');
+  // tslint:disable-next-line:no-any Geometry / glTF / metadata JSON.
+  type Json = any;
+  const triKeys = (geo: Json): string[] => {
+    const pos = geo.getAttribute('position').array as Float32Array;
+    const idx = geo.index.array as Uint16Array | Uint32Array;
+    const out: string[] = [];
+    for (let t = 0; t < idx.length; t += 3) {
+      out.push(
+        [0, 1, 2]
+          .map((k) =>
+            [0, 1, 2]
+              .map((c) => Math.round(pos[idx[t + k] * 3 + c] * 1e4))
+              .join(','),
+          )
+          .join('|'),
+      );
+    }
+    return out.sort();
+  };
+  const leafPositions = (o: Json, i: number) =>
+    new Arch.DoorGeometry({...o, part: 'leaves', leafIndex: i}).getAttribute(
+      'position',
+    ).array as Float32Array;
+  const configs: Array<[string, Json]> = [
+    ['swing left', {style: 'panel-6', hinge: 'left'}],
+    [
+      'swing right out',
+      {style: 'vision-lite', hinge: 'right', swingDirection: 'out'},
+    ],
+    ['arched double', {style: 'arched', leaves: 2, width: 1.6, height: 2.4}],
+    ['french double', {style: 'french', leaves: 2, width: 1.5}],
+    ['bifold 4', {operation: 'bifold', leaves: 4, width: 1.8}],
+    ['slider XO', {operation: 'slider', trackPattern: 'XO'}],
+    ['slider OXXO', {operation: 'slider', trackPattern: 'OXXO', width: 3}],
+    [
+      'barn bi-parting',
+      {operation: 'barn', slideSide: 'bi-parting', width: 1.6},
+    ],
+    ['pocket', {operation: 'pocket', slideSide: 'left'}],
+    ['no frame', {includeFrame: false, origin: 'center'}],
+  ];
+  for (const [label, o] of configs) {
+    const all = new Arch.DoorGeometry(o);
+    const allDefault = new Arch.DoorGeometry({...o, part: 'all'});
+    const frame = new Arch.DoorGeometry({...o, part: 'frame'});
+    const leaves = new Arch.DoorGeometry({...o, part: 'leaves'});
+    const info = all.userData.leaves;
+    const perLeaf = info.map(
+      (lf: Json) =>
+        new Arch.DoorGeometry({...o, part: 'leaves', leafIndex: lf.index}),
+    );
+    const union = [
+      ...triKeys(frame),
+      ...perLeaf.flatMap((g: Json) => triKeys(g)),
+    ].sort();
+    assert(
+      JSON.stringify(triKeys(allDefault)) === JSON.stringify(triKeys(all)) &&
+        JSON.stringify(union) === JSON.stringify(triKeys(all)) &&
+        triKeys(leaves).length === union.length - triKeys(frame).length &&
+        all.parameters.part === undefined &&
+        frame.parameters.part === 'frame',
+      `DoorGeometry (${label}): frame + each leaf partition part: 'all' exactly`,
+    );
+    perLeaf.forEach((g: Json, i: number) =>
+      auditGeometry(g, `DoorGeometry (${label}) leaf ${i}`, {
+        expectWatertight: true,
+      }),
+    );
+    if (o.includeFrame !== false) {
+      auditGeometry(frame, `DoorGeometry (${label}) frame`, {
+        expectWatertight: true,
+      });
+    }
+  }
+  const neg = new Arch.DoorGeometry({part: 'leaves', leafIndex: -1});
+  const nan = new Arch.DoorGeometry({part: 'leaves', leafIndex: NaN});
+  assert(
+    neg.index.count === 0 && nan.index.count === 0,
+    'DoorGeometry leafIndex -1 / NaN emits an empty geometry (not every leaf)',
+  );
+  const empty = new Arch.DoorGeometry({part: 'leaves', leafIndex: 3});
+  assert(
+    empty.index.count === 0 && empty.userData.leaves.length === 1,
+    'DoorGeometry leafIndex out of range emits an empty geometry',
+  );
+
+  // Hinges sit on the jambs; arched double halves meet at the center.
+  const left = new Arch.DoorGeometry({width: 0.9, hinge: 'left'}).userData
+    .leaves[0];
+  const right = new Arch.DoorGeometry({width: 0.9, hinge: 'right'}).userData
+    .leaves[0];
+  assert(
+    left.motion === 'rotate' &&
+      Math.abs(left.pivot[0] + 0.45) < 0.01 &&
+      Math.abs(right.pivot[0] - 0.45) < 0.01 &&
+      left.axis.join() === '0,1,0' &&
+      Math.sign(left.openAngleDeg) === -Math.sign(right.openAngleDeg) &&
+      Math.abs(left.openAngleDeg) === 85,
+    'Swing leaves hinge on the left / right jamb with mirrored 85 deg opening',
+  );
+  const archOpts = {style: 'arched', leaves: 2, width: 1.6, height: 2.4};
+  const archInfo = new Arch.DoorGeometry(archOpts).userData.leaves;
+  const xs = [0, 1].map((i) => {
+    const p = leafPositions(archOpts, i);
+    let lo = Infinity;
+    let hi = -Infinity;
+    let topAtSeam = 0;
+    for (let k = 0; k < p.length; k += 3) {
+      lo = Math.min(lo, p[k]);
+      hi = Math.max(hi, p[k]);
+      if (Math.abs(p[k]) < 0.01) topAtSeam = Math.max(topAtSeam, p[k + 1]);
+    }
+    return {lo, hi, topAtSeam};
+  });
+  assert(
+    archInfo[0].pivot[0] < -0.75 &&
+      archInfo[1].pivot[0] > 0.75 &&
+      Math.abs(xs[0].hi + 0.002) < 1e-3 &&
+      Math.abs(xs[1].lo - 0.002) < 1e-3 &&
+      Math.abs(xs[0].topAtSeam - xs[1].topAtSeam) < 1e-3 &&
+      xs[0].topAtSeam > 2.3,
+    'Arched double door: half-arch leaves hinge on opposite jambs and meet at the crown',
+  );
+
+  // Metadata reproduces the posed geometry: rotate / slide the closed leaf by
+  // openAngleDeg / travel about pivot and compare with the open pose.
+  const rotY = (p: Float32Array, pv: number[], degs: number) => {
+    const a = (degs * Math.PI) / 180;
+    const [c, s] = [Math.cos(a), Math.sin(a)];
+    const out = new Float32Array(p.length);
+    for (let k = 0; k < p.length; k += 3) {
+      const x = p[k] - pv[0];
+      const z = p[k + 2] - pv[2];
+      out[k] = x * c + z * s + pv[0];
+      out[k + 1] = p[k + 1];
+      out[k + 2] = -x * s + z * c + pv[2];
+    }
+    return out;
+  };
+  const maxDiff = (a: Float32Array, b: Float32Array) =>
+    a.length !== b.length
+      ? Infinity
+      : a.reduce((m, v, k) => Math.max(m, Math.abs(v - b[k])), 0);
+  for (const o of [
+    {hinge: 'right', swingDirection: 'in'},
+    {leaves: 2, style: 'french', openAngleDeg: -60},
+  ]) {
+    const info = new Arch.DoorGeometry(o).userData.leaves;
+    const ok = info.every((lf: Json) => {
+      const closedP = leafPositions({...o, openAngleDeg: 0}, lf.index);
+      const openP = leafPositions(
+        {...o, openAngleDeg: o.openAngleDeg ?? undefined, openFraction: 1},
+        lf.index,
+      );
+      return maxDiff(rotY(closedP, lf.pivot, lf.openAngleDeg), openP) < 1e-4;
+    });
+    assert(
+      ok,
+      `Swing pivot + openAngleDeg reproduce the open pose (${JSON.stringify(o)})`,
+    );
+  }
+  for (const o of [
+    {operation: 'barn', slideSide: 'bi-parting', width: 1.6},
+    {operation: 'pocket'},
+    {operation: 'slider', trackPattern: 'XO'},
+  ]) {
+    const info = new Arch.DoorGeometry(o).userData.leaves;
+    const ok = info.every((lf: Json) => {
+      const closedP = leafPositions(o, lf.index);
+      const openP = leafPositions({...o, openFraction: 1}, lf.index);
+      const moved = closedP.map((v, k) =>
+        k % 3 === 0 && lf.motion === 'slide' ? v + lf.axis[0] * lf.travel : v,
+      );
+      return maxDiff(moved, openP) < 1e-4;
+    });
+    assert(
+      ok && info.some((lf: Json) => lf.motion === 'slide'),
+      `Slide axis + travel reproduce the open pose (${o.operation})`,
+    );
+  }
+  const xxx = new Arch.DoorGeometry({
+    operation: 'slider',
+    trackPattern: 'XXX',
+    width: 2.4,
+  }).userData.leaves;
+  assert(
+    xxx[0].motion === 'fixed' &&
+      xxx[1].motion === 'slide' &&
+      xxx[2].motion === 'slide',
+    'All-X slider reports its zero-travel anchor panel as fixed',
+  );
+  // Bifold: rotate the closed lead panel, then fold the follower about its
+  // carried knuckle; this reproduces the static open pose.
+  for (const o of [
+    {operation: 'bifold', leaves: 2, hinge: 'right'},
+    {operation: 'bifold', leaves: 4, swingDirection: 'in', thickness: 0.12},
+  ]) {
+    const info = new Arch.DoorGeometry(o).userData.leaves;
+    const ok = info.every((lf: Json) => {
+      const closedP = leafPositions(o, lf.index);
+      const openP = leafPositions({...o, openFraction: 1}, lf.index);
+      if (lf.parent == null) {
+        return maxDiff(rotY(closedP, lf.pivot, lf.openAngleDeg), openP) < 1e-4;
+      }
+      const lead = info[lf.parent];
+      const carried = rotY(closedP, lead.pivot, lead.openAngleDeg);
+      const pv = rotY(
+        new Float32Array(lf.pivot),
+        lead.pivot,
+        lead.openAngleDeg,
+      );
+      return (
+        maxDiff(rotY(carried, Array.from(pv), lf.openAngleDeg), openP) < 1e-4
+      );
+    });
+    assert(
+      ok,
+      `Bifold rig kinematics reproduce the open pose (${JSON.stringify(o)})`,
+    );
+  }
+  const xo = new Arch.DoorGeometry({operation: 'slider', trackPattern: 'XO'})
+    .userData.leaves;
+  const bif = new Arch.DoorGeometry({operation: 'bifold', leaves: 4}).userData
+    .leaves;
+  assert(
+    xo[0].motion === 'slide' &&
+      xo[0].axis[0] === 1 &&
+      xo[1].motion === 'fixed' &&
+      bif.length === 4 &&
+      bif[1].parent === 0 &&
+      bif[3].parent === 2 &&
+      Math.abs(bif[1].openAngleDeg + 2 * bif[0].openAngleDeg) < 1e-6 &&
+      Math.sign(bif[0].openAngleDeg) === -Math.sign(bif[2].openAngleDeg),
+    'Slider XO marks the O panel fixed; bifold followers fold against their lead panel',
+  );
+
+  // createDoorGroup: frame mesh + pivot groups with KHR_interactivity toggles.
+  const rig = Arch.createDoorGroup(
+    {operation: 'bifold', leaves: 4, width: 1.8, name: 'Closet'},
+    [
+      new MeshStandardMaterial(),
+      new MeshStandardMaterial(),
+      new MeshStandardMaterial(),
+    ],
+  );
+  const names: string[] = [];
+  rig.traverse((n: Json) => names.push(n.name));
+  const rigScene = new Scene();
+  rigScene.add(rig);
+  const rigGltf = parseGLB(sceneToGLB(rigScene)).gltf;
+  const graph =
+    rigGltf.extensions?.KHR_interactivity?.graphs?.[0] ??
+    rigGltf.extensions?.KHR_interactivity;
+  const graphJson = JSON.stringify(graph || {});
+  const nodeIdx = (n: string) =>
+    rigGltf.nodes.findIndex((nd: Json) => nd.name === n);
+  const leaf1 = nodeIdx('Closet_leaf1');
+  assert(
+    names.includes('Closet_frame') &&
+      names.includes('Closet_leaf3_mesh') &&
+      rig.children.filter((c: Json) => /_leaf\d$/.test(c.name)).length === 2 &&
+      rigGltf.extensionsUsed.includes('KHR_interactivity') &&
+      leaf1 >= 0 &&
+      graphJson.includes(`/nodes/${leaf1}/rotation`) &&
+      rigGltf.nodes.filter((n: Json) => n.extras?.interactivity).length === 2,
+    'createDoorGroup (bifold 4) nests follower pivots and toggles them from the lead panel',
+  );
+  // Two rigs with the same name stay wired to their own follower panels.
+  const twinScene = new Scene();
+  for (const x of [0, 3]) {
+    const r = Arch.createDoorGroup({operation: 'bifold', name: 'Twin'});
+    r.position.x = x;
+    twinScene.add(r);
+  }
+  const twinGltf = parseGLB(sceneToGLB(twinScene)).gltf;
+  const twinJson = JSON.stringify(twinGltf.extensions?.KHR_interactivity ?? {});
+  const followers = twinGltf.nodes
+    .map((n: Json, i: number) => (n.name === 'Twin_leaf1' ? i : -1))
+    .filter((i: number) => i >= 0);
+  assert(
+    followers.length === 2 &&
+      followers.every((i: number) => twinJson.includes(`/nodes/${i}/rotation`)),
+    'Same-named bifold rigs toggle their own follower panels',
+  );
+  const lost = Arch.createDoorGroup({operation: 'bifold', name: 'Lost'});
+  lost.traverse((n: Json) => {
+    if (n.name === 'Lost_leaf1') n.name = 'Renamed';
+  });
+  const lostScene = new Scene();
+  lostScene.add(lost);
+  const lostGltf = parseGLB(sceneToGLB(lostScene)).gltf;
+  const leadIdx = lostGltf.nodes.findIndex(
+    (n: Json) => n.name === 'Lost_leaf0',
+  );
+  const lostJson = JSON.stringify(lostGltf.extensions?.KHR_interactivity ?? {});
+  const leadPtrs = lostJson.split(`/nodes/${leadIdx}/rotation`).length - 1;
+  assert(
+    leadPtrs === 2,
+    `An unresolved toggleTransform target is skipped instead of moving the owner (${leadPtrs} lead pointers)`,
+  );
+  const swingRig = Arch.createDoorGroup({
+    leaves: 2,
+    style: 'arched',
+    width: 1.6,
+  });
+  const slideRig = Arch.createDoorGroup({operation: 'barn', name: 'Barn'});
+  const slideLeaf = slideRig.children.find(
+    (c: Json) => c.name === 'Barn_leaf0',
+  );
+  const slideAct = slideLeaf?.userData.interactivity?.onSelect?.[0];
+  const swingActs = swingRig.children
+    .filter((c: Json) => /_leaf\d$/.test(c.name))
+    .map((c: Json) => c.userData.interactivity?.onSelect?.[0]);
+  assert(
+    /^Door\d+$/.test(swingRig.name) &&
+      swingActs.length === 2 &&
+      swingActs.every(
+        (a: Json) => a?.property === 'rotation' && Math.abs(a.to[1]) > 0.6,
+      ) &&
+      slideAct?.property === 'translation' &&
+      Math.abs(slideAct.to[0] - slideLeaf.position.x) > 0.5,
+    'createDoorGroup emits rotation toggles for swing leaves and translation toggles for barn leaves',
+  );
+}
+
 console.log(
   `\n🏆 kit-architecture Audit Results: ${passed} Passed, ${failed} Failed.`,
 );

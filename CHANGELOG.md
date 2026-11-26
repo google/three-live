@@ -48,6 +48,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     tiled scenes look the same; set `ClampToEdgeWrapping` explicitly to clamp
     (honored by WebGL2, USDZ, and external viewers; WebGPU and the CLI preview
     still repeat).
+-   **Door rigs: `DoorGeometry({ part, leafIndex })`, leaf metadata, and
+    `THREE.Architecture.createDoorGroup()`:** `part: 'frame'` emits the
+    stationary frame, casing, barn track, or pocket header and jambs;
+    `part: 'leaves'` (optionally one `leafIndex`) emits the moving leaves with
+    their glazing and handles in door-local coordinates. The default
+    `part: 'all'` output is unchanged except that a sliding panel's handle now
+    stays on the side it had when closed. `geometry.userData.leaves` lists each
+    leaf's `motion` (`rotate` / `slide` / `fixed`), `pivot`, `axis`,
+    `openAngleDeg` / `travel`, and current pose; bifold follower panels name
+    their lead panel in `parent`. `createDoorGroup(options, materials)` returns
+    a `THREE.Group` with a `<name>_frame` mesh and one `<name>_leaf<i>` pivot
+    group per leaf carrying an `onSelect` `toggleTransform` (swing to
+    `openAngleDeg` or 85 deg, 76 deg bifold folds with nested follower pivots,
+    full slide travel). `toggleTransform` accepts `target: '<node name>'` (owner
+    descendants first, so cloned or same-named rigs stay wired; an unknown name
+    skips the action), and the CLI `sim` now honors the documented `property` +
+    `to` form. Open bifold follower panels now stay attached to the lead panel's
+    edge.
 -   **Native material groups on `Architecture.WallGeometry`, `SlabGeometry`, and
     `RoofGeometry`:** walls emit `groups` `0` (+Z front / exterior face, the
     side `cutaway: 'front'` removes), `1` (-Z back / interior face), and `2`

@@ -3239,6 +3239,52 @@ fn test_texture_transform_preview_selection_and_shared_vertex_data() {
 }
 
 #[test]
+fn test_sim_toggle_transform_property_to_drives_door_rig() {
+    use three_live_compiler::{simulate_scenario_from_source, SimAction};
+
+    let script = r#"
+        const rig = THREE.Architecture.createDoorGroup({ name: 'Front', duration: 0.2 });
+        scene.add(rig);
+        const slider = THREE.Architecture.createDoorGroup({
+            name: 'Patio', operation: 'barn', duration: 0.2,
+        });
+        slider.position.x = 3;
+        scene.add(slider);
+    "#;
+    let select = |target: &str| SimAction {
+        at: 0.1,
+        action_type: "select".to_string(),
+        target: Some(target.to_string()),
+        factor: 1.0,
+        direction: None,
+        dx: 0.0,
+        dz: 0.0,
+        duration: None,
+        jump: false,
+        event_id: None,
+        amount: None,
+    };
+    let (report, _) = simulate_scenario_from_source(
+        script.as_bytes(),
+        false,
+        1.0,
+        &[select("Front_leaf0"), select("Patio_leaf0")],
+        &[],
+    )
+    .expect("simulation");
+    let body = |n: &str| report.bodies.iter().find(|b| b.name == n).cloned();
+    let leaf = body("Front_leaf0").expect("Front_leaf0 body");
+    // Left-hinged outswing opens -85 deg about +Y: q.y = sin(-42.5 deg).
+    assert!(
+        (leaf.final_rotation[1] + 0.6756).abs() < 0.02,
+        "swing leaf rotation {:?}",
+        leaf.final_rotation
+    );
+    let barn = body("Patio_leaf0").expect("Patio_leaf0 body");
+    assert!(barn.final_translation[0] > 0.5, "barn leaf slid {:?}", barn.final_translation);
+}
+
+#[test]
 fn test_data_texture_glb_usdz_and_headless_render() {
     let script = r#"
         const width = 32;

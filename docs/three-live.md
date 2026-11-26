@@ -308,7 +308,10 @@ by the `three-live/studio` VM on Web, Android, and iOS:
 
 Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` / `onReceive[eventName]`:
 
-- `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' | 'rotation' | 'scale', from?: number[], to: number[], duration?: number }`
+-   `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' |
+    'rotation' | 'scale', from?: number[], to: number[], duration?: number,
+    target?: '<node name>' }` (`target` toggles another node, e.g. a follower
+    panel)
 - `interpolate`: `{ action: 'interpolate', target?: string, property: 'translation' | 'rotation' | 'scale' | 'baseColorFactor' | 'metallicFactor' | 'roughnessFactor' | 'emissiveFactor', to: number | number[], duration?: number }`
 - `setProperty`: `{ action: 'setProperty', target?: string, property: string, value: unknown }`
 - `toggleVisibility`: `{ action: 'toggleVisibility', target?: string }`
