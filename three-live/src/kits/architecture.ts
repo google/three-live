@@ -447,6 +447,63 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     return {buf: mergeRaw(sorted), groups};
   }
 
+  /**
+   * Reorders `b.idx` into contiguous material groups picked per triangle by
+   * `classify(nx, ny, nz, cz)` (unit geometric normal + centroid z). Vertices
+   * and triangles are unchanged, so single-material meshes render the same.
+   */
+  function groupTris(
+    b: RawBufs,
+    classify: (nx: number, ny: number, nz: number, cz: number) => number,
+  ): RawGroup[] {
+    const buckets: number[][] = [[], [], []];
+    const p = b.pos;
+    const ix = b.idx;
+    for (let i = 0; i + 2 < ix.length; i += 3) {
+      const a = ix[i] * 3;
+      const c = ix[i + 1] * 3;
+      const e = ix[i + 2] * 3;
+      const ux = p[c] - p[a];
+      const uy = p[c + 1] - p[a + 1];
+      const uz = p[c + 2] - p[a + 2];
+      const vx = p[e] - p[a];
+      const vy = p[e + 1] - p[a + 1];
+      const vz = p[e + 2] - p[a + 2];
+      let nx = uy * vz - uz * vy;
+      let ny = uz * vx - ux * vz;
+      let nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz);
+      if (l > 1e-12) {
+        nx /= l;
+        ny /= l;
+        nz /= l;
+      } else {
+        nx = b.nrm[a];
+        ny = b.nrm[a + 1];
+        nz = b.nrm[a + 2];
+      }
+      const m = classify(nx, ny, nz, (p[a + 2] + p[c + 2] + p[e + 2]) / 3);
+      buckets[m === 0 || m === 1 ? m : 2].push(ix[i], ix[i + 1], ix[i + 2]);
+    }
+    const idx: number[] = [];
+    const groups: RawGroup[] = [];
+    buckets.forEach((tri, mat) => {
+      if (!tri.length) return;
+      groups.push({start: idx.length, count: tri.length, mat});
+      for (const v of tri) idx.push(v);
+    });
+    b.idx = idx;
+    return groups;
+  }
+
+  /**
+   * Slab and roof groups: `0` up-facing, `1` down-facing, `2` vertical. Faces
+   * steeper than ~88.9 deg (|ny| <= 0.02, only reachable with extreme
+   * `height` on very narrow roofs) count as vertical.
+   */
+  const upDownSides = (_nx: number, ny: number): number =>
+    ny > 0.02 ? 0 : ny < -0.02 ? 1 : 2;
+
   function xformRaw(
     b: RawBufs,
     dx: number,
@@ -1484,15 +1541,30 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         ]);
       }
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
+      // 0: +Z face (front / exterior), 1: -Z face (back / interior),
+      // 2: trim (ends, top, reveals, curb, baseboards, cornices).
+      const groups = groupTris(merged, (_nx, _ny, nz, cz) =>
+        nz > 0.99 && Math.abs(cz - hT) < 1e-5
+          ? 0
+          : nz < -0.99 && Math.abs(cz + hT) < 1e-5
+            ? 1
+            : 2,
+      );
 
-      applyBuffers(this, merged, 'WallGeometry', {
-        length: len,
-        height: h,
-        thickness: t,
-        openingCount: placed.length,
-        ...(cutSide ? {cutaway: cutSide, curbHeight: curbH} : {}),
-        origin,
-      });
+      applyBuffers(
+        this,
+        merged,
+        'WallGeometry',
+        {
+          length: len,
+          height: h,
+          thickness: t,
+          openingCount: placed.length,
+          ...(cutSide ? {cutaway: cutSide, curbHeight: curbH} : {}),
+          origin,
+        },
+        groups,
+      );
     }
   }
 
@@ -1598,9 +1670,12 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
 
       const y0 = origin === 'bottom' ? 0 : origin === 'center' ? -t * 0.5 : -t;
       const y1 = y0 + t;
+      const slab = extrudeProfile(outer, holes, y0, y1, 'y');
+      // 0: top, 1: soffit / underside, 2: rim edges + opening shaft walls.
+      const groups = groupTris(slab, upDownSides);
       applyBuffers(
         this,
-        extrudeProfile(outer, holes, y0, y1, 'y'),
+        slab,
         'SlabGeometry',
         {
           width: w,
@@ -1609,6 +1684,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           openingCount: placed.length,
           origin,
         },
+        groups,
       );
     }
   }
@@ -2142,15 +2218,24 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       }
 
       if (origin === 'center') xformRaw(raw, 0, -(fasciaH + roofH) * 0.5, 0);
+      // 0: weather surface (slopes, ridge, flat deck, parapet coping),
+      // 1: soffit / underside, 2: fascia, rake edges, gable ends, parapet sides.
+      const groups = groupTris(raw, upDownSides);
 
-      applyBuffers(this, raw, 'RoofGeometry', {
-        style,
-        width: w,
-        depth: d,
-        overhang: ov,
-        pitchDeg,
-        height: roofH,
-      });
+      applyBuffers(
+        this,
+        raw,
+        'RoofGeometry',
+        {
+          style,
+          width: w,
+          depth: d,
+          overhang: ov,
+          pitchDeg,
+          height: roofH,
+        },
+        groups,
+      );
     }
   }
 

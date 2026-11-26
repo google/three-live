@@ -147,13 +147,16 @@ This file provides high-signal context, architectural invariants, and authoring 
             `c-channel`, `l-angle`, `t-slot`, `rect-tube`, `round-tube`,
             `hex-bar`), `metricFastener('M8x25')`, `gearMeshDistance(g1, g2)`.
         -   `THREE.Architecture` (9): `WallGeometry` (rectangular, semicircular,
-            segmental, pointed Gothic `openings` + segmented baseboards),
-            `SlabGeometry` (rect stairwell & circular skylight shaft openings),
-            `StaircaseGeometry` (`straight`, `l-shape`, `u-shape`, `spiral` with
-            `turn`), `RoofGeometry` (`gable`, `hip`, `shed`, `mansard`,
-            `gambrel`, `flat-parapet`), `DoorGeometry` (10 leaf styles, 5
-            operations `swing` / `slider` / `barn` / `pocket` / `bifold`,
-            handing & hardware), `WindowGeometry` (10 styles incl.
+            segmental, pointed Gothic `openings` + segmented baseboards;
+            material groups `0` front/exterior, `1` back/interior, `2` trim;
+            pass a 3-entry `Material[]`), `SlabGeometry` (rect stairwell &
+            circular skylight shaft openings; groups `0` top, `1` soffit, `2`
+            edges), `StaircaseGeometry` (`straight`, `l-shape`, `u-shape`,
+            `spiral` with `turn`), `RoofGeometry` (`gable`, `hip`, `shed`,
+            `mansard`, `gambrel`, `flat-parapet`; groups `0` weather surface,
+            `1` soffit, `2` fascia / gable ends), `DoorGeometry` (10 leaf
+            styles, 5 operations `swing` / `slider` / `barn` / `pocket` /
+            `bifold`, handing & hardware), `WindowGeometry` (10 styles incl.
             `single-hung`, `double-hung`, `slider` `OX`/`XO`/`XOX`/`OXXO`,
             `casement`, `awning`, `hopper`), `RailingGeometry`,
             `ColumnGeometry`, `ArchwayGeometry`, `codeStairSpec(rise)`.

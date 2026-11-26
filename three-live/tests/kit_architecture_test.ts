@@ -32,6 +32,7 @@ import {
   THREE,
   Vector3,
 } from '../src/three-author';
+import {sceneToGLB} from '../src/three-convert';
 import {parseGLB} from '../src/three-view';
 
 let passed = 0;
@@ -1116,6 +1117,305 @@ for (const [name, fn] of [
   assert(
     allMinusZ,
     'WallGeometry (cutaway="front", curbHeight=0) emits pure single-sided inward sheet with zero curb faces',
+  );
+}
+
+// Native material groups on WallGeometry / SlabGeometry / RoofGeometry.
+{
+  console.log('\n--- Wall / slab / roof material groups ---');
+  interface GeoGroup {
+    start: number;
+    count: number;
+    materialIndex: number;
+  }
+  interface Geo {
+    groups?: GeoGroup[];
+    index: {array: ArrayLike<number>};
+    getAttribute(name: string): {array: ArrayLike<number>};
+  }
+  /**
+   * Checks that `geom.groups` tile the index buffer exactly once with distinct
+   * material indices in `0..2`, and that `semantic(mat, n, centroid)` holds for
+   * every triangle. Returns the materials present.
+   */
+  const auditGroups = (
+    geom: Geo,
+    label: string,
+    semantic: (mat: number, n: number[], c: number[]) => boolean,
+  ): number[] => {
+    const pos = geom.getAttribute('position').array as Float32Array;
+    const idx = geom.index.array as Uint16Array | Uint32Array;
+    const groups = [...(geom.groups || [])].sort(
+      (a: GeoGroup, b: GeoGroup) => a.start - b.start,
+    );
+    let cursor = 0;
+    let tiled = groups.length > 0;
+    const mats = new Set<number>();
+    let badTris = 0;
+    for (const g of groups) {
+      if (g.start !== cursor || g.count % 3 !== 0 || g.count <= 0) {
+        tiled = false;
+      }
+      if (
+        mats.has(g.materialIndex) ||
+        g.materialIndex < 0 ||
+        g.materialIndex > 2
+      ) {
+        tiled = false;
+      }
+      mats.add(g.materialIndex);
+      for (let t = g.start; t < g.start + g.count; t += 3) {
+        const [a, b, c] = [idx[t] * 3, idx[t + 1] * 3, idx[t + 2] * 3];
+        const u = [0, 1, 2].map((k) => pos[b + k] - pos[a + k]);
+        const v = [0, 1, 2].map((k) => pos[c + k] - pos[a + k]);
+        const n = [
+          u[1] * v[2] - u[2] * v[1],
+          u[2] * v[0] - u[0] * v[2],
+          u[0] * v[1] - u[1] * v[0],
+        ];
+        const l = Math.hypot(n[0], n[1], n[2]);
+        if (l < 1e-12) continue;
+        const cen = [0, 1, 2].map(
+          (k) => (pos[a + k] + pos[b + k] + pos[c + k]) / 3,
+        );
+        if (
+          !semantic(
+            g.materialIndex,
+            n.map((x) => x / l),
+            cen,
+          )
+        ) {
+          badTris++;
+        }
+      }
+      cursor += g.count;
+    }
+    assert(
+      tiled && cursor === idx.length && badTris === 0,
+      `${label}: groups cover every triangle exactly once with consistent normals`,
+      `tiled=${tiled}, covered=${cursor}/${idx.length}, bad=${badTris}, groups=${JSON.stringify(groups)}`,
+    );
+    return [...mats].sort();
+  };
+  const upDown = (m: number, n: number[]) =>
+    m === 0 ? n[1] > 0.02 : m === 1 ? n[1] < -0.02 : Math.abs(n[1]) <= 0.02;
+
+  const wallOpts = {
+    length: 5,
+    height: 2.8,
+    thickness: 0.24,
+    baseboardHeight: 0.12,
+    corniceHeight: 0.1,
+    openings: [
+      {x: -1.4, width: 0.9, height: 2.1},
+      {x: 0.3, y: 0.9, width: 1.0, height: 1.2, arch: 'semicircular'},
+      {x: 1.7, y: 1.0, width: 0.6, height: 1.0, arch: 'pointed'},
+    ],
+  };
+  const semanticFor = (hT: number) => (m: number, n: number[], c: number[]) =>
+    m === 0
+      ? n[2] > 0.99 && Math.abs(c[2] - hT) < 3e-5
+      : m === 1
+        ? n[2] < -0.99 && Math.abs(c[2] + hT) < 3e-5
+        : !(Math.abs(n[2]) > 0.99 && Math.abs(Math.abs(c[2]) - hT) < 3e-5);
+  const wallSemantic = semanticFor(0.12);
+  for (const origin of ['floor', 'center']) {
+    const wall = new Arch.WallGeometry({...wallOpts, origin});
+    const mats = auditGroups(
+      wall,
+      `WallGeometry (origin=${origin})`,
+      wallSemantic,
+    );
+    assert(
+      mats.join() === '0,1,2',
+      `WallGeometry (origin=${origin}) emits front (0), back (1), and trim (2) groups`,
+    );
+    auditGeometry(wall, `WallGeometry grouped (origin=${origin})`, {
+      expectWatertight: true,
+    });
+  }
+  for (const side of ['front', 'back']) {
+    const cut = new Arch.WallGeometry({...wallOpts, cutaway: side});
+    const cutMats = auditGroups(
+      cut,
+      `WallGeometry (cutaway=${side})`,
+      wallSemantic,
+    );
+    // Above the curb only the kept interior face remains.
+    const pos = cut.getAttribute('position').array as Float32Array;
+    const idx = cut.index.array as Uint16Array | Uint32Array;
+    const removed = side === 'front' ? 0 : 1;
+    const g = cut.groups.find((gr: GeoGroup) => gr.materialIndex === removed);
+    let removedAboveCurb = 0;
+    for (let t = g ? g.start : 0; g && t < g.start + g.count; t += 3) {
+      const cy =
+        (pos[idx[t] * 3 + 1] +
+          pos[idx[t + 1] * 3 + 1] +
+          pos[idx[t + 2] * 3 + 1]) /
+        3;
+      if (cy > 0.22 + 1e-3) removedAboveCurb++;
+    }
+    assert(
+      cutMats.join() === '0,1,2' && removedAboveCurb === 0,
+      `WallGeometry (cutaway=${side}) keeps group indices and only the curb on the cut side`,
+    );
+  }
+
+  const slab = new Arch.SlabGeometry({
+    width: 6,
+    depth: 5,
+    thickness: 0.25,
+    openings: [
+      {x: -1.2, z: 0.5, width: 1.2, depth: 2.0},
+      {x: 1.6, z: -1, radius: 0.5, shape: 'circle'},
+    ],
+  });
+  assert(
+    auditGroups(slab, 'SlabGeometry', upDown).join() === '0,1,2',
+    'SlabGeometry emits top (0), soffit (1), and rim + shaft (2) groups',
+  );
+
+  for (const style of [
+    'gable',
+    'hip',
+    'shed',
+    'mansard',
+    'gambrel',
+    'flat-parapet',
+  ]) {
+    for (const solid of [true, false]) {
+      const roof = new Arch.RoofGeometry({style, width: 6, depth: 8, solid});
+      const mats = auditGroups(
+        roof,
+        `RoofGeometry (${style}, solid=${solid})`,
+        upDown,
+      );
+      assert(
+        mats.join() === '0,1,2',
+        `RoofGeometry (${style}, solid=${solid}) emits weather (0), soffit (1), and edge (2) groups`,
+      );
+    }
+  }
+  const square = new Arch.RoofGeometry({style: 'hip', width: 6, depth: 6});
+  auditGroups(square, 'RoofGeometry (square hip)', upDown);
+
+  // Geometric expectations (independent of the classifier predicates).
+  const groupArea = (
+    geo: Geo,
+    mat: number,
+    pick?: (n: number[]) => boolean,
+  ) => {
+    const pos = geo.getAttribute('position').array;
+    const idx = geo.index.array;
+    const g = (geo.groups || []).find((gr) => gr.materialIndex === mat);
+    let area = 0;
+    for (let t = g ? g.start : 0; g && t < g.start + g.count; t += 3) {
+      const [a, b, c] = [idx[t] * 3, idx[t + 1] * 3, idx[t + 2] * 3];
+      const u = [0, 1, 2].map((k) => pos[b + k] - pos[a + k]);
+      const v = [0, 1, 2].map((k) => pos[c + k] - pos[a + k]);
+      const n = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+      ];
+      const l = Math.hypot(n[0], n[1], n[2]);
+      if (!pick || pick(n.map((x) => x / (l || 1)))) area += l / 2;
+    }
+    return area;
+  };
+  const plainWall = new Arch.WallGeometry({
+    length: 5,
+    height: 2.8,
+    thickness: 0.24,
+    openings: [
+      {x: -1.4, width: 0.9, height: 2.1},
+      {x: 1.0, y: 0.9, width: 1.0, height: 1.2},
+    ],
+  });
+  const faceArea = 5 * 2.8 - 0.9 * 2.1 - 1.0 * 1.2;
+  assert(
+    Math.abs(groupArea(plainWall, 0) - faceArea) < 1e-3 &&
+      Math.abs(groupArea(plainWall, 1) - faceArea) < 1e-3,
+    'WallGeometry front / back groups each cover length x height minus openings',
+  );
+  for (const o of [
+    {thickness: 0.02, length: 100, baseboardHeight: 0.1},
+    {thickness: 0.2, cutaway: 'front', curbHeight: 0, baseboardHeight: 0.1},
+  ]) {
+    auditGroups(
+      new Arch.WallGeometry(o),
+      `WallGeometry ${JSON.stringify(o)}`,
+      semanticFor(o.thickness / 2),
+    );
+  }
+  for (const origin of ['top', 'bottom', 'center']) {
+    const s = new Arch.SlabGeometry({width: 4, depth: 3, origin});
+    assert(
+      Math.abs(groupArea(s, 0) - 12) < 1e-6 &&
+        Math.abs(groupArea(s, 1) - 12) < 1e-6,
+      `SlabGeometry (origin=${origin}) top and soffit groups each cover width x depth`,
+    );
+  }
+  const gable = new Arch.RoofGeometry({style: 'gable', width: 6, depth: 8});
+  const openGable = new Arch.RoofGeometry({style: 'gable', solid: false});
+  const parapet = new Arch.RoofGeometry({
+    style: 'flat-parapet',
+    width: 6,
+    depth: 8,
+  });
+  const mansard = new Arch.RoofGeometry({style: 'mansard'});
+  const isZ = (n: number[]) => Math.abs(n[2]) > 0.99;
+  const sloped = (n: number[]) => n[1] > 0.05 && n[1] < 0.99;
+  const inner = (6 - 2 * 0.24) * (8 - 2 * 0.24);
+  const down = (n: number[]) => n[1] < -0.05 && n[1] > -0.99;
+  const roofChecks = [
+    groupArea(gable, 2, isZ) > 1,
+    groupArea(gable, 0, isZ) === 0,
+    groupArea(openGable, 1, down) > 1,
+    Math.abs(groupArea(parapet, 0) - (48 + (48 - inner))) < 1e-3,
+    groupArea(mansard, 0, sloped) > 1,
+    groupArea(
+      new Arch.RoofGeometry({origin: 'center', overhang: 0, pitchDeg: 5}),
+      0,
+    ) > 0,
+    groupArea(new Arch.RoofGeometry({pitchDeg: 75}), 0) > 0,
+  ];
+  assert(
+    roofChecks.every(Boolean),
+    'RoofGeometry: gable ends are trim, open undersides are soffit, parapet deck + coping and mansard slopes are weather',
+    JSON.stringify(roofChecks),
+  );
+
+  // Export: Material[] -> one primitive per group; one material -> one
+  // primitive with every index (backward compatible).
+  const exportPrims = (mat: unknown) => {
+    const sc = new Scene();
+    sc.add(new Mesh(new Arch.WallGeometry(wallOpts), mat));
+    const gltf = parseGLB(sceneToGLB(sc)).gltf;
+    return gltf.meshes[0].primitives.map(
+      (p: {material: number; indices: number}) =>
+        [p.material, gltf.accessors[p.indices].count] as number[],
+    );
+  };
+  const tri = [0x8b5a2b, 0xf4f1ea, 0xffffff].map(
+    (c) => new MeshStandardMaterial({color: c}),
+  );
+  const grouped = exportPrims(tri);
+  const single = exportPrims(new MeshStandardMaterial({color: 0x888888}));
+  const totalIdx = new Arch.WallGeometry(wallOpts).index.count;
+  assert(
+    grouped.length === 3 &&
+      new Set(grouped.map((p) => p[0])).size === 3 &&
+      grouped.reduce((n, p) => n + p[1], 0) === totalIdx &&
+      single.length === 1 &&
+      single[0][1] === totalIdx,
+    'WallGeometry exports 3 primitives with Material[3] and 1 primitive with a single material',
+  );
+  // Like three.js, groups without a material are skipped: pass all three.
+  const two = exportPrims(tri.slice(0, 2));
+  assert(
+    two.length === 2 && two.reduce((n, p) => n + p[1], 0) < totalIdx,
+    'WallGeometry with Material[2] drops the trim group (documented: pass 3 materials)',
   );
 }
 

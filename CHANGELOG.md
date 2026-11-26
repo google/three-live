@@ -48,6 +48,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     tiled scenes look the same; set `ClampToEdgeWrapping` explicitly to clamp
     (honored by WebGL2, USDZ, and external viewers; WebGPU and the CLI preview
     still repeat).
+-   **Native material groups on `Architecture.WallGeometry`, `SlabGeometry`, and
+    `RoofGeometry`:** walls emit `groups` `0` (+Z front / exterior face, the
+    side `cutaway: 'front'` removes), `1` (-Z back / interior face), and `2`
+    (trim: ends, top, opening reveals, curb, baseboards, cornices); slabs emit
+    `0` (top), `1` (soffit), and `2` (rim edges + opening shaft walls); every
+    roof style emits `0` (weather surface: slopes, ridge, flat deck, parapet
+    coping), `1` (soffit / underside), and `2` (fascia, rake edges, gable ends,
+    parapet sides). Pass `[exterior, interior, trim]` as a `Material[]` to
+    finish each face; a single material still renders the whole mesh. Vertices
+    and triangles are unchanged (only the index order groups them), so meshes
+    stay 2-manifold.
 -   **Multi-material `BufferGeometry.groups` & one-way cutaway walls in
     `THREE.Architecture` (`three-live/kits/architecture`):** `WindowGeometry`,
     `DoorGeometry` (`vision-lite`, `half-lite`, `french`, and hardware), and
