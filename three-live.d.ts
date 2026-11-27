@@ -685,7 +685,9 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'section-plane'?: string;
   /** Visibility mode for `__xr_section_gizmo__` ("auto", "always", or "none"; default: "auto"). */
   'section-gizmo'?: 'auto' | 'always' | 'none';
-  /** Optional matte poché hex color (`#rrggbb` / `#rgb`) for exposed back-faces under `section-plane`. */
+  /** `"solid"` fills cut closed meshes with flat poché caps under `section-plane` (default `"none"`). */
+  'section-cap'?: 'none' | 'solid';
+  /** Optional matte poché hex color (`#rrggbb` / `#rgb`) for exposed back-faces and `section-cap="solid"` caps under `section-plane`. */
   'section-cap-color'?: string;
   /**
    * Dollhouse cutaway for meshes with a `userData.xr.cutaway` trait: they hide

@@ -86,30 +86,30 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveRuntime/`:
     Verify that all 24 `.min.js.gz` bundles in `scripts/build.js` remain within
     their enforced byte budgets:
 
-    -   `three-live-viewer.min.js`: `< 37 KB gz`
-    -   `three-live.min.js`: `< 90 KB gz`
-    -   `three-live-studio.min.js`: `< 36 KB gz`
+    -   `three-live-viewer.min.js`: `< 38 KB gz`
+    -   `three-live.min.js`: `< 91 KB gz`
+    -   `three-live-studio.min.js`: `< 40 KB gz`
     -   `three-live-cad.min.js`: `< 20 KB gz`
     -   `three-live-kit-mechanical.min.js`: `< 18 KB gz`
-    -   `three-live-kit-architecture.min.js`: `< 17 KB gz`
+    -   `three-live-kit-architecture.min.js`: `< 18 KB gz`
     -   `three-live-kit-industrial.min.js`: `< 14 KB gz`
     -   `three-live-kit-science.min.js`: `< 31 KB gz`
     -   `three-live-kit-electronics.min.js`: `< 14 KB gz`
-    -   `three-live-kits.min.js`: `< 84 KB gz`
+    -   `three-live-kits.min.js`: `< 85 KB gz`
     -   `three-live-procedural.min.js`: `< 30 KB gz`
     -   `three-live-animation.min.js`: `< 12 KB gz`
     -   `three-live-ai.min.js`: `< 35 KB gz`
     -   `three-live-webgpu.min.js`: `< 24 KB gz`
     -   `three-live-tsl.min.js`: `< 19 KB gz`
-    -   `three-live-full.min.js`: `< 247 KB gz`
-    -   `three-live-compiler-bundle.min.js`: `< 266 KB gz`
-    -   `xr-live-viewer.min.js`: `< 64 KB gz`
-    -   `xr-live.min.js`: `< 102 KB gz`
+    -   `three-live-full.min.js`: `< 252 KB gz`
+    -   `three-live-compiler-bundle.min.js`: `< 268 KB gz`
+    -   `xr-live-viewer.min.js`: `< 65 KB gz`
+    -   `xr-live.min.js`: `< 103 KB gz`
     -   `xr-live-sensors.min.js`: `< 10 KB gz`
-    -   `xr-live-spatial.min.js`: `< 65 KB gz`
+    -   `xr-live-spatial.min.js`: `< 68 KB gz`
     -   `xr-live-sim.min.js`: `< 30 KB gz`
     -   `xr-live-webgpu.min.js`: `< 13 KB gz`
-    -   `xr-live-full.min.js`: `< 358 KB gz`
+    -   `xr-live-full.min.js`: `< 363 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
 
    ```bash

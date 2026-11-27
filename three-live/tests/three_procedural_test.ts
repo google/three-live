@@ -1352,6 +1352,68 @@ function runProceduralTests(): void {
       `ProceduralTexture.brick feathers mortar joints across >= 2 intermediate texels (got ${midCount})`,
     );
   }
+  // Presets are seamless tiles: they export REPEAT samplers, and a cloned map
+  // carries its own Texture.repeat as KHR_texture_transform.
+  {
+    const wood = PT.wood({size: 16, seed: 2});
+    const tiledMap = wood.map.clone();
+    tiledMap.repeat.set(3, 2);
+    const wScene = new Scene();
+    wScene.add(
+      new Mesh(
+        new BoxGeometry(1, 1, 1),
+        new MeshStandardMaterial({...wood, map: tiledMap}),
+      ),
+    );
+    const wg = sceneToCanvas3D(wScene).gltf;
+    const info = wg.materials[0].pbrMetallicRoughness.baseColorTexture;
+    const samp = wg.samplers[wg.textures[info.index].sampler];
+    assert(
+      wood.map.wrapS === THREE.RepeatWrapping &&
+        samp.wrapS === 10497 &&
+        samp.wrapT === 10497 &&
+        JSON.stringify(info.extensions?.KHR_texture_transform) ===
+          JSON.stringify({scale: [3, 2]}) &&
+        wood.map.repeat.x === 1,
+      'ProceduralTexture presets export REPEAT samplers; cloned maps carry repeat',
+    );
+  }
+  // `repeat` clones every preset map together; clones share images, so the
+  // sandbox texture quota counts images rather than Texture objects.
+  {
+    const tiledSet = PT.brick({size: 16, seed: 4, repeat: [3, 2]});
+    const base = PT.brick({size: 16, seed: 4});
+    const quotaScene = new Scene();
+    for (let i = 0; i < 8; i++) {
+      quotaScene.add(
+        new Mesh(
+          new BoxGeometry(1, 1, 1),
+          new MeshStandardMaterial(
+            PT.brick({size: 16, seed: 4, repeat: i + 2}),
+          ),
+        ),
+      );
+    }
+    let quotaOk = true;
+    try {
+      SceneQuotaValidator.validate(quotaScene);
+    } catch {
+      quotaOk = false;
+    }
+    const canvasClone = base.map.clone();
+    assert(
+      tiledSet.map.repeat.x === 3 &&
+        tiledSet.normalMap.repeat.y === 2 &&
+        tiledSet.roughnessMap === tiledSet.metalnessMap &&
+        tiledSet.roughnessMap.repeat.x === 3 &&
+        base.map.repeat.x === 1 &&
+        tiledSet.map.source === base.map.source &&
+        canvasClone.isCanvasTexture === true &&
+        canvasClone.source === base.map.source &&
+        quotaOk,
+      'ProceduralTexture repeat option tiles all maps; 24 cloned maps pass the 16-texture quota',
+    );
+  }
   const evenA = PT.checkerboard({scale: 7, size: 16, seed: 3});
   const evenB = PT.checkerboard({scale: 8, size: 16, seed: 3});
   const junk = PT.wood({

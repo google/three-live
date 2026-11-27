@@ -148,6 +148,7 @@ export interface ViewOptions {
 
 import {
   applyTextureTransform,
+  materialTextureTransform,
   readAccessorAsFloat32,
   type TextureTransformLike,
 } from './accessor';
@@ -238,7 +239,11 @@ import {
   type ShadowMapsMode,
   type ThreeLivePlugin,
 } from './plugin';
-import {resolveSectionCapColor, resolveSectionPlane} from './section-plane';
+import {
+  resolveSectionCapColor,
+  resolveSectionCapMode,
+  resolveSectionPlane,
+} from './section-plane';
 ensureCapabilityChecker();
 export {getRegisteredPlugins, registerPlugin, type ThreeLivePlugin};
 
@@ -1054,26 +1059,15 @@ function bindInstanceAttributes(
 /**
  * Returns the `KHR_texture_transform` of the primitive's material (base color
  * first, then the other PBR textures). gltfpack uses it to dequantize
- * normalized TEXCOORD_0 attributes, so it is baked into the uploaded UVs.
+ * normalized TEXCOORD_0 attributes, and `sceneToGLB` emits it for
+ * `Texture.repeat` / `offset` / `rotation` / `center`, so it is baked into the
+ * uploaded UVs.
  */
 function primitiveTextureTransform(
   gltf: any,
   prim: any,
 ): TextureTransformLike | null {
-  const mat = gltf.materials?.[prim?.material];
-  if (!mat) return null;
-  const infos = [
-    mat.pbrMetallicRoughness?.baseColorTexture,
-    mat.pbrMetallicRoughness?.metallicRoughnessTexture,
-    mat.normalTexture,
-    mat.occlusionTexture,
-    mat.emissiveTexture,
-  ];
-  for (const info of infos) {
-    const t = info?.extensions?.KHR_texture_transform;
-    if (t && typeof t === 'object') return t as TextureTransformLike;
-  }
-  return null;
+  return materialTextureTransform(gltf.materials?.[prim?.material]);
 }
 
 /**
@@ -4063,8 +4057,30 @@ export class ThreeView {
     }
   }
 
+  /** Set by `stepFrame()`: frames advance only when the host steps them. */
+  private manualClock = false;
+
+  /** This frame renders in WebGL2 even when a WebGPU accelerator is loaded. */
+  gpuBypass = false;
+
+  /**
+   * Advances animations, plugins, and simulation by `dtSeconds` and renders
+   * synchronously, without `requestAnimationFrame`. The first call stops the
+   * automatic render loop so frames stay deterministic.
+   */
+  stepFrame(dtSeconds = 1 / 60): void {
+    this.manualClock = true;
+    this.stop();
+    const dt = Number.isFinite(dtSeconds)
+      ? Math.min(Math.max(dtSeconds, 0), 1)
+      : 0;
+    this.resize();
+    this.update(dt);
+    this.render();
+  }
+
   public start(): void {
-    if (this.animFrameId !== null) return;
+    if (this.animFrameId !== null || this.manualClock) return;
     this.lastTime = nowMs();
     const renderLoop = (time: number) => {
       if (this.animFrameId === null) return;
@@ -4377,6 +4393,18 @@ export class ThreeView {
       ? xrOverride.eyePos
       : getOrbitEye(this);
 
+    // `section-cap="solid"` caps (section-caps add-on) and dollhouse cutaways
+    // draw in the WebGL2 pass. Decide before plugins run, so shadow maps see
+    // the same backend (`willRenderScene` reads `gpuBypass`).
+    const capRenderer = reg.sectionCapRenderer;
+    const solidCaps =
+      !!capRenderer &&
+      resolveSectionCapMode(this) === 'solid' &&
+      resolveSectionPlane(this) !== null;
+    this.gpuBypass =
+      solidCaps ||
+      (this.cutawayEnabled && this.meshes.some((m) => resolveCutawayCached(m)));
+
     for (const plugin of registeredPlugins) {
       (plugin as any).onBeforeDrawScene?.(
         this,
@@ -4395,8 +4423,11 @@ export class ThreeView {
 
     const currentEye = xrOverride?.eye || 'none';
     const clearPass = !xrOverride || xrOverride.clear !== false;
+    // A bypassed WebGPU layer must not keep covering the WebGL2 canvas.
+    if (this.gpuBypass) reg.gpuSceneAccelerator?.hideLayer?.(this);
     if (
       !this.xrSessionActive &&
+      !solidCaps &&
       !(this.cutawayEnabled && this.meshes.some((m) => resolveCutawayCached(m))) &&
       reg.gpuSceneAccelerator?.renderScene(
         this,
@@ -4433,8 +4464,14 @@ export class ThreeView {
     let hasRefraction = false;
     const sectionPlane = resolveSectionPlane(this);
     const sectionCapColor = resolveSectionCapColor(this);
-    const renderList =
+    const capMesh = (
+      solidCaps && sectionPlane
+        ? capRenderer!(this, sectionPlane, sectionCapColor)
+        : null
+    ) as MeshGpu | null;
+    const sceneList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
+    const renderList = capMesh ? [...sceneList, capMesh] : sceneList;
     const bindTex2D = (
       slot: number,
       tex: WebGLTexture | null,
@@ -4807,6 +4844,7 @@ export class ThreeView {
 
   disposeGpuResources(): void {
     const gl = this.gl;
+    getSharedRegistry().sectionCapRenderer?.(this, null, null);
     this.disposeMeshGpuResources();
     this.disposeMeshListGpuResources(this.backdropMeshes);
     this.backdropMeshes = [];

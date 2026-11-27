@@ -195,6 +195,45 @@ export interface DoorOptions {
   /** Whether lite styles (`vision-lite`, `half-lite`, `french`) include group-1 glazing panes (default `true`). */
   glazing?: boolean;
   origin?: 'floor' | 'center';
+  /**
+   * Parts to emit (default `'all'`, the full door): `'frame'` is everything
+   * that stays put (frame / casing, barn track + standoffs, pocket header and
+   * jambs); `'leaves'` is the moving leaves with their glazing and handles, in
+   * door-local coordinates at the current pose.
+   */
+  part?: 'all' | 'frame' | 'leaves';
+  /** With `part: 'leaves'`, emit only leaf `geometry.userData.leaves[leafIndex]`. */
+  leafIndex?: number;
+}
+
+/** Hinge / slide metadata of one door leaf (`DoorGeometry.userData.leaves`). */
+export interface DoorLeafInfo {
+  index: number;
+  operation: DoorOperation;
+  /** `rotate` about `axis` through `pivot`, `slide` along `axis`, or `fixed` (stationary slider panel). */
+  motion: 'rotate' | 'slide' | 'fixed';
+  /** Hinge point (`rotate`) or closed leaf center (`slide` / `fixed`), door-local meters. */
+  pivot: [number, number, number];
+  /** Rotation axis (`rotate`) or unit slide direction (`slide`). */
+  axis: [number, number, number];
+  /** Signed full-open angle about `axis` (relative to `parent` for bifold followers). */
+  openAngleDeg?: number;
+  /** Signed angle of the emitted pose (relative to `parent` for bifold followers). */
+  angleDeg?: number;
+  /** Full-open travel along `axis` (m). */
+  travel?: number;
+  /** Slide offset of the emitted pose (m). */
+  offset?: number;
+  /** Bifold follower: index of the leaf whose motion carries this leaf's pivot. */
+  parent?: number;
+}
+
+/** Options for `THREE.Architecture.createDoorGroup`. */
+export interface DoorGroupOptions extends DoorOptions {
+  /** Unique node-name prefix (default `Door1`, `Door2`, ...); leaf pivots are `<name>_leaf<i>`. */
+  name?: string;
+  /** Toggle animation length in seconds (default `0.6`). */
+  duration?: number;
 }
 
 /** Architectural window style and sash operation. */
@@ -313,6 +352,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
   };
   const clampInt = (v: unknown, lo: number, hi: number, fb: number): number =>
     clamp(Math.round(num(v, fb)), lo, hi);
+  /** Rounds to micrometers (stable, JSON-friendly rig metadata). */
+  const r6 = (v: number): number => Math.round(v * 1e6) / 1e6 || 0;
 
   type Pt2 = [number, number];
   interface RawBufs {
@@ -446,6 +487,63 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     }
     return {buf: mergeRaw(sorted), groups};
   }
+
+  /**
+   * Reorders `b.idx` into contiguous material groups picked per triangle by
+   * `classify(nx, ny, nz, cz)` (unit geometric normal + centroid z). Vertices
+   * and triangles are unchanged, so single-material meshes render the same.
+   */
+  function groupTris(
+    b: RawBufs,
+    classify: (nx: number, ny: number, nz: number, cz: number) => number,
+  ): RawGroup[] {
+    const buckets: number[][] = [[], [], []];
+    const p = b.pos;
+    const ix = b.idx;
+    for (let i = 0; i + 2 < ix.length; i += 3) {
+      const a = ix[i] * 3;
+      const c = ix[i + 1] * 3;
+      const e = ix[i + 2] * 3;
+      const ux = p[c] - p[a];
+      const uy = p[c + 1] - p[a + 1];
+      const uz = p[c + 2] - p[a + 2];
+      const vx = p[e] - p[a];
+      const vy = p[e + 1] - p[a + 1];
+      const vz = p[e + 2] - p[a + 2];
+      let nx = uy * vz - uz * vy;
+      let ny = uz * vx - ux * vz;
+      let nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz);
+      if (l > 1e-12) {
+        nx /= l;
+        ny /= l;
+        nz /= l;
+      } else {
+        nx = b.nrm[a];
+        ny = b.nrm[a + 1];
+        nz = b.nrm[a + 2];
+      }
+      const m = classify(nx, ny, nz, (p[a + 2] + p[c + 2] + p[e + 2]) / 3);
+      buckets[m === 0 || m === 1 ? m : 2].push(ix[i], ix[i + 1], ix[i + 2]);
+    }
+    const idx: number[] = [];
+    const groups: RawGroup[] = [];
+    buckets.forEach((tri, mat) => {
+      if (!tri.length) return;
+      groups.push({start: idx.length, count: tri.length, mat});
+      for (const v of tri) idx.push(v);
+    });
+    b.idx = idx;
+    return groups;
+  }
+
+  /**
+   * Slab and roof groups: `0` up-facing, `1` down-facing, `2` vertical. Faces
+   * steeper than ~88.9 deg (|ny| <= 0.02, only reachable with extreme
+   * `height` on very narrow roofs) count as vertical.
+   */
+  const upDownSides = (_nx: number, ny: number): number =>
+    ny > 0.02 ? 0 : ny < -0.02 ? 1 : 2;
 
   function xformRaw(
     b: RawBufs,
@@ -1484,15 +1582,30 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         ]);
       }
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
+      // 0: +Z face (front / exterior), 1: -Z face (back / interior),
+      // 2: trim (ends, top, reveals, curb, baseboards, cornices).
+      const groups = groupTris(merged, (_nx, _ny, nz, cz) =>
+        nz > 0.99 && Math.abs(cz - hT) < 1e-5
+          ? 0
+          : nz < -0.99 && Math.abs(cz + hT) < 1e-5
+            ? 1
+            : 2,
+      );
 
-      applyBuffers(this, merged, 'WallGeometry', {
-        length: len,
-        height: h,
-        thickness: t,
-        openingCount: placed.length,
-        ...(cutSide ? {cutaway: cutSide, curbHeight: curbH} : {}),
-        origin,
-      });
+      applyBuffers(
+        this,
+        merged,
+        'WallGeometry',
+        {
+          length: len,
+          height: h,
+          thickness: t,
+          openingCount: placed.length,
+          ...(cutSide ? {cutaway: cutSide, curbHeight: curbH} : {}),
+          origin,
+        },
+        groups,
+      );
     }
   }
 
@@ -1598,9 +1711,12 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
 
       const y0 = origin === 'bottom' ? 0 : origin === 'center' ? -t * 0.5 : -t;
       const y1 = y0 + t;
+      const slab = extrudeProfile(outer, holes, y0, y1, 'y');
+      // 0: top, 1: soffit / underside, 2: rim edges + opening shaft walls.
+      const groups = groupTris(slab, upDownSides);
       applyBuffers(
         this,
-        extrudeProfile(outer, holes, y0, y1, 'y'),
+        slab,
         'SlabGeometry',
         {
           width: w,
@@ -1609,6 +1725,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           openingCount: placed.length,
           origin,
         },
+        groups,
       );
     }
   }
@@ -2142,15 +2259,24 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       }
 
       if (origin === 'center') xformRaw(raw, 0, -(fasciaH + roofH) * 0.5, 0);
+      // 0: weather surface (slopes, ridge, flat deck, parapet coping),
+      // 1: soffit / underside, 2: fascia, rake edges, gable ends, parapet sides.
+      const groups = groupTris(raw, upDownSides);
 
-      applyBuffers(this, raw, 'RoofGeometry', {
-        style,
-        width: w,
-        depth: d,
-        overhang: ov,
-        pitchDeg,
-        height: roofH,
-      });
+      applyBuffers(
+        this,
+        raw,
+        'RoofGeometry',
+        {
+          style,
+          width: w,
+          depth: d,
+          overhang: ov,
+          pitchDeg,
+          height: roofH,
+        },
+        groups,
+      );
     }
   }
 
@@ -2164,7 +2290,14 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
   ): {
     pattern: string;
     trackCount: number;
-    panels: Array<{cx: number; w: number; track: number; operable: boolean}>;
+    panels: Array<{
+      cx: number;
+      w: number;
+      track: number;
+      operable: boolean;
+      x0: number;
+      travel: number;
+    }>;
   } {
     const maxPanels = clamp(Math.floor((clearW - 2 * clr) / 0.075), 2, 6);
     const cleaned = String(rawPat ?? 'XO')
@@ -2220,6 +2353,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       w: number;
       track: number;
       operable: boolean;
+      x0: number;
+      travel: number;
     }> = [];
     for (let i = 0; i < n; i++) {
       let leftTrim = 0;
@@ -2233,8 +2368,15 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       const pw = Math.max(0.025, baseW - leftTrim - rightTrim);
       const xClosed = xBase[i] + (leftTrim - rightTrim) * 0.5;
       const operable = pat[i] === 'X';
-      const dx = operable ? openFrac * (xBase[targets[i]] - xClosed) * 0.92 : 0;
-      panels.push({cx: xClosed + dx, w: pw, track: tracks[i], operable});
+      const travel = operable ? (xBase[targets[i]] - xClosed) * 0.92 : 0;
+      panels.push({
+        cx: xClosed + openFrac * travel,
+        w: pw,
+        track: tracks[i],
+        operable,
+        x0: xClosed,
+        travel,
+      });
     }
     return {pattern: pat, trackCount: maxTrack + 1, panels};
   }
@@ -2360,6 +2502,33 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
       const hW = w * 0.5;
       const hasGlazing = options.glazing !== false;
       const parts: RawBufs[] = [];
+      // Owner of each part: -1 = stationary frame, k >= 0 = leaf k.
+      const owners: number[] = [];
+      const add = (owner: number, ...bufs: RawBufs[]) => {
+        for (const b of bufs) {
+          parts.push(b);
+          owners.push(owner);
+        }
+      };
+      const yPivot = origin === 'center' ? -h * 0.5 : 0;
+      const leafInfo: DoorLeafInfo[] = [];
+      const addLeaf = (
+        motion: DoorLeafInfo['motion'],
+        px: number,
+        pz: number,
+        axis: [number, number, number],
+        extra: Partial<DoorLeafInfo>,
+      ) => {
+        leafInfo.push({
+          index: leafInfo.length,
+          operation,
+          motion,
+          pivot: [r6(px), r6(yPivot), r6(pz)],
+          axis,
+          ...extra,
+        });
+      };
+      const deg = (rad: number) => r6((rad * 180) / Math.PI);
       const isArched = style === 'arched' && operation === 'swing';
 
       // Build one door leaf centered at x = 0, y ∈ [yLeaf0, yLeaf0 + lh], z ∈ [-lt/2, +lt/2]
@@ -2715,7 +2884,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         for (const p of innerCutCW) portal.push(p);
         portal.push([hW + fw, 0]);
         for (let i = 2; i < frameOuter.length; i++) portal.push(frameOuter[i]);
-        parts.push(extrudeProfile(portal, [], -fd * 0.5, fd * 0.5, 'z'));
+        add(-1, extrudeProfile(portal, [], -fd * 0.5, fd * 0.5, 'z'));
       };
 
       if (operation === 'slider') {
@@ -2728,7 +2897,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             [-hW - fw, h + fw],
           ];
           const fHole = makeOpeningHoleCW(0, sillH, w, h - sillH, false);
-          parts.push(extrudeProfile(fOuter, [fHole], -fd * 0.5, fd * 0.5, 'z'));
+          add(-1, extrudeProfile(fOuter, [fHole], -fd * 0.5, fd * 0.5, 'z'));
         }
         const defaultPat =
           options.leaves === 4 ? 'OXXO' : options.leaves === 1 ? 'XO' : 'XO';
@@ -2749,7 +2918,9 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         for (let i = 0; i < solved.panels.length; i++) {
           const pan = solved.panels[i];
           const zMid = zSpan * 0.5 - pan.track * (pThick + 0.006);
-          const latchSign = pan.operable ? (pan.cx <= 0 ? -1 : 1) : 0;
+          // Latch side from the closed position, so the handle rides with the
+          // panel instead of jumping sides once it crosses the center.
+          const latchSign = pan.operable ? (pan.x0 <= 0 ? -1 : 1) : 0;
           const leaf = buildDoorLeaf(
             pan.w,
             h - sillH - 2 * clr,
@@ -2759,7 +2930,14 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             'none',
           );
           xformList(leaf, pan.cx, 0, zMid);
-          parts.push(...leaf);
+          add(i, ...leaf);
+          const dir = pan.travel < 0 ? -1 : 1;
+          // All-X patterns pin panel 0 (zero travel): report it as fixed.
+          const slides = pan.operable && Math.abs(pan.travel) > 1e-6;
+          addLeaf(slides ? 'slide' : 'fixed', pan.x0, zMid, [dir, 0, 0], {
+            travel: r6(Math.abs(pan.travel)),
+            offset: r6(Math.abs(pan.cx - pan.x0)),
+          });
         }
       } else if (operation === 'barn') {
         if (includeFrame) emitPortalFrame();
@@ -2773,7 +2951,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           ? 0
           : (slideSide === 'left' ? -1 : 1) * w * 0.48;
         // Exposed flat-bar steel track rail + wall standoffs (hardware group 2)
-        parts.push(
+        add(
+          -1,
           tagRaw(buildBox(railShiftX, railY, zRail, railLen, 0.042, 0.009), 2),
         );
         const standoffLen = Math.max(
@@ -2783,7 +2962,8 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const zStandoff = zRail - 0.005 - standoffLen * 0.5 - 2e-4;
         for (let k = 0; k < 4; k++) {
           const sx = railShiftX - railLen * 0.44 + (railLen * 0.88 * k) / 3;
-          parts.push(
+          add(
+            -1,
             tagRaw(buildBox(sx, railY, zStandoff, 0.022, 0.022, standoffLen), 2),
           );
         }
@@ -2805,13 +2985,18 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             'none',
           );
           xformList(leaf, xCur, 0, zLeafMid);
-          parts.push(...leaf);
+          add(k, ...leaf);
+          addLeaf('slide', xClosed, zLeafMid, [dir, 0, 0], {
+            travel: r6(singleW * 0.92),
+            offset: r6(openFrac * singleW * 0.92),
+          });
           // Twin vertical roller strap hangers + track wheels (hardware group 2)
           for (const sgn of [-1, 1]) {
             const hx = xCur + sgn * singleW * 0.34;
             const strapBot = h - 0.14;
             const strapTop = railY + 0.055;
-            parts.push(
+            add(
+              k,
               tagRaw(
                 buildBox(
                   hx,
@@ -2837,7 +3022,7 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
               18,
             );
             xformRawX(wheel, hx, railY + 0.032, zRail, Math.PI * 0.5, 0, 0);
-            parts.push(tagRaw(wheel, 2));
+            add(k, tagRaw(wheel, 2));
           }
         }
       } else if (operation === 'pocket') {
@@ -2845,19 +3030,20 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const pDir = slideSide === 'left' ? -1 : 1;
         if (includeFrame) {
           // Header across full doorway + solid strike jamb (or split jambs on pocket side(s))
-          parts.push(buildBox(0, h + fw * 0.5, 0, w + 2 * fw, fw, fd));
+          add(-1, buildBox(0, h + fw * 0.5, 0, w + 2 * fw, fw, fd));
           const cheekT = Math.max(0.015, (fd - leafT - 0.012) * 0.5);
           const zCheek = fd * 0.5 - cheekT * 0.5;
           for (const side of [-1, 1]) {
             const jx = side * (hW + fw * 0.5);
             const isSplit = biPart || side === pDir;
             if (isSplit) {
-              parts.push(
+              add(
+                -1,
                 buildBox(jx, h * 0.5 - 2e-4, zCheek, fw, h - 4e-4, cheekT),
                 buildBox(jx, h * 0.5 - 2e-4, -zCheek, fw, h - 4e-4, cheekT),
               );
             } else {
-              parts.push(buildBox(jx, h * 0.5 - 2e-4, 0, fw, h - 4e-4, fd));
+              add(-1, buildBox(jx, h * 0.5 - 2e-4, 0, fw, h - 4e-4, fd));
             }
           }
         }
@@ -2869,7 +3055,11 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           const xSlide = xClosed + dir * openFrac * lw * 0.88;
           const leaf = buildDoorLeaf(lw, h - 0.008, 0.004, leafT, -dir, 'none');
           xformList(leaf, xSlide, 0, 0);
-          parts.push(...leaf);
+          add(k, ...leaf);
+          addLeaf('slide', xClosed, 0, [dir, 0, 0], {
+            travel: r6(lw * 0.88),
+            offset: r6(openFrac * lw * 0.88),
+          });
         }
       } else if (operation === 'bifold') {
         if (includeFrame) emitPortalFrame();
@@ -2894,11 +3084,22 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           xformList(panA, xPin + sgn * panelW * 0.5, 0, 0);
           const rotA = -sgn * swingDir * theta;
           xformList(panA, 0, 0, 0, rotA, xPin, swingDir * leafT * 0.5);
-          parts.push(...panA);
+          add(2 * p, ...panA);
+          const rotAFull = -sgn * swingDir * ((76 * Math.PI) / 180);
+          addLeaf('rotate', xPin, swingDir * leafT * 0.5, [0, 1, 0], {
+            openAngleDeg: deg(rotAFull),
+            angleDeg: deg(rotA),
+          });
 
-          // Hinge knuckle connecting Panel A to Panel B
-          const xKnuckle = xPin + sgn * (panelW + 0.004) * Math.cos(theta);
-          const zKnuckle = swingDir * (panelW + 0.004) * Math.sin(theta);
+          // Hinge knuckle connecting Panel A to Panel B: the closed knuckle
+          // (xPin + sgn * L, 0) carried by Panel A's rotation about its pivot.
+          const kdx = sgn * (panelW + 0.004);
+          const kdz = -swingDir * leafT * 0.5;
+          const xKnuckle = xPin + kdx * Math.cos(rotA) + kdz * Math.sin(rotA);
+          const zKnuckle =
+            swingDir * leafT * 0.5 -
+            kdx * Math.sin(rotA) +
+            kdz * Math.cos(rotA);
           const panB = buildDoorLeaf(
             panelW,
             h - gap - 0.008,
@@ -2909,7 +3110,13 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           );
           xformList(panB, xKnuckle + sgn * panelW * 0.5, 0, zKnuckle);
           xformList(panB, 0, 0, 0, -rotA, xKnuckle, zKnuckle);
-          parts.push(...panB);
+          add(2 * p + 1, ...panB);
+          // Folds against panel A about the knuckle, which rides on panel A.
+          addLeaf('rotate', xPin + sgn * (panelW + 0.004), 0, [0, 1, 0], {
+            openAngleDeg: deg(-2 * rotAFull),
+            angleDeg: deg(-2 * rotA),
+            parent: 2 * p,
+          });
         }
       } else {
         // 'swing': single or double (French/corridor/arched) hinged doors
@@ -2920,6 +3127,11 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
         const lh = h - gap - 0.004;
         const effDeg = hasExplicitAngle ? openDeg : swingDir * openDeg;
         const angRad = (effDeg * Math.PI) / 180;
+        // Full-open target: an explicit non-zero `openAngleDeg`, else 85 deg.
+        const fullDeg =
+          hasExplicitAngle && Math.abs(openDeg) > 1e-6
+            ? openDeg
+            : swingDir * 85;
 
         for (let k = 0; k < nLeaves; k++) {
           const isRightHinge = nLeaves === 2 ? k === 1 : hingeSide === 'right';
@@ -2941,11 +3153,38 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
             const rotY = (isRightHinge ? 1 : -1) * angRad;
             xformList(leaf, 0, 0, 0, rotY, pivotX, pivotZ);
           }
-          parts.push(...leaf);
+          add(k, ...leaf);
+          const hingeSign = isRightHinge ? 1 : -1;
+          addLeaf(
+            'rotate',
+            cx + (isRightHinge ? lw * 0.5 : -lw * 0.5),
+            (fullDeg >= 0 ? 1 : -1) * leafT * 0.5,
+            [0, 1, 0],
+            {
+              openAngleDeg: r6(hingeSign * fullDeg),
+              angleDeg: r6(hingeSign * effDeg),
+            },
+          );
         }
       }
 
-      const {buf: merged, groups} = mergeGrouped(parts);
+      const part =
+        options.part === 'frame' || options.part === 'leaves'
+          ? options.part
+          : 'all';
+      const li = options.leafIndex;
+      // Any explicit leafIndex selects one leaf; invalid values match none.
+      const oneLeaf = part === 'leaves' && li != null;
+      const wantLeaf = oneLeaf ? Math.floor(num(li, -2)) : -1;
+      const kept =
+        part === 'all'
+          ? parts
+          : parts.filter((_, i) =>
+              part === 'frame'
+                ? owners[i] < 0
+                : owners[i] >= 0 && (!oneLeaf || owners[i] === wantLeaf),
+            );
+      const {buf: merged, groups} = mergeGrouped(kept);
       if (origin === 'center') xformRaw(merged, 0, -h * 0.5, 0);
 
       applyBuffers(
@@ -2965,9 +3204,13 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
           openFraction: openFrac,
           openAngleDeg: openDeg,
           glazing: hasGlazing,
+          ...(part === 'all'
+            ? {}
+            : {part, ...(oneLeaf ? {leafIndex: wantLeaf} : {})}),
         },
         groups,
       );
+      this.userData.leaves = leafInfo;
     }
   }
 
@@ -3790,12 +4033,126 @@ export function installArchitectureKit(threeNs: any, reg?: any): any {
     }
   }
 
+  // --- 10. Door rigs (frame + pivoting / sliding leaf groups) ---
+  let doorSeq = 0;
+  /**
+   * Builds a `THREE.Group` door rig: a stationary `<name>_frame` mesh plus one
+   * `<name>_leaf<i>` pivot group per leaf, placed at the leaf's hinge (or
+   * closed center for sliding leaves) with a `KHR_interactivity` `onSelect`
+   * `toggleTransform` that swings or slides the leaf open. Leaves start
+   * closed; swing leaves open to `openAngleDeg` (default 85 deg in
+   * `swingDirection`), bifold panels fold 76 deg (each follower panel is a
+   * child pivot toggled from its lead panel), sliding leaves travel fully.
+   * `materials` is passed to every `THREE.Mesh` (a material or the
+   * `[frame, glass, hardware]` array).
+   */
+  function createDoorGroup(
+    options: DoorGroupOptions = {},
+    materials?: unknown,
+    // tslint:disable-next-line:no-any THREE.Group from the host namespace.
+  ): any {
+    const Group = threeNs.Group;
+    const Mesh = threeNs.Mesh;
+    if (typeof Group !== 'function' || typeof Mesh !== 'function') {
+      throw new TypeError(
+        'THREE.Architecture.createDoorGroup needs THREE.Group and THREE.Mesh',
+      );
+    }
+    const opts: DoorGroupOptions =
+      options && typeof options === 'object' ? options : {};
+    const name =
+      typeof opts.name === 'string' && opts.name.trim()
+        ? opts.name.trim().slice(0, 64)
+        : `Door${++doorSeq}`;
+    const duration = clamp(num(opts.duration, 0.6), 0, 10);
+    const base: DoorOptions = {...opts, part: 'all', leafIndex: undefined};
+    // tslint:disable-next-line:no-any Mesh / Group instances.
+    const mk = (geo: any, nm: string, x: number, y: number, z: number): any => {
+      const mesh = new Mesh(geo, materials);
+      mesh.name = nm;
+      mesh.position.set(x, y, z);
+      return mesh;
+    };
+    const frameGeo = new DoorGeometry({...base, part: 'frame'});
+    const leaves = (frameGeo.userData.leaves || []) as DoorLeafInfo[];
+    const root = new Group();
+    root.name = name;
+    root.userData.door = {leaves};
+    if (frameGeo.index && frameGeo.index.count > 0) {
+      root.add(mk(frameGeo, `${name}_frame`, 0, 0, 0));
+    }
+    const closed: DoorOptions = {...base, openFraction: 0, openAngleDeg: 0};
+    // tslint:disable-next-line:no-any Pivot groups by leaf index.
+    const pivots: any[] = [];
+    for (const lf of leaves) {
+      const pivot = new Group();
+      pivot.name = `${name}_leaf${lf.index}`;
+      const parent = lf.parent == null ? null : leaves[lf.parent];
+      const [px, py, pz] = lf.pivot;
+      if (parent && pivots[parent.index]) {
+        const [qx, qy, qz] = parent.pivot;
+        pivot.position.set(px - qx, py - qy, pz - qz);
+        pivots[parent.index].add(pivot);
+      } else {
+        pivot.position.set(px, py, pz);
+        root.add(pivot);
+      }
+      pivot.add(
+        mk(
+          new DoorGeometry({...closed, part: 'leaves', leafIndex: lf.index}),
+          `${name}_leaf${lf.index}_mesh`,
+          -px,
+          -py,
+          -pz,
+        ),
+      );
+      pivots[lf.index] = pivot;
+    }
+    const quatY = (degs: number): number[] => {
+      const half = (degs * Math.PI) / 360;
+      return [0, Math.sin(half), 0, Math.cos(half)];
+    };
+    for (const lf of leaves) {
+      if (lf.parent != null || lf.motion === 'fixed') continue;
+      const acts: Array<Record<string, unknown>> = [];
+      if (lf.motion === 'rotate') {
+        acts.push({
+          action: 'toggleTransform',
+          property: 'rotation',
+          to: quatY(lf.openAngleDeg ?? 0),
+          duration,
+        });
+        for (const f of leaves) {
+          if (f.parent !== lf.index) continue;
+          acts.push({
+            action: 'toggleTransform',
+            property: 'rotation',
+            target: `${name}_leaf${f.index}`,
+            to: quatY(f.openAngleDeg ?? 0),
+            duration,
+          });
+        }
+      } else {
+        const t = lf.travel ?? 0;
+        acts.push({
+          action: 'toggleTransform',
+          property: 'translation',
+          to: lf.pivot.map((v, k) => r6(v + lf.axis[k] * t)),
+          duration,
+        });
+      }
+      pivots[lf.index].userData.interactivity = {onSelect: acts};
+    }
+    return root;
+  }
+
   const Architecture = {
     MAX_ARCH_STEPS: MAX_STEPS,
     MAX_ARCH_OPENINGS: MAX_OPENINGS,
     MAX_ARCH_PICKETS: MAX_PICKETS,
     MAX_ARCH_SEGMENTS: MAX_SEGS,
     codeStairSpec,
+    createDoorGroup,
     WallGeometry,
     SlabGeometry,
     StaircaseGeometry,

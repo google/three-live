@@ -42,6 +42,7 @@
  */
 
 import {registerPlugin} from '../../../three-live/src/plugin';
+import {sectionCapsPlugin} from '../../../three-live/src/plugins/section-caps';
 import {registerXRTraitSerializer} from '../../../three-live/src/xr-trait-schema';
 import {depthParticlesPlugin} from './depth-particles';
 import {explodedViewPlugin} from './exploded-view';
@@ -79,6 +80,8 @@ export const xrSpatialPlugins = [
 ] as const;
 
 for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
+// `section-cap="solid"` for the exploded-view section plane.
+registerPlugin(sectionCapsPlugin);
 // Exports (GLB / USDZ) now carry the full normalized spatial trait set.
 registerXRTraitSerializer();
 

@@ -3126,6 +3126,165 @@ fn test_lod_plugin_msft_lod_export_and_spatial_lint_no_false_overlap() {
 }
 
 #[test]
+fn test_texture_transform_and_wrap_samplers_reach_glb_and_previews() {
+    use three_live_compiler::{read_glb, ThreeEngine};
+
+    let script = r#"
+        const data = new Uint8Array(4 * 4 * 4).fill(200);
+        const tiled = new THREE.DataTexture(data, 4, 4);
+        tiled.wrapS = tiled.wrapT = THREE.RepeatWrapping;
+        tiled.repeat.set(0.25, 1);
+        tiled.offset.set(0.5, 0);
+        const clamped = new THREE.DataTexture(data.slice().fill(90), 4, 4);
+        clamped.wrapS = clamped.wrapT = THREE.ClampToEdgeWrapping;
+        const plane = new THREE.Mesh(
+            new THREE.PlaneGeometry(1, 1),
+            new THREE.MeshStandardMaterial({ map: tiled })
+        );
+        scene.add(plane);
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshStandardMaterial({ map: clamped })
+        );
+        box.position.x = 2;
+        scene.add(box);
+    "#;
+
+    let mut engine = ThreeEngine::new().expect("ThreeEngine::new");
+    let glb = engine.compile_glb(script).expect("compile_glb");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON chunk");
+    let info = &gltf["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"];
+    let xf = &info["extensions"]["KHR_texture_transform"];
+    let pair = |v: &serde_json::Value| (v[0].as_f64(), v[1].as_f64());
+    assert_eq!(pair(&xf["scale"]), (Some(0.25), Some(1.0)));
+    assert_eq!(pair(&xf["offset"]), (Some(0.5), Some(0.0)));
+    assert!(gltf["extensionsUsed"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(|e| e == "KHR_texture_transform")));
+    let sampler_of = |mat: usize| {
+        let tex = gltf["materials"][mat]["pbrMetallicRoughness"]["baseColorTexture"]["index"]
+            .as_u64()
+            .expect("texture index") as usize;
+        let s = gltf["textures"][tex]["sampler"].as_u64().expect("sampler") as usize;
+        (gltf["samplers"][s]["wrapS"].as_u64(), gltf["samplers"][s]["wrapT"].as_u64())
+    };
+    assert_eq!(sampler_of(0), (Some(10497), Some(10497)), "RepeatWrapping -> REPEAT");
+    assert_eq!(sampler_of(1), (Some(33071), Some(33071)), "ClampToEdgeWrapping -> CLAMP");
+    assert!(gltf["materials"][1]["pbrMetallicRoughness"]["baseColorTexture"]
+        .get("extensions")
+        .is_none());
+
+    // The GLB preview path bakes the transform into UVs: u' = 0.25 * u + 0.5.
+    let sg = read_glb(&glb).expect("read_glb");
+    let plane_uvs = &sg.meshes[0].uvs;
+    assert!(!plane_uvs.is_empty());
+    assert!(plane_uvs.iter().all(|uv| uv[0] >= 0.5 - 1e-5 && uv[0] <= 0.75 + 1e-5));
+    // The script preview path (raw extraction) bakes the same transform.
+    let raw = engine.execute(script).expect("execute");
+    assert!(raw.meshes[0].uvs.iter().all(|uv| uv[0] >= 0.5 - 1e-5 && uv[0] <= 0.75 + 1e-5));
+    assert!(raw.meshes[1].uvs.iter().any(|uv| uv[0] < 0.25));
+}
+
+#[test]
+fn test_texture_transform_preview_selection_and_shared_vertex_data() {
+    use three_live_compiler::{read_glb, ThreeEngine};
+
+    // An identity `map` must not hide the `normalMap` transform, and two
+    // primitives sharing vertex data with different transforms get separate UVs.
+    let script = r#"
+        const px = new Uint8Array(4 * 4 * 4).fill(160);
+        const plain = new THREE.DataTexture(px, 4, 4);
+        const bumpy = new THREE.DataTexture(px.slice().fill(128), 4, 4);
+        bumpy.repeat.set(4, 4);
+        const a = new THREE.Mesh(
+            new THREE.PlaneGeometry(1, 1),
+            new THREE.MeshStandardMaterial({ map: plain, normalMap: bumpy })
+        );
+        scene.add(a);
+        const half = new THREE.DataTexture(px.slice().fill(60), 4, 4);
+        half.repeat.set(0.5, 0.5);
+        const geo = new THREE.BoxGeometry(1, 1, 1);
+        const box = new THREE.Mesh(geo, [
+            new THREE.MeshStandardMaterial({ map: plain }),
+            new THREE.MeshStandardMaterial({ map: half }),
+            new THREE.MeshStandardMaterial({ map: plain }),
+            new THREE.MeshStandardMaterial({ map: plain }),
+            new THREE.MeshStandardMaterial({ map: plain }),
+            new THREE.MeshStandardMaterial({ map: plain }),
+        ]);
+        box.position.x = 2;
+        scene.add(box);
+    "#;
+    let mut engine = ThreeEngine::new().expect("ThreeEngine::new");
+    let raw = engine.execute(script).expect("execute");
+    let max_u = |uvs: &[[f32; 2]]| uvs.iter().fold(0.0f32, |m, uv| m.max(uv[0]));
+    assert!(max_u(&raw.meshes[0].uvs) > 3.9, "raw preview uses the normalMap transform");
+    let glb = engine.compile_glb(script).expect("compile_glb");
+    let sg = read_glb(&glb).expect("read_glb");
+    assert!(max_u(&sg.meshes[0].uvs) > 3.9, "GLB preview uses the normalMap transform");
+    let boxm = &sg.meshes[1];
+    assert_eq!(boxm.groups.len(), 6);
+    assert!(boxm.uvs.len() > 24, "transformed primitive must not alias shared UVs");
+    let g1 = &boxm.groups[1];
+    let tri_max = boxm.indices[g1.start..g1.start + g1.count]
+        .iter()
+        .fold(0.0f32, |m, &i| m.max(boxm.uvs[i as usize][0]));
+    assert!(tri_max <= 0.5 + 1e-5, "half-repeat primitive keeps its own baked UVs");
+    let g0 = &boxm.groups[0];
+    assert!(boxm.indices[g0.start..g0.start + g0.count]
+        .iter()
+        .any(|&i| boxm.uvs[i as usize][0] > 0.9));
+}
+
+#[test]
+fn test_sim_toggle_transform_property_to_drives_door_rig() {
+    use three_live_compiler::{simulate_scenario_from_source, SimAction};
+
+    let script = r#"
+        const rig = THREE.Architecture.createDoorGroup({ name: 'Front', duration: 0.2 });
+        scene.add(rig);
+        const slider = THREE.Architecture.createDoorGroup({
+            name: 'Patio', operation: 'barn', duration: 0.2,
+        });
+        slider.position.x = 3;
+        scene.add(slider);
+    "#;
+    let select = |target: &str| SimAction {
+        at: 0.1,
+        action_type: "select".to_string(),
+        target: Some(target.to_string()),
+        factor: 1.0,
+        direction: None,
+        dx: 0.0,
+        dz: 0.0,
+        duration: None,
+        jump: false,
+        event_id: None,
+        amount: None,
+    };
+    let (report, _) = simulate_scenario_from_source(
+        script.as_bytes(),
+        false,
+        1.0,
+        &[select("Front_leaf0"), select("Patio_leaf0")],
+        &[],
+    )
+    .expect("simulation");
+    let body = |n: &str| report.bodies.iter().find(|b| b.name == n).cloned();
+    let leaf = body("Front_leaf0").expect("Front_leaf0 body");
+    // Left-hinged outswing opens -85 deg about +Y: q.y = sin(-42.5 deg).
+    assert!(
+        (leaf.final_rotation[1] + 0.6756).abs() < 0.02,
+        "swing leaf rotation {:?}",
+        leaf.final_rotation
+    );
+    let barn = body("Patio_leaf0").expect("Patio_leaf0 body");
+    assert!(barn.final_translation[0] > 0.5, "barn leaf slid {:?}", barn.final_translation);
+}
+
+#[test]
 fn test_data_texture_glb_usdz_and_headless_render() {
     let script = r#"
         const width = 32;

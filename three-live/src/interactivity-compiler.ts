@@ -120,6 +120,27 @@ export function compileInteractivityGraph(
   gltfNodes.forEach((n, i) => {
     if (typeof n?.name === 'string' && !nodeByName.has(n.name)) nodeByName.set(n.name, i);
   });
+  /**
+   * `toggleTransform` target: a named descendant of the owner first (so cloned
+   * or same-named rigs stay wired to their own parts), then any node by name,
+   * then a valid numeric `targetNode`, else the owner. Returns `null` for a
+   * string `target` that matches no node, so the action is skipped instead of
+   * moving the owner.
+   */
+  // tslint:disable-next-line:no-any
+  const toggleTargetOf = (act: any, self: number): number | null => {
+    if (typeof act.target === 'string') {
+      const queue: number[] = [...(gltfNodes[self]?.children ?? [])];
+      for (let q = 0; q < queue.length && q < gltfNodes.length; q++) {
+        const c = queue[q];
+        if (gltfNodes[c]?.name === act.target) return c;
+        queue.push(...(gltfNodes[c]?.children ?? []));
+      }
+      return nodeByName.get(act.target) ?? null;
+    }
+    const t = act.targetNode;
+    return Number.isInteger(t) && t >= 0 && t < gltfNodes.length ? t : self;
+  };
   // tslint:disable-next-line:no-any
   const targetOf = (act: any, self: number): number =>
     typeof act.target === 'string' && nodeByName.has(act.target)
@@ -159,13 +180,17 @@ export function compileInteractivityGraph(
             act.property === 'rotation' || act.property === 'scale'
               ? act.property
               : 'translation';
+          // `target` toggles another node (e.g. a bifold follower panel).
+          const tIdx = toggleTargetOf(act, nodeIdx);
+          if (tIdx === null) continue;
+          const tNode = gltfNodes[tIdx];
           const def =
             prop === 'rotation'
-              ? gNode.rotation || [0, 0, 0, 1]
+              ? tNode.rotation || [0, 0, 0, 1]
               : prop === 'scale'
-                ? gNode.scale || [1, 1, 1]
-                : gNode.translation || [0, 0, 0];
-          const ptr = `/nodes/${nodeIdx}/${prop}`;
+                ? tNode.scale || [1, 1, 1]
+                : tNode.translation || [0, 0, 0];
+          const ptr = `/nodes/${tIdx}/${prop}`;
           const varIdx = addVar(`__toggle_${nodeIdx}_${aIdx}`, 'bool', false);
           const getIdx = addNode('variable/get', {configuration: {variable: varIdx}});
           const notIdx = addNode('math/not', {values: {a: link(getIdx)}});

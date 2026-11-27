@@ -64,6 +64,13 @@ import {
   postprocessingPlugin,
 } from './plugins/postprocessing';
 import {
+  DEFAULT_SECTION_CAP_COLOR,
+  getSectionCapMesh,
+  isSectionCapEligible,
+  renderSectionCaps,
+  sectionCapsPlugin,
+} from './plugins/section-caps';
+import {
   computeWorldSceneBounds,
   doesMeshCastShadow,
   doesMeshReceiveShadow,
@@ -102,6 +109,7 @@ registerPlugin(meshoptPlugin);
 registerPlugin(variantsPlugin);
 registerPlugin(postprocessingPlugin);
 registerPlugin(lodPlugin);
+registerPlugin(sectionCapsPlugin);
 
 export {
   applyMeshoptFilter,
@@ -111,6 +119,7 @@ export {
   decimateGeometry,
   decodeMeshoptBuffer,
   decodeMeshoptGLB,
+  DEFAULT_SECTION_CAP_COLOR,
   doesMeshCastShadow,
   doesMeshReceiveShadow,
   encodeMeshoptBuffer,
@@ -123,11 +132,13 @@ export {
   getEnvironmentSH,
   getInteractivityVM,
   getLodController,
+  getSectionCapMesh,
   getShadowMapStats,
   hotspotPlugin,
   installLodExtension,
   interactivityPlugin,
   InteractivityVM,
+  isSectionCapEligible,
   LOD,
   LodController,
   lodPlugin,
@@ -141,7 +152,9 @@ export {
   parseSafeGltfPointer,
   postprocessingPlugin,
   registerMaterialShader,
+  renderSectionCaps,
   resolveActiveShadowLights,
+  sectionCapsPlugin,
   selectLodLevelIndex,
   selectMaterialVariant,
   sendInteractivityEvent,

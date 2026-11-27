@@ -98,6 +98,7 @@ bundles and entry points.
 | `animation-name` | `string` | `three-live-viewer`+ | Name of specific glTF animation clip to play (defaults to first clip). |
 | `auto-rotate` | `boolean` | `three-live-viewer`+ | Automatically rotates the camera around the model. |
 | `renderer` | `"auto" \| "webgpu" \| "webgl2"` | `three-live-webgpu` | Renderer preference when `three-live-webgpu` is loaded (`"auto"` default accelerates compatible desktop/inline scenes via WebGPU `GPURenderBundle` and falls back to WebGL2 automatically). |
+| `section-cap` | `"none" \| "solid"` | `three-live-studio` | `"solid"` fills the cut faces of closed meshes with flat poché caps (`section-cap-color`, default `#6b7280`) while `section-plane` is active; drawn in the WebGL2 pass. |
 <!-- mdformat on -->
 
 --------------------------------------------------------------------------------
@@ -107,6 +108,12 @@ bundles and entry points.
 `<three-live>` provides full drop-in compatibility for `<model-viewer>`
 JavaScript configurators, hotspot managers, and AR launchers:
 
+-   **Deterministic Frames (headless tests):** `await viewer.whenReady()`
+    resolves after the current model or scene script has loaded, its textures
+    have decoded, and a frame has rendered;
+    `viewer.stepFrame(dtSeconds = 1 / 60)` advances animations, plugins, and
+    simulation by `dt` and renders synchronously (it pauses the
+    `requestAnimationFrame` loop).
 -   **Camera & Screenshot:** `viewer.getCameraOrbit()`,
     `viewer.getCameraTarget()`, `viewer.getFieldOfView()`,
     `viewer.jumpCameraToGoal()`, `viewer.toDataURL()`, `await viewer.toBlob()`
@@ -308,7 +315,10 @@ by the `three-live/studio` VM on Web, Android, and iOS:
 
 Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` / `onReceive[eventName]`:
 
-- `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' | 'rotation' | 'scale', from?: number[], to: number[], duration?: number }`
+-   `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' |
+    'rotation' | 'scale', from?: number[], to: number[], duration?: number,
+    target?: '<node name>' }` (`target` toggles another node, e.g. a follower
+    panel)
 - `interpolate`: `{ action: 'interpolate', target?: string, property: 'translation' | 'rotation' | 'scale' | 'baseColorFactor' | 'metallicFactor' | 'roughnessFactor' | 'emissiveFactor', to: number | number[], duration?: number }`
 - `setProperty`: `{ action: 'setProperty', target?: string, property: string, value: unknown }`
 - `toggleVisibility`: `{ action: 'toggleVisibility', target?: string }`
@@ -544,7 +554,11 @@ assets to be located.
     `MeshStandardNodeMaterial` / `THREE.TSL` (when `three-live-tsl` or
     `three-live-full` is loaded; mapped to glTF PBR metallic-roughness + PBR
     Next + `extras.tsl`, plus `mesh.userData.variants` for
-    `KHR_materials_variants`).
+    `KHR_materials_variants`). Texture `repeat`, `offset`, `rotation`, and
+    `center` export as `KHR_texture_transform`, and `wrapS` / `wrapT` as glTF
+    samplers (default `RepeatWrapping`). Built-in renderers apply one transform
+    per material, so tile every map together, e.g.
+    `THREE.ProceduralTexture.brick({ repeat: [4, 2] })`.
 -   **Scene Graph & GPU Instancing:** `Scene`, `Group`, `Mesh`, `InstancedMesh`
     (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`),
     `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`,

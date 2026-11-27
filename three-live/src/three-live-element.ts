@@ -251,7 +251,7 @@ export interface ThreeLiveElement {
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
   static readonly observedAttributes =
-    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane section-gizmo section-cap-color cutaway'.split(
+    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane section-gizmo section-cap section-cap-color cutaway'.split(
       ' ',
     );
 
@@ -710,6 +710,7 @@ export class ThreeLiveElement extends BaseElement {
 
       case 'section-plane':
       case 'section-gizmo':
+      case 'section-cap':
       case 'section-cap-color':
         // Color, WebGPU, and shadow passes read section attributes from the
         // host element each frame; just schedule a redraw.
@@ -973,6 +974,20 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   /**
+   * `"solid"` fills the cut faces of closed meshes with flat poché caps
+   * (`section-cap-color`, default `#6b7280`) while `section-plane` is active;
+   * `"none"` (default) leaves them open. Caps render in the WebGL2 pass.
+   */
+  get sectionCap(): 'solid' | 'none' {
+    return this.getAttr('section-cap')?.trim().toLowerCase() === 'solid'
+      ? 'solid'
+      : 'none';
+  }
+  set sectionCap(val: 'solid' | 'none' | null) {
+    this.setAttr('section-cap', val);
+  }
+
+  /**
    * Optional matte poché color (`#rrggbb` / `#rgb`) used to shade exposed
    * back-faces when `section-plane` is active on WebGL2 and WebGPU.
    */
@@ -1163,10 +1178,93 @@ export class ThreeLiveElement extends BaseElement {
    * Shared implementation of `loadModel`. `limits` is set only for models that
    * come back from the untrusted script sandbox.
    */
-  private async loadModelWithLimits(
+  private loadModelWithLimits(
     model: GLBData | ArrayBuffer | ArrayBufferView | string,
     limits?: HostSceneLimits,
     current = this.beginLoad(),
+  ): Promise<void> {
+    return this.trackLoad(this.loadModelInto(model, limits, current));
+  }
+
+  /**
+   * Model / script loads still in flight, awaited by `whenReady()`. Created
+   * lazily so prototype-only hosts (`Object.create`) keep working.
+   */
+  private inflightLoads?: Set<Promise<unknown>>;
+
+  private trackLoad<T>(p: Promise<T>): Promise<T> {
+    const loads = (this.inflightLoads ??= new Set());
+    loads.add(p);
+    const done = () => {
+      loads.delete(p);
+    };
+    p.then(done, done);
+    return p;
+  }
+
+  /**
+   * Resolves once the current model or scene script has loaded (or failed),
+   * its textures have decoded, and a frame has rendered, or after
+   * `timeoutMs` (it resolves rather than rejects on timeout, and immediately
+   * when the element has no viewer yet). Pair with `stepFrame()` for
+   * deterministic headless tests.
+   */
+  async whenReady(timeoutMs = 10000): Promise<void> {
+    const ms = Math.max(0, Number(timeoutMs) || 0);
+    const deadline = Date.now() + ms;
+    // One timer for the whole wait, cleared on exit so it never keeps a
+    // headless runtime alive.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<void>((r) => {
+      timer = setTimeout(r, ms);
+    });
+    try {
+      // Inline scripts start one microtask after connection, or on
+      // `DOMContentLoaded` while the document is still parsing.
+      if (
+        typeof document !== 'undefined' &&
+        document.readyState === 'loading'
+      ) {
+        await Promise.race([
+          new Promise<void>((r) =>
+            document.addEventListener('DOMContentLoaded', () => r(), {
+              once: true,
+            }),
+          ),
+          timedOut,
+        ]);
+      }
+      await new Promise<void>((r) => setTimeout(r, 0));
+      while ((this.inflightLoads?.size ?? 0) > 0 && Date.now() < deadline) {
+        await Promise.race([
+          Promise.allSettled([...(this.inflightLoads ?? [])]),
+          timedOut,
+        ]);
+      }
+      const v = this.viewer;
+      if (!v) return;
+      await v.whenTexturesReady?.(Math.max(0, deadline - Date.now()));
+      this.viewer?.render?.();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Advances animations, plugins, and simulation by `dtSeconds` (default
+   * 1/60) and renders synchronously, without `requestAnimationFrame`. The
+   * first call pauses the automatic render loop so headless tests and frame
+   * captures are deterministic; reconnect the element to resume it. Camera
+   * auto-rotate and orbit damping are not `dt`-driven.
+   */
+  stepFrame(dtSeconds = 1 / 60): void {
+    this.viewer?.stepFrame(dtSeconds);
+  }
+
+  private async loadModelInto(
+    model: GLBData | ArrayBuffer | ArrayBufferView | string,
+    limits: HostSceneLimits | undefined,
+    current: AbortController,
   ): Promise<void> {
     current.signal.throwIfAborted();
     if (!this.viewer) {
@@ -1757,44 +1855,46 @@ export class ThreeLiveElement extends BaseElement {
 
     const current = this.beginLoad();
     const active = () => !current.signal.aborted;
-    return new Promise<ArrayBuffer | GLBData | void>((resolve, reject) => {
-      const abort = () => reject(current.signal.reason);
-      current.signal.addEventListener('abort', abort, {once: true});
-      if (!active()) {
-        abort();
-        return;
-      }
-      const callbacks: ScriptExecutionCallbacks = {
-        onModelReady: (model) => {
-          this.loadModelWithLimits(
-            model,
-            SANDBOX_HOST_SCENE_LIMITS,
-            current,
-          ).then(() => resolve(model), reject);
-        },
-        onUpdateTransforms: (transforms) => {
-          if (active()) this.viewer?.updateMeshTransforms(transforms);
-        },
-        onError: (error) => {
-          if (!active()) return;
-          this.showToast(error.message);
-          this.emitError(error, 'script');
-          reject(error);
-        },
-        onToast: (message) => {
-          if (active()) this.showToast(message);
-        },
-      };
-      invokeRunner(runner, callbacks).then(
-        (handle) => {
-          if (active()) this.scriptHandle = handle || null;
-          else handle?.terminate();
-        },
-        (error) => {
-          if (active()) callbacks.onError?.(error);
-        },
-      );
-    });
+    return this.trackLoad(
+      new Promise<ArrayBuffer | GLBData | void>((resolve, reject) => {
+        const abort = () => reject(current.signal.reason);
+        current.signal.addEventListener('abort', abort, {once: true});
+        if (!active()) {
+          abort();
+          return;
+        }
+        const callbacks: ScriptExecutionCallbacks = {
+          onModelReady: (model) => {
+            this.loadModelWithLimits(
+              model,
+              SANDBOX_HOST_SCENE_LIMITS,
+              current,
+            ).then(() => resolve(model), reject);
+          },
+          onUpdateTransforms: (transforms) => {
+            if (active()) this.viewer?.updateMeshTransforms(transforms);
+          },
+          onError: (error) => {
+            if (!active()) return;
+            this.showToast(error.message);
+            this.emitError(error, 'script');
+            reject(error);
+          },
+          onToast: (message) => {
+            if (active()) this.showToast(message);
+          },
+        };
+        invokeRunner(runner, callbacks).then(
+          (handle) => {
+            if (active()) this.scriptHandle = handle || null;
+            else handle?.terminate();
+          },
+          (error) => {
+            if (active()) callbacks.onError?.(error);
+          },
+        );
+      }),
+    );
   }
 
   /**

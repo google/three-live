@@ -26,6 +26,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **`Texture.repeat` / `offset` / `rotation` / `center` export as
+    `KHR_texture_transform`, and `wrapS` / `wrapT` as glTF samplers:**
+    `sceneToGLB` / `compileToGLB` emit `KHR_texture_transform` (in
+    `extensionsUsed` only) on every non-identity `textureInfo` (base color,
+    metallic-roughness including packed `_packPbr` maps, normal, occlusion,
+    emissive), folding `center` into `offset`. Output matches three.js
+    `Matrix3.setUvTransform` exactly for uniform `repeat`, no rotation, or
+    quarter turns; other non-uniform rotated textures export `scale = repeat`
+    like three.js `GLTFExporter`. Samplers carry the wrap modes (three.js
+    constants or GL enums), deduplicated per wrap pair, and textures deduplicate
+    by `(image, sampler)` (at most 64 glTF textures). The WebGL2 / WebGPU
+    `ThreeView`, USDZ export (`primvars:st`), and the Rust CLI/MCP preview
+    renderer bake the material's first transform into UVs in the spec order
+    `T * R * S` (also fixing rotated, non-uniformly scaled third-party GLBs), so
+    give every map of one material the same transform.
+    `THREE.ProceduralTexture.*({ repeat: 4 | [4, 2] })` returns maps tiled
+    together, `Texture.clone()` / `rotation` / `center` are new, and the sandbox
+    texture quota counts distinct images, so clones are free. `DataTexture` and
+    `CanvasTexture` default to `RepeatWrapping` (like `Texture`) so existing
+    tiled scenes look the same; set `ClampToEdgeWrapping` explicitly to clamp
+    (honored by WebGL2, USDZ, and external viewers; WebGPU and the CLI preview
+    still repeat).
+-   **Solid section caps (`section-cap="solid"`) and deterministic frames:**
+    `section-cap="solid"` (default `"none"`) on `<three-live>` / `<xr-live>`
+    slices every visible, static, opaque closed mesh with the active
+    `section-plane`, chains the cut into loops, and ear-clips them with holes
+    into flat poché caps (`section-cap-color`, default `#6b7280`) facing the
+    removed side. The renderer ships in the section-caps add-on
+    (`three-live-studio`, `xr-live-spatial`, and the full bundles); the core
+    viewer only calls a registry hook. Open or non-manifold cuts, instanced /
+    skinned / morphed meshes, `boundsIgnore` context meshes, and
+    `userData.sectionCap = false` are skipped; work is capped at 300k source
+    triangles, 20k loop vertices, and a bridging / ear-clipping step budget.
+    Caps are built in model space (cached across turntable and AR placement) for
+    meshes whose bounds the plane crosses, and mirrored or inside-out meshes are
+    handled. Caps draw in the WebGL2 pass (WebGPU scenes fall back to WebGL2
+    while caps are on) and cast no shadows. `el.whenReady()` resolves once the
+    current model or script has loaded, textures have decoded, and a frame has
+    rendered; `el.stepFrame(dt = 1 / 60)` advances animations, plugins, and
+    simulation and renders synchronously without `requestAnimationFrame`
+    (pausing the automatic loop).
+-   **Bundle budgets:** raised to fit these features (`three-live-viewer` 38,
+    `three-live` 91, `three-live-studio` 40, `three-live-kit-architecture` 18,
+    `three-live-kits` 85, `three-live-full` 252, `three-live-compiler-bundle`
+    268, `xr-live-viewer` 65, `xr-live` 103, `xr-live-spatial` 68,
+    `xr-live-full` 363 KB gz).
+-   **Door rigs: `DoorGeometry({ part, leafIndex })`, leaf metadata, and
+    `THREE.Architecture.createDoorGroup()`:** `part: 'frame'` emits the
+    stationary frame, casing, barn track, or pocket header and jambs;
+    `part: 'leaves'` (optionally one `leafIndex`) emits the moving leaves with
+    their glazing and handles in door-local coordinates. The default
+    `part: 'all'` output is unchanged except that a sliding panel's handle now
+    stays on the side it had when closed. `geometry.userData.leaves` lists each
+    leaf's `motion` (`rotate` / `slide` / `fixed`), `pivot`, `axis`,
+    `openAngleDeg` / `travel`, and current pose; bifold follower panels name
+    their lead panel in `parent`. `createDoorGroup(options, materials)` returns
+    a `THREE.Group` with a `<name>_frame` mesh and one `<name>_leaf<i>` pivot
+    group per leaf carrying an `onSelect` `toggleTransform` (swing to
+    `openAngleDeg` or 85 deg, 76 deg bifold folds with nested follower pivots,
+    full slide travel). `toggleTransform` accepts `target: '<node name>'` (owner
+    descendants first, so cloned or same-named rigs stay wired; an unknown name
+    skips the action), and the CLI `sim` now honors the documented `property` +
+    `to` form. Open bifold follower panels now stay attached to the lead panel's
+    edge.
+-   **Native material groups on `Architecture.WallGeometry`, `SlabGeometry`, and
+    `RoofGeometry`:** walls emit `groups` `0` (+Z front / exterior face, the
+    side `cutaway: 'front'` removes), `1` (-Z back / interior face), and `2`
+    (trim: ends, top, opening reveals, curb, baseboards, cornices); slabs emit
+    `0` (top), `1` (soffit), and `2` (rim edges + opening shaft walls); every
+    roof style emits `0` (weather surface: slopes, ridge, flat deck, parapet
+    coping), `1` (soffit / underside), and `2` (fascia, rake edges, gable ends,
+    parapet sides). Pass `[exterior, interior, trim]` as a `Material[]` to
+    finish each face; a single material still renders the whole mesh. Vertices
+    and triangles are unchanged (only the index order groups them), so meshes
+    stay 2-manifold.
 -   **Multi-material `BufferGeometry.groups` & one-way cutaway walls in
     `THREE.Architecture` (`three-live/kits/architecture`):** `WindowGeometry`,
     `DoorGeometry` (`vision-lite`, `half-lite`, `french`, and hardware), and

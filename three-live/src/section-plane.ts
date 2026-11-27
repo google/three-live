@@ -138,6 +138,17 @@ export function parseSectionCapColor(
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+/**
+ * Resolves `section-cap` from `viewerObj.container`: `"solid"` fills cut
+ * closed meshes with poché caps; anything else (default) leaves them open.
+ */
+export function resolveSectionCapMode(viewerObj: unknown): 'solid' | 'none' {
+  const raw = (
+    viewerObj as SectionViewerLike | null
+  )?.container?.getAttribute?.('section-cap');
+  return raw?.trim().toLowerCase() === 'solid' ? 'solid' : 'none';
+}
+
 /** Resolves `section-cap-color` from `viewerObj.container` (`[r, g, b]` or `null`). */
 export function resolveSectionCapColor(
   viewerObj: unknown,

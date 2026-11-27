@@ -116,6 +116,42 @@ fn decompose_mat4(m: &[f32]) -> ([f32; 3], [f32; 4], [f32; 3]) {
     ([tx, ty, tz], [qx, qy, qz, qw], [sx, sy, sz])
 }
 
+/// Returns a glTF material's `KHR_texture_transform` (base color first, then the other PBR
+/// textures) as `[offset_x, offset_y, rotation, scale_x, scale_y]`, mirroring
+/// `materialTextureTransform` in `three-live/src/accessor.ts`.
+fn material_uv_transform(mat: &serde_json::Value) -> Option<[f32; 5]> {
+    let pbr = &mat["pbrMetallicRoughness"];
+    let infos = [
+        &pbr["baseColorTexture"],
+        &pbr["metallicRoughnessTexture"],
+        &mat["normalTexture"],
+        &mat["occlusionTexture"],
+        &mat["emissiveTexture"],
+    ];
+    let t = infos
+        .iter()
+        .map(|info| &info["extensions"]["KHR_texture_transform"])
+        .find(|t| t.is_object())?;
+    let f = |v: &serde_json::Value, d: f32| {
+        v.as_f64().map(|x| x as f32).filter(|x| x.is_finite()).unwrap_or(d)
+    };
+    Some([
+        f(&t["offset"][0], 0.0),
+        f(&t["offset"][1], 0.0),
+        f(&t["rotation"], 0.0),
+        f(&t["scale"][0], 1.0),
+        f(&t["scale"][1], 1.0),
+    ])
+}
+
+/// Bakes a `[offset_x, offset_y, rotation, scale_x, scale_y]` UV transform into one UV in the
+/// `KHR_texture_transform` order `T * R * S` (`applyTextureTransform` in `accessor.ts`).
+fn apply_uv_transform(uv: [f32; 2], t: &[f32; 5]) -> [f32; 2] {
+    let (s, c) = t[2].sin_cos();
+    let (su, sv) = (t[3] * uv[0], t[4] * uv[1]);
+    [c * su + s * sv + t[0], -s * su + c * sv + t[1]]
+}
+
 /// Parses a binary glTF 2.0 (`.glb`) container into a [`SceneGraph`] for spatial linting
 /// and headless rasterization.
 pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
@@ -409,6 +445,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 Option<u64>,
                 Option<u64>,
                 Option<u64>,
+                Option<[u32; 5]>,
                 usize,
                 usize,
             )> = Vec::new();
@@ -435,10 +472,17 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                     }
                     shared
                 });
-                let key = (pos_acc, norm_acc, uv_acc, col_acc);
+                // Primitives sharing vertex data but not the UV transform get their own copy.
+                let uv_xform = prim["material"]
+                    .as_u64()
+                    .and_then(|m| gltf["materials"].get(m as usize))
+                    .and_then(material_uv_transform);
+                let xform_key = uv_xform.map(|t| t.map(f32::to_bits));
+                let key = (pos_acc, norm_acc, uv_acc, col_acc, xform_key);
 
-                let (v_offset, v_count) = if let Some(&(_, _, _, _, off, cnt)) =
-                    attr_cache.iter().find(|&&(pa, na, ua, ca, _, _)| (pa, na, ua, ca) == key)
+                let (v_offset, v_count) = if let Some(&(_, _, _, _, _, off, cnt)) = attr_cache
+                    .iter()
+                    .find(|&&(pa, na, ua, ca, xk, _, _)| (pa, na, ua, ca, xk) == key)
                 {
                     (off, cnt)
                 } else {
@@ -472,7 +516,11 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                             uv_acc.map(|idx| read_acc_f32(idx as usize, 2)).unwrap_or_default();
                         let mut added = 0usize;
                         for chunk in uv_flat.as_chunks::<2>().0.iter().take(cnt) {
-                            uvs.push([chunk[0], chunk[1]]);
+                            let uv = [chunk[0], chunk[1]];
+                            uvs.push(match &uv_xform {
+                                Some(t) => apply_uv_transform(uv, t),
+                                None => uv,
+                            });
                             added += 1;
                         }
                         uvs.resize(uvs.len() + cnt.saturating_sub(added), [0.0, 0.0]);
@@ -496,7 +544,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                         colors.resize(colors.len() + cnt.saturating_sub(added), [1.0, 1.0, 1.0]);
                     }
 
-                    attr_cache.push((pos_acc, norm_acc, uv_acc, col_acc, off, cnt));
+                    attr_cache.push((pos_acc, norm_acc, uv_acc, col_acc, xform_key, off, cnt));
                     (off, cnt)
                 };
 

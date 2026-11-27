@@ -29,6 +29,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   CylinderGeometry,
+  DataTexture,
   Float32BufferAttribute,
   Group,
   Mesh,
@@ -979,6 +980,36 @@ async function runTests() {
       Object.prototype.hasOwnProperty.call(discEl, 'loadModel'),
       false,
     );
+  }
+
+  // 15b. Replacements may carry KHR_texture_transform (tiled textures).
+  {
+    const texScene = new Scene();
+    const tex = new DataTexture(new Uint8Array(16).fill(200), 2, 2);
+    tex.repeat.set(4, 2);
+    const tiled = new Mesh(
+      new BoxGeometry(1, 2, 1),
+      new MeshStandardMaterial({map: tex}),
+    );
+    tiled.name = 'TiledTower';
+    texScene.add(tiled);
+    const tiledGlb = toGLBData(texScene.toGLB());
+    assert.ok(tiledGlb.gltf.extensionsUsed.includes('KHR_texture_transform'));
+    let model = buildTowerScene('Tower');
+    const texHost: SceneEditableElement = {
+      getLoadedModel: () => model,
+      async loadModel(m: typeof model) {
+        model = m;
+      },
+    };
+    sceneEditsPlugin.onElementConnected?.(texHost);
+    const res = await texHost.previewNodeEdit!({
+      target: 'Tower',
+      replacement: tiledGlb,
+    });
+    assert.equal(res.status, 'preview', JSON.stringify(res));
+    assert.ok(model.gltf.extensionsUsed?.includes('KHR_texture_transform'));
+    sceneEditsPlugin.onElementDisconnected?.(texHost);
   }
 
   // 16. Package exports & standalone TypeScript declaration check (`three-live/edits`)

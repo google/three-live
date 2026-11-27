@@ -84,6 +84,7 @@ const ALLOWED_REPLACEMENT_EXTENSIONS = new Set([
   ...khrMat('unlit clearcoat transmission ior volume specular sheen'),
   'KHR_mesh_quantization',
   'KHR_node_visibility',
+  'KHR_texture_transform',
   'EXT_meshopt_compression',
   'KHR_meshopt_compression',
 ]);

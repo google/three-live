@@ -21,6 +21,7 @@ import {
   mat4Multiply,
   rayIntersectsTriangle,
 } from '../src/math';
+import {getSharedRegistry} from '../src/plugin';
 import {
   environmentMapPlugin,
   getEnvironmentSH,
@@ -52,8 +53,17 @@ import {
   postprocessingPlugin,
   resolveMeshOutline,
 } from '../src/plugins/postprocessing';
+import {
+  getSectionCapMesh,
+  sectionCapsPlugin,
+} from '../src/plugins/section-caps';
 import {contactShadowPlugin} from '../src/plugins/shadows';
 import {webxrPlugin} from '../src/plugins/webxr';
+import {
+  buildSectionCaps,
+  chainSegments,
+  triangulateWithHoles,
+} from '../src/section-cap';
 import THREE from '../src/three-author';
 import {
   evaluateToneMapping,
@@ -3601,7 +3611,305 @@ async function runThreeViewTests() {
         lastCap[3] === 1,
       'section-cap-color="#1e293b" binds matte RGB uniform and keeps FrontSide back-faces unculled for poché shading',
     );
+
+    // `section-cap="solid"`: real cap geometry for closed meshes (opt-in).
+    const fAny = fView as unknown as {
+      manualClock: boolean;
+      animFrameId: number | null;
+    };
+    registerPlugin(sectionCapsPlugin);
+    fView.render();
+    assert(
+      getSectionCapMesh(fView) === null,
+      'section-cap defaults to none: no cap geometry is built',
+    );
+    capAttrs.set('section-cap', 'solid');
+    fView.render();
+    const capPrim = getSectionCapMesh(fView)?.primitives[0];
+    const capPos = capPrim?.positions as Float32Array | undefined;
+    let capArea = 0;
+    let onPlane = Boolean(capPos?.length);
+    const capIdx = (capPrim?.indices ?? []) as Uint32Array;
+    for (let t = 0; capPos && t < capIdx.length; t += 3) {
+      const [i, j, k] = [capIdx[t] * 3, capIdx[t + 1] * 3, capIdx[t + 2] * 3];
+      const ux = capPos[j] - capPos[i];
+      const uz = capPos[j + 2] - capPos[i + 2];
+      const vx = capPos[k] - capPos[i];
+      const vz = capPos[k + 2] - capPos[i + 2];
+      // y-up cap seen from +Y is CCW: (u x v).y = uz*vx - ux*vz > 0.
+      capArea += (uz * vx - ux * vz) / 2;
+    }
+    for (let i = 1; capPos && i < capPos.length; i += 3) {
+      if (Math.abs(capPos[i] - 0.2) > 1e-4) onPlane = false;
+    }
+    assert(
+      onPlane &&
+        Math.abs(capArea - 4) < 1e-3 &&
+        // sRGB #1e -> linear for the PBR base color.
+        Math.abs(
+          capPrim?.baseColor?.[0] - ((0x1e / 255 + 0.055) / 1.055) ** 2.4,
+        ) < 1e-3,
+      `section-cap="solid" caps the 2x2 House cut at y=0.2 with a CCW, plane-flush, colored cap (area=${capArea.toFixed(3)})`,
+    );
+    const cached = getSectionCapMesh(fView);
+    fView.render();
+    assert(
+      getSectionCapMesh(fView) === cached,
+      'section caps are cached while the plane and scene are unchanged',
+    );
+    // Turntable / AR root motion keeps the model-space cut cached.
+    const rootAny = fView as unknown as {modelRootMatrix: Float32Array};
+    const savedRoot = rootAny.modelRootMatrix.slice();
+    rootAny.modelRootMatrix[12] += 3;
+    fView.render();
+    assert(
+      getSectionCapMesh(fView) === cached,
+      'model-space section caps survive root (turntable / AR) motion without a rebuild',
+    );
+    rootAny.modelRootMatrix.set(savedRoot);
+    // A loaded WebGPU accelerator is bypassed (and its layer hidden) while
+    // caps are on, and shadow maps see the same decision.
+    const regAny = getSharedRegistry() as unknown as Record<string, unknown>;
+    const prevAccel = regAny['gpuSceneAccelerator'];
+    let hidden = 0;
+    let gpuFrames = 0;
+    regAny['gpuSceneAccelerator'] = {
+      renderScene: () => (gpuFrames++, true),
+      hideLayer: () => hidden++,
+      willRenderScene: (v: {gpuBypass?: boolean}) => !v.gpuBypass,
+    };
+    fView.render();
+    regAny['gpuSceneAccelerator'] = prevAccel;
+    assert(
+      hidden > 0 &&
+        gpuFrames === 0 &&
+        (fView as unknown as {gpuBypass: boolean}).gpuBypass,
+      'section-cap="solid" bypasses the WebGPU accelerator and hides its layer',
+    );
+    capAttrs.set('section-plane', 'y:-1');
+    fView.render();
+    assert(
+      getSectionCapMesh(fView) === null,
+      'boundsIgnore context meshes (the lawn) are not capped',
+    );
+    capAttrs.delete('section-cap');
+    capAttrs.delete('section-plane');
+    capAttrs.delete('section-cap-color');
+
+    // stepFrame(): deterministic manual clock without requestAnimationFrame.
+    fView.stepFrame(0.1);
+    fView.start();
+    assert(
+      fAny.manualClock === true && fAny.animFrameId === null,
+      'stepFrame() switches to a manual clock that start() does not override',
+    );
     fView.destroy?.();
+
+    // Pure cap builder: convex, concave U, holes, oblique planes, open meshes.
+    const area2 = (verts: number[][], tris: number[]) => {
+      let a = 0;
+      for (let t = 0; t < tris.length; t += 3) {
+        const [p, q, r] = [
+          verts[tris[t]],
+          verts[tris[t + 1]],
+          verts[tris[t + 2]],
+        ];
+        a +=
+          ((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])) / 2;
+      }
+      return a;
+    };
+    const uShape = triangulateWithHoles([
+      [0, 0],
+      [3, 0],
+      [3, 3],
+      [2, 3],
+      [2, 1],
+      [1, 1],
+      [1, 3],
+      [0, 3],
+    ]);
+    const holed = triangulateWithHoles(
+      [
+        [0, 0],
+        [4, 0],
+        [4, 4],
+        [0, 4],
+      ],
+      [
+        [
+          [1, 1],
+          [1, 3],
+          [3, 3],
+          [3, 1],
+        ],
+        [
+          [3.2, 3.2],
+          [3.2, 3.6],
+          [3.6, 3.6],
+          [3.6, 3.2],
+        ],
+      ],
+    );
+    assert(
+      Math.abs(area2(uShape.verts, uShape.tris) - 7) < 1e-9 &&
+        uShape.tris.length === 18 &&
+        Math.abs(area2(holed.verts, holed.tris) - (16 - 4 - 0.16)) < 1e-9,
+      'triangulateWithHoles: concave U-shape and a square with two holes keep exact area',
+    );
+    assert(
+      chainSegments([
+        ['a', 'b'],
+        ['b', 'c'],
+      ]) === null &&
+        JSON.stringify(
+          chainSegments([
+            ['a', 'b'],
+            ['b', 'c'],
+            ['c', 'a'],
+          ]),
+        ) === JSON.stringify([['a', 'b', 'c']]),
+      'chainSegments closes loops and rejects open chains',
+    );
+    const boxGeo = new THREE.BoxGeometry(2, 1, 3);
+    const boxSrc = {
+      positions: boxGeo.getAttribute('position').array as Float32Array,
+      indices: boxGeo.index!.array as Uint16Array,
+      matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1],
+    };
+    const xCap = buildSectionCaps([boxSrc], {normal: [1, 0, 0], constant: 5.5});
+    const oblique = buildSectionCaps([boxSrc], {
+      normal: [0.6, 0.8, 0],
+      constant: 3,
+    });
+    const openCap = buildSectionCaps(
+      [{positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2]}],
+      {normal: [1, 0, 0], constant: 0.5},
+    );
+    const triArea = (
+      g: {positions: Float32Array; indices: Uint32Array},
+      n: number[],
+    ) => {
+      let a = 0;
+      for (let t = 0; t < g.indices.length; t += 3) {
+        const [i, j, k] = [
+          g.indices[t] * 3,
+          g.indices[t + 1] * 3,
+          g.indices[t + 2] * 3,
+        ];
+        const u = [0, 1, 2].map((c) => g.positions[j + c] - g.positions[i + c]);
+        const v = [0, 1, 2].map((c) => g.positions[k + c] - g.positions[i + c]);
+        a +=
+          ((u[1] * v[2] - u[2] * v[1]) * n[0] +
+            (u[2] * v[0] - u[0] * v[2]) * n[1] +
+            (u[0] * v[1] - u[1] * v[0]) * n[2]) /
+          2;
+      }
+      return a;
+    };
+    assert(
+      Math.abs(triArea(xCap, [1, 0, 0]) - 3) < 1e-4 &&
+        xCap.cappedMeshes === 1 &&
+        triArea(oblique, [0.6, 0.8, 0]) > 3 &&
+        openCap.indices.length === 0 &&
+        openCap.skippedMeshes === 1 &&
+        buildSectionCaps([boxSrc], {normal: [0, 1, 0], constant: 0}, 4)
+          .skippedMeshes === 1,
+      'buildSectionCaps: transformed / oblique cuts face +normal; open meshes and over-budget meshes are skipped',
+    );
+    // Mirrored (det < 0) transforms keep caps facing +normal with holes open.
+    const mirrored = buildSectionCaps(
+      [{...boxSrc, matrix: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]}],
+      {normal: [0, 1, 0], constant: 0.1},
+    );
+    // Square annulus prism: the cut is an outer loop with one hole.
+    const ring = (r0: number, r1: number) => {
+      const pos: number[] = [];
+      const idx: number[] = [];
+      // Square annulus prism (outer r1, inner r0), y in [-0.5, 0.5].
+      const corners = (r: number) => [
+        [-r, -r],
+        [r, -r],
+        [r, r],
+        [-r, r],
+      ];
+      const o = corners(r1);
+      const inn = corners(r0);
+      const vtx = (x: number, y: number, z: number) => (
+        pos.push(x, y, z),
+        pos.length / 3 - 1
+      );
+      const quad = (a: number, b: number, c: number, d: number) =>
+        idx.push(a, b, c, a, c, d);
+      for (let k = 0; k < 4; k++) {
+        const [ax, az] = o[k];
+        const [bx, bz] = o[(k + 1) % 4];
+        const [cx, cz] = inn[(k + 1) % 4];
+        const [dx, dz] = inn[k];
+        // Top (+Y) and bottom (-Y) ring faces, outer wall, inner wall.
+        quad(
+          vtx(ax, 0.5, -az),
+          vtx(dx, 0.5, -dz),
+          vtx(cx, 0.5, -cz),
+          vtx(bx, 0.5, -bz),
+        );
+        quad(
+          vtx(ax, -0.5, -az),
+          vtx(bx, -0.5, -bz),
+          vtx(cx, -0.5, -cz),
+          vtx(dx, -0.5, -dz),
+        );
+        quad(
+          vtx(ax, -0.5, -az),
+          vtx(ax, 0.5, -az),
+          vtx(bx, 0.5, -bz),
+          vtx(bx, -0.5, -bz),
+        );
+        quad(
+          vtx(dx, -0.5, -dz),
+          vtx(cx, -0.5, -cz),
+          vtx(cx, 0.5, -cz),
+          vtx(dx, 0.5, -dz),
+        );
+      }
+      return {positions: pos, indices: idx};
+    };
+    const tube = buildSectionCaps([ring(1, 2)], {
+      normal: [0, 1, 0],
+      constant: 0,
+    });
+    const throughTop = buildSectionCaps([boxSrc], {
+      normal: [0, 1, 0],
+      constant: 0.5,
+    });
+    assert(
+      Math.abs(triArea(mirrored, [0, 1, 0]) - 6) < 1e-4 &&
+        Math.abs(Math.abs(triArea(tube, [0, 1, 0])) - 12) < 1e-4 &&
+        triArea(tube, [0, 1, 0]) > 0 &&
+        throughTop.skippedMeshes === 0,
+      'buildSectionCaps: mirrored transforms, annulus holes, and planes through vertices cap correctly',
+    );
+    const starved = triangulateWithHoles(
+      [
+        [0, 0],
+        [4, 0],
+        [4, 4],
+        [0, 4],
+      ],
+      [
+        [
+          [1, 1],
+          [1, 3],
+          [3, 3],
+          [3, 1],
+        ],
+      ],
+      {left: 10},
+    );
+    assert(
+      starved.tris.length === 0,
+      'triangulateWithHoles stops when its work budget runs out',
+    );
 
     // Parent Group `boundsIgnore`, translucent glass skipping `section-cap-color`, and `pickMesh` section clipping.
     const grpScene = new THREE.Scene();
