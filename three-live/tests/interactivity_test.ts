@@ -707,6 +707,82 @@ console.log('=== Running KHR_interactivity Plugin Tests ===');
       posWhilePaused[2] === posAfterSpin[2],
     'Orbiting node pauses when viewer autoRotate is false',
   );
+
+  // Linked toggleTransform actions across two sibling triggers share one state variable:
+  // clicking leaf0 opens BOTH leaves, then clicking leaf1 closes BOTH leaves cleanly.
+  const linkedScene = new Scene();
+  const doorRoot = new Group();
+  doorRoot.name = 'DoubleDoor';
+  const openL = [0, -Math.sin(Math.PI / 4), 0, Math.cos(Math.PI / 4)];
+  const openR = [0, Math.sin(Math.PI / 4), 0, Math.cos(Math.PI / 4)];
+  const leaf0 = new Mesh(new BoxGeometry(0.8, 2, 0.05), new MeshStandardMaterial());
+  leaf0.name = 'DoubleDoor_leaf0';
+  leaf0.userData.interactivity = {
+    onSelect: [
+      {action: 'toggleTransform', property: 'rotation', to: openL, duration: 0},
+      {
+        action: 'toggleTransform',
+        property: 'rotation',
+        target: 'DoubleDoor_leaf1',
+        to: openR,
+        duration: 0,
+      },
+    ],
+  };
+  const leaf1 = new Mesh(new BoxGeometry(0.8, 2, 0.05), new MeshStandardMaterial());
+  leaf1.name = 'DoubleDoor_leaf1';
+  leaf1.userData.interactivity = {
+    onSelect: [
+      {
+        action: 'toggleTransform',
+        property: 'rotation',
+        target: 'DoubleDoor_leaf0',
+        to: openL,
+        duration: 0,
+      },
+      {action: 'toggleTransform', property: 'rotation', to: openR, duration: 0},
+    ],
+  };
+  doorRoot.add(leaf0, leaf1);
+  linkedScene.add(doorRoot);
+  const linkedViewer = createMockViewerFromGLBData(
+    parseGLB(sceneToGLB(linkedScene)),
+  );
+  const idx0 = linkedViewer.gltf.nodes.findIndex(
+    (n: {name?: string}) => n.name === 'DoubleDoor_leaf0',
+  );
+  const idx1 = linkedViewer.gltf.nodes.findIndex(
+    (n: {name?: string}) => n.name === 'DoubleDoor_leaf1',
+  );
+  const m0 = linkedViewer.meshes.findIndex(
+    (m: {nodeIndex?: number}) => m.nodeIndex === idx0,
+  );
+  const m1 = linkedViewer.meshes.findIndex(
+    (m: {nodeIndex?: number}) => m.nodeIndex === idx1,
+  );
+  // Click leaf0 -> both leaves open.
+  interactivityPlugin.onMeshSelect?.(linkedViewer, {
+    meshIndex: m0,
+    nodeIndex: idx0,
+  });
+  interactivityPlugin.onUpdate?.(linkedViewer, 0.05);
+  const openR0 = linkedViewer.gltf.nodes[idx0].rotation?.[1] ?? 0;
+  const openR1 = linkedViewer.gltf.nodes[idx1].rotation?.[1] ?? 0;
+  // Click leaf1 -> both leaves close together back to 0!
+  interactivityPlugin.onMeshSelect?.(linkedViewer, {
+    meshIndex: m1,
+    nodeIndex: idx1,
+  });
+  interactivityPlugin.onUpdate?.(linkedViewer, 0.05);
+  const closedR0 = linkedViewer.gltf.nodes[idx0].rotation?.[1] ?? 0;
+  const closedR1 = linkedViewer.gltf.nodes[idx1].rotation?.[1] ?? 0;
+  assert(
+    Math.abs(openR0 - openL[1]) < 1e-3 &&
+      Math.abs(openR1 - openR[1]) < 1e-3 &&
+      Math.abs(closedR0) < 1e-3 &&
+      Math.abs(closedR1) < 1e-3,
+    `Linked sibling toggleTransform clicks on leaf0 then leaf1 open and close both leaves in lockstep (${openR0.toFixed(2)},${openR1.toFixed(2)} -> ${closedR0.toFixed(2)},${closedR1.toFixed(2)})`,
+  );
 }
 
 console.log(

@@ -2608,6 +2608,35 @@ function runCadRegressionTests(
       Math.abs(bu - 1) < 1e-6 && Math.abs(bv - 1) < 1e-6,
       'ExtrudeGeometry keeps normalized [0, 1] UVs by default',
     );
+
+    // BoxGeometry `uvGenerator: 'world'` emits 1:1 world-meter face UVs (4th or 7th arg).
+    const worldBox4 = new THREE.BoxGeometry(4, 2.8, 0.25, {
+      uvGenerator: 'world',
+    });
+    const worldBox7 = new THREE.BoxGeometry(4, 2.8, 0.25, 1, 1, 1, {
+      uvGenerator: 'world',
+    });
+    const defaultBox = new THREE.BoxGeometry(4, 2.8, 0.25);
+    const uvArr = (g: {getAttribute(name: string): {array: ArrayLike<number>}}) =>
+      Array.from(g.getAttribute('uv').array);
+    const wb4 = uvArr(worldBox4);
+    const wb7 = uvArr(worldBox7);
+    const db = uvArr(defaultBox);
+    // Face order: +Z (4x2.8), -Z (4x2.8), +Y (4x0.25), -Y (4x0.25), +X (0.25x2.8), -X (0.25x2.8).
+    const faceMax = (u: number[], f: number) => [u[f * 8 + 4], u[f * 8 + 5]];
+    assert(
+      JSON.stringify(wb4) === JSON.stringify(wb7) &&
+        Math.abs(faceMax(wb4, 0)[0] - 4) < 1e-5 &&
+        Math.abs(faceMax(wb4, 0)[1] - 2.8) < 1e-5 &&
+        Math.abs(faceMax(wb4, 2)[0] - 4) < 1e-5 &&
+        Math.abs(faceMax(wb4, 2)[1] - 0.25) < 1e-5 &&
+        Math.abs(faceMax(wb4, 4)[0] - 0.25) < 1e-5 &&
+        Math.abs(faceMax(wb4, 4)[1] - 2.8) < 1e-5 &&
+        Math.abs(faceMax(db, 0)[0] - 1) < 1e-5 &&
+        Math.abs(faceMax(db, 0)[1] - 1) < 1e-5 &&
+        worldBox4.groups.length === 6,
+      "BoxGeometry uvGenerator: 'world' emits 1:1 meter UVs per face (4th and 7th arg) and preserves [0,1] default + 6 groups",
+    );
   }
 
   // Coverage: Partial-arc SphereGeometry and openEnded / partial-arc CylinderGeometry & ConeGeometry.

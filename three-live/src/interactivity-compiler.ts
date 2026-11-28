@@ -117,12 +117,32 @@ export function compileInteractivityGraph(
   // `target: '<node name>'` is portable across exporters; numeric
   // `targetNode` / raw pointers use this exporter's node numbering.
   const nodeByName = new Map<string, number>();
+  const parentOf = new Int32Array(gltfNodes.length).fill(-1);
   gltfNodes.forEach((n, i) => {
-    if (typeof n?.name === 'string' && !nodeByName.has(n.name)) nodeByName.set(n.name, i);
+    if (typeof n?.name === 'string' && !nodeByName.has(n.name)) {
+      nodeByName.set(n.name, i);
+    }
+    if (Array.isArray(n?.children)) {
+      for (const c of n.children) {
+        if (Number.isInteger(c) && c >= 0 && c < gltfNodes.length) {
+          parentOf[c] = i;
+        }
+      }
+    }
   });
+  const findInSubtree = (root: number, name: string): number | null => {
+    const queue: number[] = [...(gltfNodes[root]?.children ?? [])];
+    for (let q = 0; q < queue.length && q < gltfNodes.length; q++) {
+      const c = queue[q];
+      if (gltfNodes[c]?.name === name) return c;
+      queue.push(...(gltfNodes[c]?.children ?? []));
+    }
+    return null;
+  };
   /**
-   * `toggleTransform` target: a named descendant of the owner first (so cloned
-   * or same-named rigs stay wired to their own parts), then any node by name,
+   * `toggleTransform` target: a named descendant of the owner first, then a
+   * named node in the owner's parent subtree (so cloned or same-named rigs stay
+   * wired to their own followers and sibling leaves), then any node by name,
    * then a valid numeric `targetNode`, else the owner. Returns `null` for a
    * string `target` that matches no node, so the action is skipped instead of
    * moving the owner.
@@ -130,17 +150,21 @@ export function compileInteractivityGraph(
   // tslint:disable-next-line:no-any
   const toggleTargetOf = (act: any, self: number): number | null => {
     if (typeof act.target === 'string') {
-      const queue: number[] = [...(gltfNodes[self]?.children ?? [])];
-      for (let q = 0; q < queue.length && q < gltfNodes.length; q++) {
-        const c = queue[q];
-        if (gltfNodes[c]?.name === act.target) return c;
-        queue.push(...(gltfNodes[c]?.children ?? []));
+      const desc = findInSubtree(self, act.target);
+      if (desc !== null) return desc;
+      const p = parentOf[self];
+      if (p >= 0) {
+        const sib = findInSubtree(p, act.target);
+        if (sib !== null) return sib;
       }
       return nodeByName.get(act.target) ?? null;
     }
     const t = act.targetNode;
     return Number.isInteger(t) && t >= 0 && t < gltfNodes.length ? t : self;
   };
+  // Shared toggle state per `(targetNode, property)` so multiple triggers
+  // targeting the same node (e.g. linked double-door leaves) toggle in sync.
+  const toggleVarMap = new Map<string, number>();
   // tslint:disable-next-line:no-any
   const targetOf = (act: any, self: number): number =>
     typeof act.target === 'string' && nodeByName.has(act.target)
@@ -191,8 +215,17 @@ export function compileInteractivityGraph(
                 ? tNode.scale || [1, 1, 1]
                 : tNode.translation || [0, 0, 0];
           const ptr = `/nodes/${tIdx}/${prop}`;
-          const varIdx = addVar(`__toggle_${nodeIdx}_${aIdx}`, 'bool', false);
-          const getIdx = addNode('variable/get', {configuration: {variable: varIdx}});
+          const toVal = Array.isArray(act.to) ? act.to : def;
+          const fromVal = Array.isArray(act.from) ? act.from : def;
+          const toggleKey = `${tIdx}:${prop}:${JSON.stringify(fromVal)}:${JSON.stringify(toVal)}`;
+          let varIdx = toggleVarMap.get(toggleKey);
+          if (varIdx === undefined) {
+            varIdx = addVar(`__toggle_${nodeIdx}_${aIdx}`, 'bool', false);
+            toggleVarMap.set(toggleKey, varIdx);
+          }
+          const getIdx = addNode('variable/get', {
+            configuration: {variable: varIdx},
+          });
           const notIdx = addNode('math/not', {values: {a: link(getIdx)}});
           const setIdx = addNode('variable/set', {
             configuration: {variable: varIdx},
@@ -201,14 +234,14 @@ export function compileInteractivityGraph(
           const toIdx = addNode('pointer/interpolate', {
             configuration: {pointer: ptr},
             values: {
-              value: {value: Array.isArray(act.to) ? act.to : def},
+              value: {value: toVal},
               duration: {value: dur},
             },
           });
           const fromIdx = addNode('pointer/interpolate', {
             configuration: {pointer: ptr},
             values: {
-              value: {value: Array.isArray(act.from) ? act.from : def},
+              value: {value: fromVal},
               duration: {value: dur},
             },
           });

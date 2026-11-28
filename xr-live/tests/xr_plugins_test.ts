@@ -1577,11 +1577,29 @@ function testSchema(): void {
   );
   const cwSc = buildXRSceneCoreExtension(cw!) as Record<string, unknown> | null;
   const cwUsd = buildUsdXRLines({cutaway: [1, 0, 0]}, (v) => String(v));
+  const cwNoShd = normalizeXRTraits({
+    cutaway: {normal: [0, 2, 0], castShadow: false},
+  });
+  const cwNoShdSc = buildXRSceneCoreExtension(cwNoShd!) as Record<
+    string,
+    unknown
+  > | null;
+  const cwNoShdUsd = buildUsdXRLines(
+    {cutaway: {normal: [0, 1, 0], castShadow: false}},
+    (v) => String(v),
+  );
   assert(
     JSON.stringify((cwSc?.['cutaway'] as {normal?: number[]})?.normal) ===
       JSON.stringify([0, 0, 1]) &&
-      cwUsd.includes('double3 cutawayNormal = (1, 0, 0)'),
-    'cutaway serializes to ANDROID_xr_scenecore and USD customData',
+      cw?.cutaway?.castShadow === true &&
+      cwNoShd?.cutaway?.castShadow === false &&
+      (cwNoShdSc?.['cutaway'] as {castShadow?: boolean})?.castShadow ===
+        false &&
+      cwUsd.includes('double3 cutawayNormal = (1, 0, 0)') &&
+      !cwUsd.includes('cutawayCastShadow') &&
+      cwNoShdUsd.includes('double3 cutawayNormal = (0, 1, 0)') &&
+      cwNoShdUsd.includes('bool cutawayCastShadow = false'),
+    'cutaway serializes normal and optional castShadow=false to ANDROID_xr_scenecore and USD customData',
   );
   // A wall at z = 2 whose outward normal points +Z.
   const wall = {

@@ -62,7 +62,9 @@ export {
   MAX_ARCH_STEPS,
   type ArchwayOptions,
   type ColumnOptions,
+  type DoorGroupOptions,
   type DoorHandleStyle,
+  type DoorLeafInfo,
   type DoorOperation,
   type DoorOptions,
   type DoorStyle,
@@ -490,6 +492,8 @@ export interface ThreeLiveAttributes {
   'max-camera-orbit'?: string;
   /** Vertical field of view angle (e.g. "45deg"). */
   'field-of-view'?: string;
+  /** Viewport-fill target (0.1..0.98, e.g. "0.72" or "72%", or "auto") for perspective AABB auto-framing when `camera-orbit` has no explicit radius. */
+  'camera-fit-fill'?: number | string;
   /** Sub-mesh name to highlight with interactive selection color. */
   'selected-mesh'?: string;
   /** Exposure / lighting multiplier for studio IBL lighting (default: 1.0). */

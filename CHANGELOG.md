@@ -26,6 +26,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Architectural authoring ergonomics, cutaway shadow opt-out, and
+    perspective viewport-fill auto-framing:**
+    -   `THREE.ProceduralTexture.shiplap` adds `buttJoints` (`0..16`, default
+        `2`) and `boardAspect` (`0.125..16`, auto-inferred as `ry / rx` from
+        anisotropic `repeat: [rx, ry]` unless overridden) with Nyquist groove
+        clamping and byte-identical JS + Rust Boa kernel parity
+        (`ThreeLiveKernels` C-ABI v1 unchanged).
+    -   `THREE.BoxGeometry(w, h, d, { uvGenerator: 'world' })` (or 7th-arg
+        options) emits 1:1 world-meter face UVs on both JS and native-hook paths
+        (matching `ExtrudeGeometry({ uvGenerator: 'world' })`).
+    -   `THREE.Architecture.WallGeometry` adds `baseboardSide` and `corniceSide`
+        (`'both' | 'front' | 'back'`, default `'both'`), omitting trim on any
+        cut-away face; `RoofGeometry({ style: 'flat-parapet', openSides })`
+        omits interior abutting parapet walls across all 16 cardinal-side
+        subsets while remaining watertight 2-manifold (`origin: 'center'` uses
+        the deck height when all 4 sides are open).
+    -   `THREE.Architecture.createDoorGroup()` adds separate frame vs. leaf
+        materials (`options.frameMaterial` or `{ frame?, leaf? }` map),
+        `linkedLeaves: true` (synchronized multi-leaf toggle state sharing one
+        variable per leaf across sibling triggers and scoping sibling targets to
+        the rig parent so cloned/same-named rigs stay isolated), and initial
+        ajar/open poses via `openFraction` (with smart first-click direction).
+    -   `userData.xr.cutaway` adds `castShadow?: boolean` (default `true`):
+        setting `castShadow: false` suppresses shadow casting while the mesh is
+        cut away across Web (WebGL2 `shadowMapsPlugin` + WebGPU
+        `gpuSceneAccelerator`), Android (`XRLiveSceneCoreHelper` /
+        `XRLiveRuntimeSession`), and iOS (`XRLiveTraits` /
+        `XRLiveRuntimeSession`), serialized to glTF `ANDROID_xr_scenecore` and
+        USDZ `customData`. `section-cap="solid"` now also skips meshes hidden by
+        `cutaway`, preventing floating poché bars.
+    -   Declarative `camera-fit-fill` (`0.1..0.98`, percentage such as `"72%"`,
+        or `"auto"`) on `<three-live>` / `<xr-live>` and
+        `ThreeView.computeFitDistance()` / `fitCameraToBounds()` fit the
+        8-corner perspective AABB (honoring FOV, viewport aspect ratio, orbit
+        angles, `camera-target`, and `boundsIgnore`) whenever `camera-orbit` has
+        no explicit radius.
 -   **`Texture.repeat` / `offset` / `rotation` / `center` export as
     `KHR_texture_transform`, and `wrapS` / `wrapT` as glTF samplers:**
     `sceneToGLB` / `compileToGLB` emit `KHR_texture_transform` (in
@@ -67,11 +103,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     rendered; `el.stepFrame(dt = 1 / 60)` advances animations, plugins, and
     simulation and renders synchronously without `requestAnimationFrame`
     (pausing the automatic loop).
--   **Bundle budgets:** raised to fit these features (`three-live-viewer` 38,
-    `three-live` 91, `three-live-studio` 40, `three-live-kit-architecture` 18,
-    `three-live-kits` 85, `three-live-full` 252, `three-live-compiler-bundle`
-    268, `xr-live-viewer` 65, `xr-live` 103, `xr-live-spatial` 68,
-    `xr-live-full` 363 KB gz).
+-   **Bundle budgets:** raised to fit these features (`three-live-viewer` 39,
+    `three-live` 93, `three-live-studio` 41, `three-live-kit-architecture` 19,
+    `three-live-webgpu` 25, `three-live-kits` 87, `three-live-full` 255,
+    `three-live-compiler-bundle` 271, `xr-live-viewer` 67, `xr-live` 106,
+    `xr-live-spatial` 68, `xr-live-full` 366 KB gz).
 -   **Door rigs: `DoorGeometry({ part, leafIndex })`, leaf metadata, and
     `THREE.Architecture.createDoorGroup()`:** `part: 'frame'` emits the
     stationary frame, casing, barn track, or pocket header and jambs;

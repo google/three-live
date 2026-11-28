@@ -5041,6 +5041,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     v: number,
     xi: number,
     yi: number,
+    buttJoints = 2,
+    boardAspect = 1,
   ): number[] => {
     const k = (m: number) => [c[0] * m, c[1] * m, c[2] * m];
     const mixC = (a: number[], b: number[], t: number) => [
@@ -5216,17 +5218,35 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       return [...k(m), 0.2 + 0.7 * fv, rough + 0.1 * (1 - lap), 0];
     }
     if (kind === 12) {
-      // shiplap / plank: staggered straight-grain boards with butt joints.
+      // shiplap / plank: staggered straight-grain boards with optional butt joints.
       const gv = v * S;
       const row = Math.floor(gv);
       const fv = gv - row;
-      const bu = u * 2 + pRnd(0, pMod(row, S), (seed + 11) >>> 0);
-      const bi = Math.floor(bu);
-      const fu = bu - bi;
-      const d = Math.min(Math.min(fu, 1 - fu) * 0.5 * S, Math.min(fv, 1 - fv));
       const gw = Math.max(0.04, (1.5 * S) / N);
-      const gap = 1 - pSmooth(gw * 0.5, gw, d);
-      const vr = pRnd(pMod(bi, 2), pMod(row, S), seed);
+      let gap: number;
+      let vr: number;
+      if (buttJoints <= 0) {
+        gap = 1 - pSmooth(gw * 0.5, gw, Math.min(fv, 1 - fv));
+        vr = pRnd(0, pMod(row, S), seed);
+      } else {
+        const bu = u * buttJoints + pRnd(0, pMod(row, S), (seed + 11) >>> 0);
+        const bi = Math.floor(bu);
+        const fu = bu - bi;
+        if (buttJoints === 2 && boardAspect === 1) {
+          const d = Math.min(
+            Math.min(fu, 1 - fu) * 0.5 * S,
+            Math.min(fv, 1 - fv),
+          );
+          gap = 1 - pSmooth(gw * 0.5, gw, d);
+        } else {
+          const du = (Math.min(fu, 1 - fu) * S * boardAspect) / buttJoints;
+          const gwU = Math.max(gw, (1.5 * S * boardAspect) / N);
+          const gapU = 1 - pSmooth(gwU * 0.5, gwU, du);
+          const gapV = 1 - pSmooth(gw * 0.5, gw, Math.min(fv, 1 - fv));
+          gap = Math.max(gapU, gapV);
+        }
+        vr = pRnd(pMod(bi, buttJoints), pMod(row, S), seed);
+      }
       const grain = pFbm(u, v, 4, S * 24, 2, (seed + 7) >>> 0);
       const bm = 0.8 + 0.25 * vr + 0.12 * (grain - 0.5);
       return [
@@ -5299,13 +5319,33 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     c2: number[],
     rough: number,
     ns: number,
+    buttJoints = 2,
+    boardAspect = 1,
   ): Uint8Array[] => {
-    const nat = (globalThis as Record<string, unknown>)[
-      '__three_live_native_material_preset__'
-    ];
-    if (typeof nat === 'function') {
-      const res = nat(kind, N, S, seed, ...c, ...c2, rough, ns);
-      if (Array.isArray(res) && res.length === 3) return res as Uint8Array[];
+    const g = globalThis as Record<string, unknown>;
+    if (buttJoints === 2 && boardAspect === 1) {
+      const nat = g['__three_live_native_material_preset__'];
+      if (typeof nat === 'function') {
+        const res = nat(kind, N, S, seed, ...c, ...c2, rough, ns);
+        if (Array.isArray(res) && res.length === 3) return res as Uint8Array[];
+      }
+    } else {
+      const natExt = g['__three_live_native_material_preset_ext__'];
+      if (typeof natExt === 'function') {
+        const res = natExt(
+          kind,
+          N,
+          S,
+          seed,
+          ...c,
+          ...c2,
+          rough,
+          ns,
+          buttJoints,
+          boardAspect,
+        );
+        if (Array.isArray(res) && res.length === 3) return res as Uint8Array[];
+      }
     }
     const albedo = new Uint8Array(N * N * 4);
     const orm = new Uint8Array(N * N * 4);
@@ -5325,6 +5365,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
           v,
           x,
           y,
+          buttJoints,
+          boardAspect,
         );
         const o = (y * N + x) * 4;
         albedo[o] = pByte(t[0]);
@@ -5430,8 +5472,38 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const c2 = presetRgb(o.color2, d[2] || d[1]);
     const rough = clamp01(finNum(o.roughness, d[3]));
     const ns = Math.max(0, Math.min(8, finNum(o.normalStrength, 1)));
+    const buttJoints =
+      kind === 12
+        ? Math.max(0, Math.min(16, Math.round(finNum(o.buttJoints, 2))))
+        : 2;
+    let boardAspect = 1;
+    if (kind === 12 && buttJoints > 0) {
+      const explicitAspect =
+        o.boardAspect != null ? finNum(o.boardAspect, NaN) : NaN;
+      if (explicitAspect > 0) {
+        boardAspect = Math.max(0.125, Math.min(16, explicitAspect));
+      } else if (Array.isArray(o.repeat)) {
+        const rx = Math.max(1e-3, Math.min(1e4, finNum(o.repeat[0], 1)));
+        const ry = Math.max(1e-3, Math.min(1e4, finNum(o.repeat[1], rx)));
+        if (rx !== ry) {
+          boardAspect = Math.max(0.125, Math.min(16, ry / rx));
+        }
+      }
+    }
     // Identical options share textures (scene texture quotas count objects).
-    const memoKey = [kind, N, S, seed, ...c, ...c2, rough, ns].join(',');
+    const memoKey = [
+      kind,
+      N,
+      S,
+      seed,
+      ...c,
+      ...c2,
+      rough,
+      ns,
+      ...(kind === 12 && (buttJoints !== 2 || boardAspect !== 1)
+        ? [buttJoints, boardAspect]
+        : []),
+    ].join(',');
     const hit = presetMemo.get(memoKey);
     if (hit) return withRepeat({...hit}, o.repeat);
     const [albedo, normal, orm] = presetPixels(
@@ -5443,6 +5515,8 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       c2,
       rough,
       ns,
+      buttJoints,
+      boardAspect,
     );
     const tex = (bytes: Uint8Array, cs: string) => {
       const vc = new VirtualCanvas(N, N);

@@ -1251,16 +1251,54 @@ function setBoxMaterialGroups(geo: BufferGeometry): void {
 }
 
 export class BoxGeometry extends BufferGeometry {
-  constructor(width: number = 1, height: number = 1, depth: number = 1) {
+  constructor(
+    width = 1,
+    height = 1,
+    depth = 1,
+    widthSegments?: number | {uvGenerator?: 'bbox' | 'world'},
+    heightSegments?: number,
+    depthSegments?: number,
+    options?: {uvGenerator?: 'bbox' | 'world'},
+  ) {
     super();
+    const opts =
+      widthSegments && typeof widthSegments === 'object'
+        ? widthSegments
+        : options;
+    const worldUv = opts?.uvGenerator === 'world';
+    const uw = Math.abs(width);
+    const uh = Math.abs(height);
+    const ud = Math.abs(depth);
+    // Face buffer order is [+Z, -Z, +Y, -Y, +X, -X].
+    const faceUvScales: ReadonlyArray<[number, number]> = [
+      [uw, uh],
+      [uw, uh],
+      [uw, ud],
+      [uw, ud],
+      [ud, uh],
+      [ud, uh],
+    ];
     if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
       const nativeFn = (globalThis as any).__three_live_native_box__;
       if (typeof nativeFn === 'function') {
         const native = nativeFn(width, height, depth);
+        let uvs = native.uvs;
+        if (worldUv && uvs && uvs.length >= 48) {
+          const scaled = new Float32Array(uvs.length);
+          for (let f = 0; f < 6; f++) {
+            const [su, sv] = faceUvScales[f];
+            const base = f * 8;
+            for (let k = 0; k < 8; k += 2) {
+              scaled[base + k] = uvs[base + k] * su;
+              scaled[base + k + 1] = uvs[base + k + 1] * sv;
+            }
+          }
+          uvs = scaled;
+        }
         this.setFromBuffers(
           native.positions,
           native.normals,
-          native.uvs,
+          uvs,
           native.indices,
         );
         setBoxMaterialGroups(this);
@@ -1354,7 +1392,8 @@ export class BoxGeometry extends BufferGeometry {
       for (let k = 0; k < 4; k++) {
         normals.push(ax === 0 ? sg : 0, ax === 1 ? sg : 0, ax === 2 ? sg : 0);
       }
-      uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+      const [su, sv] = worldUv ? faceUvScales[f] : [1, 1];
+      uvs.push(0, 0, su, 0, su, sv, 0, sv);
       indices.push(o, o + 1, o + 2, o, o + 2, o + 3);
     }
     this.setFromBuffers(positions, normals, uvs, indices);

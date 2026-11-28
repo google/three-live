@@ -285,6 +285,7 @@ export interface SharedThreeLiveRegistry {
     viewer: unknown,
     plane: {normal: readonly number[]; constant: number} | null,
     color: readonly number[] | null,
+    isHidden?: (mesh: unknown) => boolean,
   ) => unknown;
   /**
    * Optional shared WebGPU device provider so multiple WebGPU add-ons on the
