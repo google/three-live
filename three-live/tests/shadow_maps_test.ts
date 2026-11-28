@@ -1232,6 +1232,88 @@ async function runShadowMapsTests() {
   await runFlushWallShadowRegressionTests();
   await runSectionPlaneShadowTests();
 
+  // 9. Dollhouse cutaway shadow opt-out (`userData.xr.cutaway = {normal, castShadow: false}`)
+  {
+    const cutAttrs = new Map<string, string>();
+    const cutRoof = makeViewerMesh('CutRoof', {
+      castShadow: true,
+      extras: {xr: {cutaway: {normal: [0, 1, 0], castShadow: false}}},
+      primitives: [
+        {
+          vao: {id: 'cut-roof'} as unknown as WebGLVertexArrayObject,
+          indexCount: 6,
+          indexType: 5123,
+          indices: new Uint16Array(6),
+          positions: new Float32Array([-2, 3, -2, 2, 3, -2, 2, 3, 2]),
+          baseColor: [1, 1, 1, 1],
+        },
+      ],
+    });
+    const cutWallDefault = makeViewerMesh('CutWallDefault', {
+      castShadow: true,
+      extras: {xr: {cutaway: {normal: [0, 0, 1]}}},
+      primitives: [
+        {
+          vao: {id: 'cut-wall'} as unknown as WebGLVertexArrayObject,
+          indexCount: 6,
+          indexType: 5123,
+          indices: new Uint16Array(6),
+          positions: new Float32Array([-2, 0, 2, 2, 0, 2, 2, 3, 2]),
+          baseColor: [1, 1, 1, 1],
+        },
+      ],
+    });
+    const cutViewer = {
+      shadowMaps: 'auto',
+      cutawayEnabled: true,
+      container: {getAttribute: (n: string) => cutAttrs.get(n) ?? null},
+      canvas: {width: 640, height: 480},
+      modelRootMatrix: makeIdentityMat4(),
+      meshes: [cutRoof, cutWallDefault],
+      lights: [
+        {type: 'directional', direction: [0.5, 1, 0.5], shadow: {cast: true}},
+      ],
+    };
+    // Eye above roof (y = 8) and in front of wall (z = 8): roof shadow suppressed, default wall STILL casts!
+    const planAbove = resolveActiveShadowLights(cutViewer, [0, 8, 8]);
+    const planAbove2 = resolveActiveShadowLights(cutViewer, [1, 9, 8]);
+    // Eye below roof (y = 1): roof is NOT cut away, so both cast -> digest MUST change!
+    const planBelow = resolveActiveShadowLights(cutViewer, [0, 1, 8]);
+    // Eye above roof with cutaway="off" (cutawayEnabled=false): roof casts again -> matches planBelow!
+    cutViewer.cutawayEnabled = false;
+    const planOff = resolveActiveShadowLights(cutViewer, [0, 8, 8]);
+    cutViewer.cutawayEnabled = true;
+
+    // Verify draw call counts during WebGL2 depth pass: 1 draw when roof suppressed, 2 when below.
+    const {gl: cgl, rec: crec} = makeMockShadowGl();
+    const beforeDraw = shadowMapsPlugin.onBeforeDrawScene as (
+      v: unknown,
+      g: WebGL2RenderingContext,
+      vp?: Float32Array,
+      eye?: readonly [number, number, number],
+    ) => void;
+    beforeDraw(cutViewer, cgl, undefined, [0, 8, 8]);
+    const drawsSuppressed = crec.drawElementsCalls;
+    // Orbiting while staying above roof hits the cache (0 extra draws)!
+    beforeDraw(cutViewer, cgl, undefined, [2, 9, 7]);
+    const drawsCached = crec.drawElementsCalls;
+    // Moving eye below roof invalidates cache and renders BOTH meshes (+2 draws).
+    beforeDraw(cutViewer, cgl, undefined, [0, 1, 8]);
+    const drawsRestored = crec.drawElementsCalls;
+    shadowMapsPlugin.onDestroy!(cgl, cutViewer);
+
+    assert(
+      planAbove.slices.length === 1 &&
+        planAbove.digest === planAbove2.digest &&
+        planAbove.digest !== planBelow.digest &&
+        planOff.digest === planBelow.digest &&
+        drawsSuppressed === 1 &&
+        drawsCached === 1 &&
+        drawsRestored === 3,
+      `cutaway.castShadow=false suppresses shadows while cut away, caches static cutaway sets, and restores on orbit or cutaway=off (draws: ${drawsSuppressed}->${drawsCached}->${drawsRestored})`,
+    );
+  }
+
   console.log(
     `\n📊 Shadow Maps Tests Summary: ${passed} passed, ${failed} failed.`,
   );

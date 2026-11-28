@@ -32,6 +32,13 @@ class XRCutawayAndCameraEngageTest {
   fun parseCutawayNormalizesAndRejectsInvalidInput() {
     val t = XRLiveSceneCoreHelper.parseCutaway(mapOf("normal" to listOf(0.0, 0.0, 2.0)))!!
     assertEquals(listOf(0.0, 0.0, 1.0), t.normal)
+    assertTrue("castShadow defaults to true", t.castShadow)
+    val noShd =
+      XRLiveSceneCoreHelper.parseCutaway(
+        mapOf("normal" to listOf(0.0, 2.0, 0.0), "castShadow" to false)
+      )!!
+    assertEquals(listOf(0.0, 1.0, 0.0), noShd.normal)
+    assertFalse("castShadow=false opts out", noShd.castShadow)
     assertEquals(
       listOf(0.6, 0.0, 0.8),
       XRLiveSceneCoreHelper.parseCutaway(listOf(3.0, 0.0, 4.0))!!.normal,
@@ -43,6 +50,34 @@ class XRCutawayAndCameraEngageTest {
       )
     )
     assertNull(XRLiveSceneCoreHelper.parseCutaway("front"))
+  }
+
+  @Test
+  fun cutawayCastShadowFalseSuppressesShadowsOnlyWhileCutAway() {
+    val json =
+      """{"asset":{"version":"2.0"},"nodes":[
+        {"name":"Roof","translation":[0,3,0],"extras":{"xr":{"cutaway":{"normal":[0,1,0],"castShadow":false}}}},
+        {"name":"FrontWall","translation":[0,0,2],"extras":{"xr":{"cutaway":{"normal":[0,0,1]}}}}]}"""
+    val s = XRLiveRuntimeSession(json)
+    s.step(1.0 / 60, pose(0f, 8f, 8f))
+    assertTrue(s.isCutAway(0))
+    assertTrue(s.isCutAwayShadowSuppressed(0))
+    assertFalse(s.effectiveCastShadow(0, true))
+    assertTrue(s.isCutAway(1))
+    assertFalse("default cutaway keeps casting shadows", s.isCutAwayShadowSuppressed(1))
+    assertTrue(s.effectiveCastShadow(1, true))
+
+    s.step(1.0 / 60, pose(0f, 1f, 8f))
+    assertFalse(s.isCutAway(0))
+    assertFalse(s.isCutAwayShadowSuppressed(0))
+    assertTrue(s.effectiveCastShadow(0, true))
+
+    s.step(1.0 / 60, pose(0f, 8f, 8f))
+    assertTrue(s.isCutAwayShadowSuppressed(0))
+    s.cutawayEnabled = false
+    s.step(1.0 / 60, pose(0f, 8f, 8f))
+    assertFalse(s.isCutAwayShadowSuppressed(0))
+    assertTrue(s.effectiveCastShadow(0, true))
   }
 
   @Test

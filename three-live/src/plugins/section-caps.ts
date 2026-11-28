@@ -157,6 +157,7 @@ export function renderSectionCaps(
   viewer: any,
   plane: {normal: readonly number[]; constant: number} | null,
   color: readonly number[] | null,
+  isHidden?: (mesh: any) => boolean,
 ): any | null {
   if (!plane) {
     release(viewer);
@@ -182,6 +183,7 @@ export function renderSectionCaps(
   const eligible: any[] = [];
   for (const mesh of viewer.meshes ?? []) {
     if (!isSectionCapEligible(mesh, viewer.gltf)) continue;
+    if (isHidden?.(mesh)) continue;
     if (!planeCutsMesh(mesh, n, c)) continue;
     eligible.push(mesh);
     mix(idOf(mesh));

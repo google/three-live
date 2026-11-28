@@ -151,7 +151,15 @@ fn to_byte(v: f64) -> u8 {
 }
 
 /// Evaluates one texel: returns `(r, g, b, height, roughness, metalness)`.
-fn shade(p: &PresetParams, u: f64, v: f64, xi: i64, yi: i64) -> [f64; 6] {
+fn shade(
+    p: &PresetParams,
+    u: f64,
+    v: f64,
+    xi: i64,
+    yi: i64,
+    butt_joints: i64,
+    board_aspect: f64,
+) -> [f64; 6] {
     let s = p.scale;
     let sf = s as f64;
     let c = p.color;
@@ -359,13 +367,27 @@ fn shade(p: &PresetParams, u: f64, v: f64, xi: i64, yi: i64) -> [f64; 6] {
             let gv = v * sf;
             let row = gv.floor() as i64;
             let fv = gv - gv.floor();
-            let bu = u * 2.0 + rnd(0, row.rem_euclid(s), seed.wrapping_add(11));
-            let bi = bu.floor() as i64;
-            let fu = bu - bu.floor();
-            let d = (fu.min(1.0 - fu) * 0.5 * sf).min(fv.min(1.0 - fv));
             let gw = 0.04f64.max(1.5 * sf / p.size as f64);
-            let gap = 1.0 - smooth(gw * 0.5, gw, d);
-            let var = rnd(bi.rem_euclid(2), row.rem_euclid(s), seed);
+            let (gap, var) = if butt_joints <= 0 {
+                let g = 1.0 - smooth(gw * 0.5, gw, fv.min(1.0 - fv));
+                (g, rnd(0, row.rem_euclid(s), seed))
+            } else {
+                let bj_f = butt_joints as f64;
+                let bu = u * bj_f + rnd(0, row.rem_euclid(s), seed.wrapping_add(11));
+                let bi = bu.floor() as i64;
+                let fu = bu - bu.floor();
+                let g = if butt_joints == 2 && board_aspect == 1.0 {
+                    let d = (fu.min(1.0 - fu) * 0.5 * sf).min(fv.min(1.0 - fv));
+                    1.0 - smooth(gw * 0.5, gw, d)
+                } else {
+                    let du = (fu.min(1.0 - fu) * sf * board_aspect) / bj_f;
+                    let gw_u = gw.max(1.5 * sf * board_aspect / p.size as f64);
+                    let gap_u = 1.0 - smooth(gw_u * 0.5, gw_u, du);
+                    let gap_v = 1.0 - smooth(gw * 0.5, gw, fv.min(1.0 - fv));
+                    gap_u.max(gap_v)
+                };
+                (g, rnd(bi.rem_euclid(butt_joints), row.rem_euclid(s), seed))
+            };
             let grain = fbm(u, v, 4, s * 24, 2, seed.wrapping_add(7));
             let bm = 0.8 + 0.25 * var + 0.12 * (grain - 0.5);
             [
@@ -436,8 +458,24 @@ fn shade(p: &PresetParams, u: f64, v: f64, xi: i64, yi: i64) -> [f64; 6] {
 
 /// Generates the three RGBA8 maps for a canonicalized preset.
 pub fn generate_material_preset(p: &PresetParams) -> PresetMaps {
+    generate_material_preset_with_options(p, 2, 1.0)
+}
+
+/// Generates the three RGBA8 maps for a canonicalized preset with optional `shiplap` board layout
+/// overrides (`butt_joints` in `0..=16`, `board_aspect` in `0.125..=16.0`).
+pub fn generate_material_preset_with_options(
+    p: &PresetParams,
+    butt_joints: i64,
+    board_aspect: f64,
+) -> PresetMaps {
     let n = p.size;
     let nf = n as f64;
+    let bj = butt_joints.clamp(0, 16);
+    let aspect = if board_aspect.is_finite() && board_aspect > 0.0 {
+        board_aspect.clamp(0.125, 16.0)
+    } else {
+        1.0
+    };
     let mut albedo = vec![0u8; n * n * 4];
     let mut orm = vec![0u8; n * n * 4];
     let mut height = vec![0f64; n * n];
@@ -445,7 +483,7 @@ pub fn generate_material_preset(p: &PresetParams) -> PresetMaps {
         let v = (y as f64 + 0.5) / nf;
         for x in 0..n {
             let u = (x as f64 + 0.5) / nf;
-            let t = shade(p, u, v, x as i64, y as i64);
+            let t = shade(p, u, v, x as i64, y as i64, bj, aspect);
             let o = (y * n + x) * 4;
             albedo[o] = to_byte(t[0]);
             albedo[o + 1] = to_byte(t[1]);
@@ -501,14 +539,11 @@ fn arg_f64(args: &[JsValue], i: usize, ctx: &mut Context) -> JsResult<f64> {
     Ok(args.get(i).map(|v| v.to_number(ctx)).transpose()?.unwrap_or(0.0))
 }
 
-/// `__three_live_native_material_preset__(kind, size, scale, seed, r, g, b, r2, g2, b2,
-/// roughness, normalStrength)` -> `[albedo, normal, orm]` RGBA8 `Uint8Array`s, or `null` when
-/// the parameters are out of range (the JS caller then uses its own kernels).
 #[cfg(feature = "boa")]
-pub fn native_material_preset(
-    _this: &JsValue,
+fn native_material_preset_impl(
     args: &[JsValue],
     context: &mut Context,
+    with_ext: bool,
 ) -> JsResult<JsValue> {
     let mut a = [0f64; 12];
     for (i, slot) in a.iter_mut().enumerate() {
@@ -528,6 +563,21 @@ pub fn native_material_preset(
     {
         return Ok(JsValue::null());
     }
+    let (butt_joints, board_aspect) = if with_ext {
+        let bj = arg_f64(args, 12, context)?;
+        let ba = arg_f64(args, 13, context)?;
+        if !bj.is_finite()
+            || !ba.is_finite()
+            || bj.fract() != 0.0
+            || !(0.0..=16.0).contains(&bj)
+            || !(0.125..=16.0).contains(&ba)
+        {
+            return Ok(JsValue::null());
+        }
+        (bj as i64, ba)
+    } else {
+        (2, 1.0)
+    };
     let p = PresetParams {
         kind: a[0] as u32,
         size: a[1] as usize,
@@ -538,7 +588,7 @@ pub fn native_material_preset(
         roughness: a[10],
         normal_strength: a[11],
     };
-    let maps = generate_material_preset(&p);
+    let maps = generate_material_preset_with_options(&p, butt_joints, board_aspect);
     let mk = |bytes: &[u8], ctx: &mut Context| -> JsResult<JsValue> {
         Ok(crate::usdz::js_uint8_array_from_slice(bytes, ctx)?.into())
     };
@@ -548,13 +598,41 @@ pub fn native_material_preset(
     Ok(JsArray::from_iter([albedo, normal, orm], context).into())
 }
 
-/// Registers `__three_live_native_material_preset__` on the global object.
+/// `__three_live_native_material_preset__(kind, size, scale, seed, r, g, b, r2, g2, b2,
+/// roughness, normalStrength)` -> `[albedo, normal, orm]` RGBA8 `Uint8Array`s, or `null` when
+/// the parameters are out of range (the JS caller then uses its own kernels).
+#[cfg(feature = "boa")]
+pub fn native_material_preset(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    native_material_preset_impl(args, context, false)
+}
+
+/// Extended variant accepting `(..., buttJoints, boardAspect)` for `shiplap` plank customization
+/// without altering the ABI v1 12-argument kernel signature.
+#[cfg(feature = "boa")]
+pub fn native_material_preset_ext(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    native_material_preset_impl(args, context, true)
+}
+
+/// Registers `__three_live_native_material_preset__` and `_ext__` on the global object.
 #[cfg(feature = "boa")]
 pub fn register_native_material_callables(context: &mut Context) -> JsResult<()> {
     context.register_global_builtin_callable(
         js_string!("__three_live_native_material_preset__"),
         12,
         NativeFunction::from_fn_ptr(native_material_preset),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_material_preset_ext__"),
+        14,
+        NativeFunction::from_fn_ptr(native_material_preset_ext),
     )
 }
 
@@ -604,9 +682,9 @@ mod tests {
             // Seamless: shading is exactly periodic with period 1 in u and v.
             let p = params(kind, 32, scale);
             for (u, v) in [(0.013, 0.37), (0.37, 0.81), (0.81, 0.013), (0.5, 0.5)] {
-                let base = shade(&p, u, v, 3, 5);
-                let du = shade(&p, u + 1.0, v, 3, 5);
-                let dv = shade(&p, u, v + 1.0, 3, 5);
+                let base = shade(&p, u, v, 3, 5, 2, 1.0);
+                let du = shade(&p, u + 1.0, v, 3, 5, 2, 1.0);
+                let dv = shade(&p, u, v + 1.0, 3, 5, 2, 1.0);
                 for c in 0..6 {
                     assert!(
                         (base[c] - du[c]).abs() < 1e-6 && (base[c] - dv[c]).abs() < 1e-6,
@@ -635,6 +713,34 @@ mod tests {
         let r = generate_material_preset(&params(10, 64, 4));
         let metal: Vec<u8> = r.orm.chunks_exact(4).map(|p| p[2]).collect();
         assert!(metal.iter().any(|&b| b > 200) && metal.iter().any(|&b| b < 50));
+    }
+
+    #[test]
+    fn shiplap_custom_butt_joints_and_aspect_are_periodic_and_distinct() {
+        let p = params(12, 64, 8);
+        let def = generate_material_preset(&p);
+        let expl_def = generate_material_preset_with_options(&p, 2, 1.0);
+        assert_eq!(fnv1a32(&def.albedo), fnv1a32(&expl_def.albedo));
+        let no_butt = generate_material_preset_with_options(&p, 0, 1.0);
+        let one_butt = generate_material_preset_with_options(&p, 1, 4.0);
+        assert_ne!(fnv1a32(&def.albedo), fnv1a32(&no_butt.albedo));
+        assert_ne!(fnv1a32(&def.albedo), fnv1a32(&one_butt.albedo));
+        for &(bj, aspect) in &[(0i64, 1.0f64), (1, 4.0), (3, 0.5)] {
+            for (u, v) in [(0.013, 0.37), (0.37, 0.81), (0.81, 0.013)] {
+                let base = shade(&p, u, v, 3, 5, bj, aspect);
+                let du = shade(&p, u + 1.0, v, 3, 5, bj, aspect);
+                let dv = shade(&p, u, v + 1.0, 3, 5, bj, aspect);
+                for c in 0..6 {
+                    assert!(
+                        (base[c] - du[c]).abs() < 1e-6 && (base[c] - dv[c]).abs() < 1e-6,
+                        "shiplap(bj={}, aspect={}) not periodic on channel {}",
+                        bj,
+                        aspect,
+                        c
+                    );
+                }
+            }
+        }
     }
 }
 

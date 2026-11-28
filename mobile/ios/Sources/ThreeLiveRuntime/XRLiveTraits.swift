@@ -547,9 +547,23 @@ public struct XRLiveGaze: Codable, Sendable, Equatable {
 public struct XRLiveCutaway: Codable, Sendable, Equatable {
   /// Unit outward normal in node-local space.
   public var normal: SIMD3<Float>
+  /// Whether the node keeps casting shadows while cut away (default `true`).
+  public var castShadow: Bool
 
-  public init(normal: SIMD3<Float>) {
+  public init(normal: SIMD3<Float>, castShadow: Bool = true) {
     self.normal = normal
+    self.castShadow = castShadow
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case normal
+    case castShadow
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    self.normal = try c.decode(SIMD3<Float>.self, forKey: .normal)
+    self.castShadow = try c.decodeIfPresent(Bool.self, forKey: .castShadow) ?? true
   }
 }
 
@@ -1040,8 +1054,8 @@ public enum XRLiveTraitParser {
     )
   }
 
-  /// Parses a `cutaway` trait (`[nx, ny, nz]` or `{normal: [nx, ny, nz]}`), port of
-  /// `parseCutaway()`.
+  /// Parses a `cutaway` trait (`[nx, ny, nz]` or `{normal: [nx, ny, nz], castShadow?: boolean}`),
+  /// port of `parseCutaway()`.
   public static func parseCutaway(_ raw: Any?) -> XRLiveCutaway? {
     guard XRJSON.truthy(raw) else { return nil }
     let r = XRJSON.object(raw)
@@ -1050,7 +1064,8 @@ public enum XRLiveTraitParser {
     let len = (v.x * v.x + v.y * v.y + v.z * v.z).squareRoot()
     guard len >= 1e-8 else { return nil }
     return XRLiveCutaway(
-      normal: SIMD3<Float>(Float(v.x / len), Float(v.y / len), Float(v.z / len)))
+      normal: SIMD3<Float>(Float(v.x / len), Float(v.y / len), Float(v.z / len)),
+      castShadow: XRJSON.bool(r?["castShadow"]) != false)
   }
 
   /// Parses an `explode` trait (`true` or an object).

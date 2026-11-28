@@ -134,7 +134,9 @@ data class XRGazeTrait(
  */
 data class XRCutawayTrait(
   /** Unit outward normal `(x, y, z)` in node-local space. */
-  val normal: List<Double>
+  val normal: List<Double>,
+  /** Whether the node keeps casting shadows while cut away (default `true`). */
+  val castShadow: Boolean = true,
 )
 
 /** Normalized `explode` trait (`exploded-view`). */
@@ -971,7 +973,7 @@ object XRLiveSceneCoreHelper {
     )
   }
 
-  /** Port of `parseCutaway()`: `[nx, ny, nz]` or `{normal: [nx, ny, nz]}`. */
+  /** Port of `parseCutaway()`: `[nx, ny, nz]` or `{normal: [nx, ny, nz], castShadow?: boolean}`. */
   @JvmStatic
   fun parseCutaway(raw: Any?): XRCutawayTrait? {
     if (!truthy(raw)) return null
@@ -980,7 +982,10 @@ object XRLiveSceneCoreHelper {
     val n = finiteVec3(r?.get("normal") ?: raw) ?: return null
     val len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2])
     if (len < 1e-8) return null
-    return XRCutawayTrait(listOf(n[0] / len, n[1] / len, n[2] / len))
+    return XRCutawayTrait(
+      normal = listOf(n[0] / len, n[1] / len, n[2] / len),
+      castShadow = r?.get("castShadow") != false,
+    )
   }
 
   /** Port of `parseExplode()`. */

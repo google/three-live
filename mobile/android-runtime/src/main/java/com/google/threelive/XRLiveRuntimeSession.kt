@@ -974,6 +974,17 @@ class XRLiveRuntimeSession(gltfJson: String) {
     nodeIndex in 0 until nodeCount && cutawayHidden[nodeIndex]
 
   /**
+   * Returns `true` while [nodeIndex] is cut away AND authored `cutaway.castShadow = false` so its
+   * shadow should be suppressed while hidden.
+   */
+  fun isCutAwayShadowSuppressed(nodeIndex: Int): Boolean =
+    isCutAway(nodeIndex) && traitByNode[nodeIndex]?.cutaway?.castShadow == false
+
+  /** Effective shadow casting for [nodeIndex], respecting `cutaway.castShadow = false`. */
+  fun effectiveCastShadow(nodeIndex: Int, authoredCastShadow: Boolean): Boolean =
+    authoredCastShadow && !isCutAwayShadowSuppressed(nodeIndex)
+
+  /**
    * Hides [nodeIndex] from the camera while the camera is on the side its world-space outward
    * normal points to (port of `isMeshCutAway()` in `three-view.ts`).
    */

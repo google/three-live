@@ -1745,6 +1745,317 @@ for (const [name, fn] of [
       Math.abs(slideAct.to[0] - slideLeaf.position.x) > 0.5,
     'createDoorGroup emits rotation toggles for swing leaves and translation toggles for barn leaves',
   );
+
+  // WallGeometry baseboardSide & corniceSide (single-sided interior/exterior trim + cutaway interaction).
+  {
+    const baseOpts = {
+      length: 4,
+      height: 2.8,
+      thickness: 0.2,
+      baseboardHeight: 0.14,
+      baseboardProjection: 0.02,
+      corniceHeight: 0.12,
+      corniceProjection: 0.04,
+    };
+    const bothW = new Arch.WallGeometry(baseOpts);
+    const backW = new Arch.WallGeometry({
+      ...baseOpts,
+      baseboardSide: 'back',
+      corniceSide: 'back',
+    });
+    const frontW = new Arch.WallGeometry({
+      ...baseOpts,
+      baseboardSide: 'front',
+      corniceSide: 'front',
+    });
+    auditGeometry(backW, 'WallGeometry (baseboardSide=back, corniceSide=back)', {
+      expectWatertight: true,
+    });
+    auditGeometry(
+      frontW,
+      'WallGeometry (baseboardSide=front, corniceSide=front)',
+      {expectWatertight: true},
+    );
+    const zExtent = (g: Json) => {
+      const p = g.getAttribute('position').array as Float32Array;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 2; i < p.length; i += 3) {
+        if (p[i] < lo) lo = p[i];
+        if (p[i] > hi) hi = p[i];
+      }
+      return [lo, hi];
+    };
+    const [bLo, bHi] = zExtent(backW);
+    const [fLo, fHi] = zExtent(frontW);
+    // Cutaway on front (+Z) with corniceSide='front' must emit zero floating cornice on the cut face.
+    const cutFrontTrim = new Arch.WallGeometry({
+      ...baseOpts,
+      cutaway: 'front',
+      curbHeight: 0.2,
+      baseboardSide: 'back',
+      corniceSide: 'front',
+    });
+    const cutPos = cutFrontTrim.getAttribute('position').array as Float32Array;
+    let maxZAboveCurb = -Infinity;
+    for (let i = 0; i < cutPos.length; i += 3) {
+      if (cutPos[i + 1] > 0.25 && cutPos[i + 2] > maxZAboveCurb) {
+        maxZAboveCurb = cutPos[i + 2];
+      }
+    }
+    assert(
+      bLo < -0.13 &&
+        Math.abs(bHi - 0.1) < 1e-4 &&
+        Math.abs(fLo + 0.1) < 1e-4 &&
+        fHi > 0.13 &&
+        backW.index.count < bothW.index.count &&
+        maxZAboveCurb < 0,
+      `WallGeometry baseboardSide/corniceSide place trim on requested face only and omit trim on cutaway face (backZ=[${bLo.toFixed(3)},${bHi.toFixed(3)}], cutAbove=${maxZAboveCurb.toFixed(3)})`,
+    );
+  }
+
+  // RoofGeometry flat-parapet openSides: all 16 subsets stay watertight 2-manifold with correct side omission.
+  {
+    const dirs: Array<'n' | 's' | 'e' | 'w'> = ['n', 's', 'e', 'w'];
+    const deckOnly = new Arch.RoofGeometry({
+      style: 'flat-parapet',
+      width: 6,
+      depth: 4,
+      height: 0.8,
+      fasciaHeight: 0.2,
+      openSides: ['north', 'south', 'east', 'west'],
+    });
+    const deckCenter = new Arch.RoofGeometry({
+      style: 'flat-parapet',
+      width: 6,
+      depth: 4,
+      height: 0.8,
+      fasciaHeight: 0.2,
+      openSides: ['n', 's', 'e', 'w'],
+      origin: 'center',
+    });
+    for (let mask = 0; mask < 16; mask++) {
+      const openSides = dirs.filter((_, i) => Boolean(mask & (1 << i)));
+      const rg = new Arch.RoofGeometry({
+        style: 'flat-parapet',
+        width: 6,
+        depth: 4,
+        height: 0.8,
+        fasciaHeight: 0.2,
+        parapetThickness: 0.24,
+        openSides,
+      });
+      auditGeometry(rg, `RoofGeometry flat-parapet openSides=[${openSides.join(',')}]`, {
+        expectWatertight: true,
+      });
+      // Verify vertices above fasciaH only exist on closed sides.
+      const pos = rg.getAttribute('position').array as Float32Array;
+      let hasParapet = false;
+      let maxParapetY = 0;
+      for (let i = 0; i < pos.length; i += 3) {
+        if (pos[i + 1] > 0.21) {
+          hasParapet = true;
+          if (pos[i + 1] > maxParapetY) maxParapetY = pos[i + 1];
+        }
+      }
+      const expectParapet = mask !== 15;
+      assert(
+        hasParapet === expectParapet &&
+          (!expectParapet || Math.abs(maxParapetY - 1.0) < 1e-4),
+        `flat-parapet mask=${mask} (${openSides.join(',')}) parapet presence=${hasParapet}`,
+      );
+    }
+    // Opening N (-Z) removes parapet at z = -2 while keeping S (+Z) parapet at z = +2;
+    // opening E (+X) removes parapet at x = +3 while keeping W (-X) parapet at x = -3.
+    const hasParapetAt = (
+      geo: Json,
+      pred: (cx: number, cz: number) => boolean,
+    ): boolean => {
+      const p = geo.getAttribute('position').array as Float32Array;
+      const idx = geo.index.array as Uint16Array | Uint32Array;
+      for (let t = 0; t < idx.length; t += 3) {
+        const i0 = idx[t] * 3;
+        const i1 = idx[t + 1] * 3;
+        const i2 = idx[t + 2] * 3;
+        const cy = (p[i0 + 1] + p[i1 + 1] + p[i2 + 1]) / 3;
+        if (cy <= 0.4) continue;
+        const cx = (p[i0] + p[i1] + p[i2]) / 3;
+        const cz = (p[i0 + 2] + p[i1 + 2] + p[i2 + 2]) / 3;
+        if (pred(cx, cz)) return true;
+      }
+      return false;
+    };
+    const openN = new Arch.RoofGeometry({
+      style: 'flat-parapet',
+      width: 6,
+      depth: 4,
+      height: 0.8,
+      fasciaHeight: 0.2,
+      openSides: ['n'],
+    });
+    const openE = new Arch.RoofGeometry({
+      style: 'flat-parapet',
+      width: 6,
+      depth: 4,
+      height: 0.8,
+      fasciaHeight: 0.2,
+      openSides: ['e'],
+    });
+    const hasMidNorthParapet = hasParapetAt(
+      openN,
+      (cx, cz) => Math.abs(cx) < 1.5 && cz < -1.5,
+    );
+    const hasMidSouthParapet = hasParapetAt(
+      openN,
+      (cx, cz) => Math.abs(cx) < 1.5 && cz > 1.5,
+    );
+    const hasMidEastParapet = hasParapetAt(
+      openE,
+      (cx, cz) => Math.abs(cz) < 1.0 && cx > 2.5,
+    );
+    const hasMidWestParapet = hasParapetAt(
+      openE,
+      (cx, cz) => Math.abs(cz) < 1.0 && cx < -2.5,
+    );
+    assert(
+      !hasMidNorthParapet &&
+        hasMidSouthParapet &&
+        !hasMidEastParapet &&
+        hasMidWestParapet &&
+        deckOnly.index.count === 36 &&
+        Math.abs(deckCenter.boundingBox.min.y + 0.1) < 1e-4 &&
+        Math.abs(deckCenter.boundingBox.max.y - 0.1) < 1e-4,
+      'flat-parapet openSides omits exact cardinal edges (N=-Z, S=+Z, E=+X, W=-X) and centers all-open deck cleanly',
+    );
+  }
+
+  // createDoorGroup: frameMaterial / {frame, leaf}, openFraction ajar pose, and linkedLeaves.
+  {
+    const frameMat = new MeshStandardMaterial({color: 0xffffff});
+    const leafMat = new MeshStandardMaterial({color: 0x6b4423});
+    const glassMat = new MeshStandardMaterial({color: 0x88ccff});
+    const hwMat = new MeshStandardMaterial({color: 0xd4af37});
+    const byMap = Arch.createDoorGroup(
+      {style: 'french', leaves: 2, name: 'FrenchMap'},
+      {frame: frameMat, leaf: [leafMat, glassMat, hwMat]},
+    );
+    const byOpt = Arch.createDoorGroup(
+      {style: 'panel-4', name: 'OptFrame', frameMaterial: frameMat},
+      leafMat,
+    );
+    const frameMesh1 = byMap.children.find((c: Json) => c.name === 'FrenchMap_frame');
+    const leafMesh1 = byMap.children
+      .find((c: Json) => c.name === 'FrenchMap_leaf0')
+      ?.children?.[0];
+    const frameMesh2 = byOpt.children.find((c: Json) => c.name === 'OptFrame_frame');
+    const leafMesh2 = byOpt.children
+      .find((c: Json) => c.name === 'OptFrame_leaf0')
+      ?.children?.[0];
+    assert(
+      frameMesh1?.material === frameMat &&
+        Array.isArray(leafMesh1?.material) &&
+        leafMesh1.material[0] === leafMat &&
+        frameMesh2?.material === frameMat &&
+        leafMesh2?.material === leafMat,
+      'createDoorGroup supports separate frame vs leaf materials via {frame, leaf} or options.frameMaterial',
+    );
+
+    // Initial ajar pose (`openFraction: 0.35`) and mostly-open pose (`openFraction: 0.85`).
+    const ajar = Arch.createDoorGroup({
+      width: 0.9,
+      hinge: 'left',
+      openFraction: 0.35,
+      openAngleDeg: 100,
+      name: 'AjarDoor',
+    });
+    const ajarPivot = ajar.children.find((c: Json) => c.name === 'AjarDoor_leaf0');
+    const ajarAct = ajarPivot?.userData.interactivity?.onSelect?.[0];
+    const expectedAjarSin = Math.sin(((-35 * Math.PI) / 180) * 0.5);
+    const mostlyOpen = Arch.createDoorGroup({
+      width: 0.9,
+      hinge: 'left',
+      openFraction: 0.85,
+      openAngleDeg: 100,
+      name: 'OpenDoor',
+    });
+    const openPivot = mostlyOpen.children.find(
+      (c: Json) => c.name === 'OpenDoor_leaf0',
+    );
+    const openAct = openPivot?.userData.interactivity?.onSelect?.[0];
+    const ajarSlider = Arch.createDoorGroup({
+      operation: 'barn',
+      width: 1.0,
+      openFraction: 0.4,
+      name: 'AjarBarn',
+    });
+    const barnPivot = ajarSlider.children.find(
+      (c: Json) => c.name === 'AjarBarn_leaf0',
+    );
+    const barnAct = barnPivot?.userData.interactivity?.onSelect?.[0];
+    assert(
+      Math.abs(ajarPivot.quaternion.y - expectedAjarSin) < 1e-4 &&
+        Math.abs(ajarAct.to[1] - Math.sin((-50 * Math.PI) / 180)) < 1e-4 &&
+        JSON.stringify(ajarAct.from) === JSON.stringify([0, 0, 0, 1]) &&
+        JSON.stringify(openAct.to) === JSON.stringify([0, 0, 0, 1]) &&
+        Math.abs(openAct.from[1] - Math.sin((-50 * Math.PI) / 180)) < 1e-4 &&
+        barnPivot.position.x > 0.3 &&
+        Math.abs(barnAct.from[0]) < 1e-5 &&
+        barnAct.to[0] > barnPivot.position.x,
+      'createDoorGroup honors initial openFraction (ajar opens fully then closes; >=0.5 closes first then opens)',
+    );
+
+    // linkedLeaves: double swing & OXXO slider share one toggle variable per leaf across all lead triggers,
+    // and two identically-named linked rigs stay isolated.
+    const linkedScene = new Scene();
+    for (const x of [0, 4]) {
+      const dbl = Arch.createDoorGroup({
+        style: 'french',
+        leaves: 2,
+        width: 1.6,
+        linkedLeaves: true,
+        name: 'LinkedTwin',
+      });
+      dbl.position.x = x;
+      linkedScene.add(dbl);
+    }
+    const linkedGltf = parseGLB(sceneToGLB(linkedScene)).gltf;
+    const lGraph =
+      linkedGltf.extensions?.KHR_interactivity?.graphs?.[0] ??
+      linkedGltf.extensions?.KHR_interactivity;
+    const leafNodes = linkedGltf.nodes
+      .map((n: Json, i: number) => ({name: n.name, i}))
+      .filter((x: Json) => /^LinkedTwin_leaf[01]$/.test(x.name));
+    // 2 doors x 2 leaves = 4 leaf nodes -> 4 shared bool variables (NOT 8!), one per leaf node.
+    const toggleVars = (lGraph?.variables ?? []).filter((v: Json) =>
+      String(v.id).startsWith('__toggle_'),
+    );
+    // Every leaf node pointer appears across both triggers of its own rig.
+    const lJson = JSON.stringify(lGraph || {});
+    const allLeavesWired = leafNodes.every((lf: Json) =>
+      lJson.includes(`/nodes/${lf.i}/rotation`),
+    );
+    // OXXO linked slider only links the 2 operable X leaves (fixed O panels stay non-interactive).
+    const oxxo = Arch.createDoorGroup({
+      operation: 'slider',
+      trackPattern: 'OXXO',
+      width: 3.2,
+      linkedLeaves: true,
+      name: 'Patio',
+    });
+    const oxxoTriggers = oxxo.children.filter(
+      (c: Json) => c.userData?.interactivity?.onSelect,
+    );
+    assert(
+      leafNodes.length === 4 &&
+        toggleVars.length === 4 &&
+        allLeavesWired &&
+        oxxoTriggers.length === 2 &&
+        oxxoTriggers.every(
+          (c: Json) => c.userData.interactivity.onSelect.length === 2,
+        ),
+      `createDoorGroup linkedLeaves shares toggle state across sibling leaves, isolates same-named rigs, and skips fixed slider panels (vars=${toggleVars.length})`,
+    );
+  }
 }
 
 console.log(

@@ -251,7 +251,7 @@ export interface ThreeLiveElement {
 /** Custom `<three-live>` Web Component for declarative 3D/XR rendering. */
 export class ThreeLiveElement extends BaseElement {
   static readonly observedAttributes =
-    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane section-gizmo section-cap section-cap-color cutaway'.split(
+    'src ios-src script-src sandbox capabilities allow-client-scripts poster camera-controls camera-orbit camera-target min-camera-orbit max-camera-orbit field-of-view camera-fit-fill selected-mesh ar ar-modes ar-scale ar-placement exposure shadow-intensity shadow-softness tone-mapping bloom bloom-threshold bloom-radius outline outline-selected outline-color environment-image skybox-image autoplay animation-name variant-name auto-rotate auto-rotate-delay rotation-per-second renderer shadow-maps section-plane section-gizmo section-cap section-cap-color cutaway'.split(
       ' ',
     );
 
@@ -617,6 +617,11 @@ export class ThreeLiveElement extends BaseElement {
       case 'field-of-view': {
         const fov = this.parseFieldOfView(newVal);
         if (v && fov !== undefined) v.setFieldOfView(fov);
+        break;
+      }
+
+      case 'camera-fit-fill': {
+        if (v) v.setCameraFitFill(this.parseCameraFitFill(newVal));
         break;
       }
 
@@ -1001,6 +1006,20 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   /**
+   * Optional viewport-fill target (`0.1..0.98`, or percentage like `"72%"`)
+   * used to auto-frame the model's projected AABB when no explicit orbit radius
+   * is given. `null` / `"auto"` keeps the default `2.5 * bounds.radius`.
+   */
+  get cameraFitFill(): number | null {
+    return this.viewer
+      ? this.viewer.getCameraFitFill()
+      : this.parseCameraFitFill(this.getAttr('camera-fit-fill'));
+  }
+  set cameraFitFill(val: number | string | null) {
+    this.setAttr('camera-fit-fill', val);
+  }
+
+  /**
    * Whether `userData.xr.cutaway` walls hide while they face the camera
    * (dollhouse view). `cutaway="off"` (or `"false"` / `"none"`) disables it.
    */
@@ -1088,6 +1107,10 @@ export class ThreeLiveElement extends BaseElement {
     zoom?: number,
   ): void {
     this.viewer?.setCamera(theta, phi, distance, zoom);
+  }
+
+  fitCameraToBounds(fill?: number): number {
+    return this.viewer ? this.viewer.fitCameraToBounds(fill) : 3;
   }
 
   public getCameraOrbit(): {
@@ -1535,6 +1558,8 @@ export class ThreeLiveElement extends BaseElement {
       animationName: this.animationName || undefined,
       variantName: this.getAttr('variant-name') || undefined,
       fieldOfView: this.parseFieldOfView(this.getAttr('field-of-view')),
+      cameraFitFill:
+        this.parseCameraFitFill(this.getAttr('camera-fit-fill')) ?? undefined,
       cameraTarget: this.parseCameraTarget(this.getAttr('camera-target')),
       minCameraOrbit: this.parseOrbitLimit(this.getAttr('min-camera-orbit')),
       maxCameraOrbit: this.parseOrbitLimit(this.getAttr('max-camera-orbit')),
@@ -1760,7 +1785,12 @@ export class ThreeLiveElement extends BaseElement {
       );
     } catch {
       const o = this.parseOrbitLimit(cameraOrbitStr);
-      if (o.theta !== undefined || o.phi !== undefined) {
+      if (
+        o.theta !== undefined ||
+        o.phi !== undefined ||
+        o.distance !== undefined ||
+        /\bauto\b/i.test(cameraOrbitStr)
+      ) {
         this.viewer.setInitialCamera(o.theta, o.phi, o.distance);
       }
     }
@@ -1799,6 +1829,21 @@ export class ThreeLiveElement extends BaseElement {
       : fovStr.endsWith('rad')
         ? (v * 180) / Math.PI
         : v;
+  }
+
+  private parseCameraFitFill(raw: string | null): number | null {
+    if (!raw) return null;
+    const s = raw.trim().toLowerCase();
+    if (!s || s === 'auto' || s === 'none' || s === 'off' || s === 'false') {
+      return null;
+    }
+    const isPct = s.endsWith('%');
+    const numStr = isPct ? s.slice(0, -1).trim() : s;
+    if (!numStr) return null;
+    const v = Number(numStr);
+    if (!Number.isFinite(v) || v <= 0) return null;
+    const frac = isPct ? v / 100 : v;
+    return Math.max(0.1, Math.min(0.98, frac));
   }
 
   private parseRotationPerSecond(rpsStr: string | null): number {

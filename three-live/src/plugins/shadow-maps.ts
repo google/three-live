@@ -131,6 +131,12 @@ interface ShadowPrimLike {
   readonly isTransmissive?: boolean;
 }
 
+interface ShadowCutawayCache {
+  readonly n: [number, number, number];
+  readonly c: [number, number, number];
+  readonly suppress: boolean;
+}
+
 interface ShadowMeshLike {
   readonly name?: string;
   readonly visible?: boolean;
@@ -149,6 +155,7 @@ interface ShadowMeshLike {
     readonly xr?: Record<string, unknown>;
   };
   readonly primitives: readonly ShadowPrimLike[];
+  _shadowCutaway?: ShadowCutawayCache | null;
 }
 
 interface ShadowViewerLike {
@@ -158,6 +165,12 @@ interface ShadowViewerLike {
     readonly getAttribute?: (name: string) => string | null;
   } | null;
   readonly shadowMaps?: string;
+  readonly cutawayEnabled?: boolean;
+  readonly currTheta?: number;
+  readonly currPhi?: number;
+  readonly currDistance?: number;
+  readonly customTarget?: readonly [number, number, number] | null;
+  readonly followTarget?: readonly [number, number, number] | null;
   readonly meshes?: readonly ShadowMeshLike[];
   readonly lights?: readonly ShadowLightLike[];
   readonly bounds?: {
@@ -542,6 +555,119 @@ export function doesMeshCastShadow(
   return promoteAllCasters ? true : explicit === true;
 }
 
+function resolveShadowCutaway(mesh: ShadowMeshLike): ShadowCutawayCache | null {
+  if (mesh._shadowCutaway !== undefined) return mesh._shadowCutaway;
+  // tslint:disable-next-line:no-any Raw glTF extras / authoring userData.
+  const raw: any = mesh.extras?.xr?.['cutaway'] ?? mesh.userData?.xr?.['cutaway'];
+  if (!raw || raw.enabled === false || Array.isArray(raw) || raw.castShadow !== false) {
+    mesh._shadowCutaway = null;
+    return null;
+  }
+  const v = raw.normal;
+  if (!Array.isArray(v) || v.length < 3) {
+    mesh._shadowCutaway = null;
+    return null;
+  }
+  const nx = Number(v[0]);
+  const ny = Number(v[1]);
+  const nz = Number(v[2]);
+  const len = Math.hypot(nx, ny, nz);
+  if (!Number.isFinite(len) || len < 1e-8) {
+    mesh._shadowCutaway = null;
+    return null;
+  }
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const prim of mesh.primitives ?? []) {
+    const p = prim.positions;
+    if (!p) continue;
+    for (let i = 0; i + 2 < p.length; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        if (p[i + k] < min[k]) min[k] = p[i + k];
+        if (p[i + k] > max[k]) max[k] = p[i + k];
+      }
+    }
+  }
+  const c: [number, number, number] =
+    min[0] <= max[0]
+      ? [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]
+      : [0, 0, 0];
+  mesh._shadowCutaway = {
+    n: [nx / len, ny / len, nz / len],
+    c,
+    suppress: true,
+  };
+  return mesh._shadowCutaway;
+}
+
+function resolveViewerEye(
+  viewer: ShadowViewerLike,
+  explicitEye?: readonly [number, number, number],
+): readonly [number, number, number] | null {
+  if (
+    explicitEye &&
+    explicitEye.length >= 3 &&
+    Number.isFinite(explicitEye[0] + explicitEye[1] + explicitEye[2])
+  ) {
+    return explicitEye;
+  }
+  const d = viewer.currDistance;
+  const phi = viewer.currPhi;
+  const theta = viewer.currTheta;
+  if (
+    typeof d !== 'number' ||
+    typeof phi !== 'number' ||
+    typeof theta !== 'number' ||
+    !Number.isFinite(d + phi + theta)
+  ) {
+    return null;
+  }
+  const c = viewer.followTarget ?? viewer.customTarget ?? viewer.bounds?.center ?? [0, 0, 0];
+  const cosPhi = d * Math.cos(phi);
+  return [
+    c[0] + cosPhi * Math.sin(theta),
+    c[1] + d * Math.sin(phi),
+    c[2] + cosPhi * Math.cos(theta),
+  ];
+}
+
+function isCutawayEnabled(viewer: ShadowViewerLike): boolean {
+  if (viewer.cutawayEnabled === false) return false;
+  const raw = viewer.container?.getAttribute?.('cutaway')?.trim().toLowerCase();
+  return raw !== 'off' && raw !== 'false' && raw !== 'none';
+}
+
+const _cutawayModelScratch = mat4Create();
+
+/**
+ * True when `mesh` has `userData.xr.cutaway = {normal, castShadow: false}`,
+ * dollhouse cutaway is enabled, and `eye` is on the outward-normal side.
+ */
+export function isMeshCutAwayShadowSuppressed(
+  meshObj: unknown,
+  viewerObj: unknown,
+  rm: Float32Array,
+  eye: readonly [number, number, number] | null,
+): boolean {
+  if (!meshObj || typeof meshObj !== 'object' || !eye) return false;
+  const viewer = (viewerObj || {}) as ShadowViewerLike;
+  if (!isCutawayEnabled(viewer)) return false;
+  const mesh = meshObj as ShadowMeshLike;
+  const cut = resolveShadowCutaway(mesh);
+  if (!cut) return false;
+  const model = mesh.worldSpace === true ? mesh.transform : _cutawayModelScratch;
+  if (mesh.worldSpace !== true) mat4Multiply(_cutawayModelScratch, rm, mesh.transform);
+  const [nx, ny, nz] = cut.n;
+  const [cx, cy, cz] = cut.c;
+  const wx = model[0] * nx + model[4] * ny + model[8] * nz;
+  const wy = model[1] * nx + model[5] * ny + model[9] * nz;
+  const wz = model[2] * nx + model[6] * ny + model[10] * nz;
+  const px = model[0] * cx + model[4] * cy + model[8] * cz + model[12];
+  const py = model[1] * cx + model[5] * cy + model[9] * cz + model[13];
+  const pz = model[2] * cx + model[6] * cy + model[10] * cz + model[14];
+  return wx * (eye[0] - px) + wy * (eye[1] - py) + wz * (eye[2] - pz) > 0;
+}
+
 /** Returns true when `mesh` should receive shadows under `promoteAllReceivers`. */
 export function doesMeshReceiveShadow(
   mesh: unknown,
@@ -591,6 +717,7 @@ function hashF32Array(h: number, arr: ArrayLike<number>, limit = 64): number {
  */
 export function resolveActiveShadowLights(
   viewerObj: unknown,
+  eyePos?: readonly [number, number, number],
 ): ResolvedShadowPlan {
   const viewer = (viewerObj || {}) as ShadowViewerLike;
   const rawMode =
@@ -675,10 +802,14 @@ export function resolveActiveShadowLights(
   const promoteAllCasters = mode === 'pcf' || !hasExplicitMeshShadow;
   const promoteAllReceivers = promoteAllCasters;
 
+  const rm = viewer.modelRootMatrix ?? IDENTITY_MAT4;
+  const resolvedEye = resolveViewerEye(viewer, eyePos);
+
   // Verify at least one eligible opaque caster exists before allocating VRAM.
   let hasAnyCaster = false;
   for (const m of meshes) {
     if (!doesMeshCastShadow(m, promoteAllCasters)) continue;
+    if (isMeshCutAwayShadowSuppressed(m, viewer, rm, resolvedEye)) continue;
     for (const p of m.primitives ?? []) {
       if (isOpaqueShadowPrim(p) && p.indexCount > 0) {
         hasAnyCaster = true;
@@ -777,11 +908,13 @@ export function resolveActiveShadowLights(
   } else {
     h = hashU32(h, 0);
   }
-  const rm = viewer.modelRootMatrix ?? IDENTITY_MAT4;
   h = hashF32Array(h, rm, 16);
   let casterIdx = 0;
   for (const m of meshes) {
-    if (!doesMeshCastShadow(m, promoteAllCasters)) {
+    if (
+      !doesMeshCastShadow(m, promoteAllCasters) ||
+      isMeshCutAwayShadowSuppressed(m, viewer, rm, resolvedEye)
+    ) {
       casterIdx++;
       continue;
     }
@@ -1182,7 +1315,12 @@ export const shadowMapsPlugin: ThreeLivePlugin = {
     }
   },
 
-  onBeforeDrawScene(viewerObj: unknown, gl: WebGL2RenderingContext): void {
+  onBeforeDrawScene(
+    viewerObj: unknown,
+    gl: WebGL2RenderingContext,
+    _vp?: Float32Array,
+    eyePos?: readonly [number, number, number],
+  ): void {
     if (!viewerObj || typeof viewerObj !== 'object') return;
     const viewer = viewerObj as ShadowViewerLike;
     const reg = getSharedRegistry();
@@ -1198,7 +1336,8 @@ export const shadowMapsPlugin: ThreeLivePlugin = {
     }
 
     const st = getViewerGLState(viewerObj);
-    const plan = resolveActiveShadowLights(viewer);
+    const resolvedEye = resolveViewerEye(viewer, eyePos);
+    const plan = resolveActiveShadowLights(viewer, resolvedEye ?? undefined);
     st.promoteAllReceivers = plan.promoteAllReceivers;
     st.dirSlots[0] = plan.dirSlots[0];
     st.dirSlots[1] = plan.dirSlots[1];
@@ -1330,6 +1469,9 @@ export const shadowMapsPlugin: ThreeLivePlugin = {
 
       for (const mesh of meshes) {
         if (!doesMeshCastShadow(mesh, plan.promoteAllCasters)) continue;
+        if (isMeshCutAwayShadowSuppressed(mesh, viewer, rm, resolvedEye)) {
+          continue;
+        }
         if (mesh.worldSpace === true) {
           _modelScratch.set(mesh.transform);
         } else {

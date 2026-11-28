@@ -759,10 +759,16 @@ export function parseExplode(raw: unknown): ExplodeOptions | null {
 export interface CutawayOptions {
   /** Unit outward normal in the node's local space. */
   readonly normal: TraitVec3;
+  /**
+   * Whether the mesh keeps casting shadows while cut away from the camera
+   * (default `true`). Set `false` (e.g. on a cutaway roof) so directional light
+   * streams into the exposed interior.
+   */
+  readonly castShadow: boolean;
 }
 
 /**
- * Parses a `cutaway` trait (`[nx, ny, nz]` or `{normal: [nx, ny, nz]}`),
+ * Parses a `cutaway` trait (`[nx, ny, nz]` or `{normal: [nx, ny, nz], castShadow?: boolean}`),
  * returning `null` when disabled or when the normal is missing or zero.
  */
 export function parseCutaway(raw: unknown): CutawayOptions | null {
@@ -773,7 +779,10 @@ export function parseCutaway(raw: unknown): CutawayOptions | null {
   if (!isFiniteVec3(n)) return null;
   const len = Math.hypot(n[0], n[1], n[2]);
   if (len < 1e-8) return null;
-  return {normal: [n[0] / len, n[1] / len, n[2] / len]};
+  return {
+    normal: [n[0] / len, n[1] / len, n[2] / len],
+    castShadow: r ? r['castShadow'] !== false : true,
+  };
 }
 
 /** Identifiers rejected everywhere they could become object keys. */
@@ -1585,7 +1594,12 @@ export function buildXRSceneCoreExtension(
       direction: n.explode.direction ? [...n.explode.direction] : null,
     };
   }
-  if (n.cutaway) comp['cutaway'] = {normal: [...n.cutaway.normal]};
+  if (n.cutaway) {
+    comp['cutaway'] = {
+      normal: [...n.cutaway.normal],
+      ...(n.cutaway.castShadow ? {} : {castShadow: false}),
+    };
+  }
   if (n.boundsIgnore) comp['boundsIgnore'] = true;
   if (n.navigable) comp['navigable'] = {mode: n.navigable};
   if (n.text) comp['text3d'] = {...n.text};
@@ -1680,7 +1694,12 @@ export function flattenXRTraitsForUsd(
   if (n.snapSocket) put('snapSocket', n.snapSocket);
   if (n.gaze) put('gaze', n.gaze);
   if (n.explode) put('explode', n.explode);
-  if (n.cutaway) put('cutaway', n.cutaway);
+  if (n.cutaway) {
+    put('cutaway', {
+      normal: n.cutaway.normal,
+      ...(n.cutaway.castShadow ? {} : {castShadow: false}),
+    });
+  }
   if (n.boundsIgnore) out['boundsIgnore'] = true;
   if (n.navigable) out['navigable'] = n.navigable;
   if (n.text) put('text', n.text);

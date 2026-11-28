@@ -3692,9 +3692,113 @@ async function runThreeViewTests() {
       getSectionCapMesh(fView) === null,
       'boundsIgnore context meshes (the lawn) are not capped',
     );
+    // Cutaway walls hidden from the camera must NOT leave floating solid poché caps behind.
+    capAttrs.set('section-plane', 'y:0.2');
+    const cutScene = new THREE.Scene();
+    const cutWall = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 2, 2),
+      new THREE.MeshStandardMaterial({color: 0xd0c8bc}),
+    );
+    cutWall.name = 'CutHouse';
+    cutWall.userData = {xr: {cutaway: {normal: [0, 0, 1]}}};
+    cutScene.add(cutWall);
+    const cutCapView = new ThreeView(capContainer, capCanvas, {autoStart: false});
+    cutCapView.setInitialCamera(0, 0, 8);
+    cutCapView.loadGLBData(parseGLB(cutScene.toGLB()));
+    cutCapView.render();
+    const capWhileCut = getSectionCapMesh(cutCapView);
+    cutCapView.cutawayEnabled = false;
+    cutCapView.render();
+    const capWhenShown = getSectionCapMesh(cutCapView);
+    cutCapView.destroy?.();
+    assert(
+      capWhileCut === null && capWhenShown !== null,
+      'section-cap="solid" skips meshes currently hidden by dollhouse cutaway and caps them when shown',
+    );
     capAttrs.delete('section-cap');
     capAttrs.delete('section-plane');
     capAttrs.delete('section-cap-color');
+
+    // camera-fit-fill: tight perspective AABB framing for non-cubic buildings,
+    // respecting viewport aspect, FOV, boundsIgnore, and explicit orbit distance.
+    const wideHouse = new THREE.Scene();
+    const wideBody = new THREE.Mesh(
+      new THREE.BoxGeometry(14, 3.2, 8),
+      new THREE.MeshStandardMaterial({color: 0xe5e0d8}),
+    );
+    wideBody.position.set(0, 1.6, 0);
+    const wideLawn = new THREE.Mesh(
+      new THREE.BoxGeometry(60, 0.1, 60),
+      new THREE.MeshStandardMaterial({color: 0x4b7042}),
+    );
+    wideLawn.userData = {xr: {boundsIgnore: true}};
+    wideHouse.add(wideBody, wideLawn);
+    const wideGlb = parseGLB(wideHouse.toGLB());
+    const makeSizedCanvas = (w: number, h: number) =>
+      ({
+        ...capCanvas,
+        width: w,
+        height: h,
+        clientWidth: w,
+        clientHeight: h,
+        getBoundingClientRect: () => ({
+          left: 0,
+          top: 0,
+          width: w,
+          height: h,
+          right: w,
+          bottom: h,
+        }),
+      }) as unknown as HTMLCanvasElement;
+    const landCanvas = makeSizedCanvas(1280, 720);
+    const portCanvas = makeSizedCanvas(390, 844);
+    const defView = new ThreeView(capContainer, landCanvas, {autoStart: false});
+    defView.loadGLBData(wideGlb);
+    const fitLandView = new ThreeView(capContainer, landCanvas, {
+      autoStart: false,
+      cameraFitFill: 0.72,
+    });
+    fitLandView.setInitialCamera(35, 22);
+    fitLandView.loadGLBData(wideGlb);
+    const fitPortView = new ThreeView(capContainer, portCanvas, {
+      autoStart: false,
+      cameraFitFill: 0.72,
+    });
+    fitPortView.setInitialCamera(35, 22);
+    fitPortView.loadGLBData(wideGlb);
+    const dDefault = defView.getCameraOrbit().radius;
+    const dLand = fitLandView.getCameraOrbit().radius;
+    const dPort = fitPortView.getCameraOrbit().radius;
+    // Project all 8 AABB corners at dLand and verify the limiting NDC extent matches 0.72!
+    fitLandView.jumpCameraToGoal();
+    fitLandView.update(0);
+    let maxNdc = 0;
+    for (const x of [-7, 7]) {
+      for (const y of [0, 3.2]) {
+        for (const z of [-4, 4]) {
+          const s = fitLandView.projectPointToScreen([x, y, z]);
+          maxNdc = Math.max(
+            maxNdc,
+            Math.abs((s.x / 1280) * 2 - 1),
+            Math.abs((s.y / 720) * 2 - 1),
+          );
+        }
+      }
+    }
+    const fitTight = fitLandView.fitCameraToBounds(0.85);
+    fitLandView.setInitialCamera(35, 22, 18);
+    const explicitDist = fitLandView.getCameraOrbit().radius;
+    defView.destroy?.();
+    fitLandView.destroy?.();
+    fitPortView.destroy?.();
+    assert(
+      dLand < dDefault &&
+        dPort > dLand * 1.8 &&
+        Math.abs(maxNdc - 0.72) < 0.02 &&
+        fitTight < dLand &&
+        Math.abs(explicitDist - 18) < 1e-4,
+      `cameraFitFill frames 14x3.2x8m building tightly in landscape (${dLand.toFixed(2)}m vs default ${dDefault.toFixed(2)}m, maxNDC=${maxNdc.toFixed(3)}), pulls back in portrait (${dPort.toFixed(2)}m), and yields to explicit orbit radius`,
+    );
 
     // stepFrame(): deterministic manual clock without requestAnimationFrame.
     fView.stepFrame(0.1);

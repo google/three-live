@@ -1414,6 +1414,81 @@ function runProceduralTests(): void {
       'ProceduralTexture repeat option tiles all maps; 24 cloned maps pass the 16-texture quota',
     );
   }
+  // Shiplap `buttJoints` and `boardAspect` / anisotropic `repeat` compensation.
+  {
+    const defShiplap = PT.shiplap({size: 64, scale: 8, seed: 5});
+    const explDef = PT.shiplap({
+      size: 64,
+      scale: 8,
+      seed: 5,
+      buttJoints: 2,
+      boardAspect: 1,
+    });
+    const noButt = PT.shiplap({size: 64, scale: 8, seed: 5, buttJoints: 0});
+    const noButtAniso = PT.shiplap({
+      size: 64,
+      scale: 8,
+      seed: 5,
+      buttJoints: 0,
+      repeat: [0.25, 1],
+    });
+    const oneButt = PT.shiplap({size: 64, scale: 8, seed: 5, buttJoints: 1});
+    const autoAspect = PT.shiplap({
+      size: 64,
+      scale: 8,
+      seed: 5,
+      repeat: [0.25, 1],
+    });
+    const explicitAspect = PT.shiplap({
+      size: 64,
+      scale: 8,
+      seed: 5,
+      boardAspect: 4,
+    });
+    const aspect1Override = PT.shiplap({
+      size: 64,
+      scale: 8,
+      seed: 5,
+      boardAspect: 1,
+      repeat: [0.25, 1],
+    });
+    // At buttJoints=0, a horizontal slice along the middle of a board has no dark butt seams.
+    const rowMidY = 4;
+    let minNoButtR = 255;
+    const d0 = noButt.map.image._data as Uint8Array;
+    for (let x = 0; x < 64; x++) {
+      minNoButtR = Math.min(minNoButtR, d0[(rowMidY * 64 + x) * 4]);
+    }
+    // Count dark butt-joint pixels along board midlines for aspect=1 vs aspect=4: higher aspect narrows seams in U.
+    const countSeamPx = (data: Uint8Array): number => {
+      let n = 0;
+      for (let b = 0; b < 8; b++) {
+        const y = b * 8 + 4;
+        for (let x = 0; x < 64; x++) {
+          if (data[(y * 64 + x) * 4] < 95) n++;
+        }
+      }
+      return n;
+    };
+    const seamA1 = countSeamPx(defShiplap.map.image._data);
+    const seamA4 = countSeamPx(explicitAspect.map.image._data);
+    const seamB1 = countSeamPx(oneButt.map.image._data);
+    const seamB0 = countSeamPx(noButt.map.image._data);
+    assert(
+      defShiplap.map === explDef.map &&
+        noButt.map.source === noButtAniso.map.source &&
+        autoAspect.map.source === explicitAspect.map.source &&
+        aspect1Override.map.source === defShiplap.map.source &&
+        fnv1a(oneButt.map.image._data) !== fnv1a(defShiplap.map.image._data) &&
+        seamB0 === 0 &&
+        minNoButtR > 100 &&
+        seamB1 > 0 &&
+        seamB1 < seamA1 &&
+        seamA4 > 0 &&
+        seamA4 <= seamA1,
+      `ProceduralTexture.shiplap honors buttJoints/boardAspect and infers aspect from anisotropic repeat (seams: b0=${seamB0}, b1=${seamB1}, a1=${seamA1}, a4=${seamA4})`,
+    );
+  }
   const evenA = PT.checkerboard({scale: 7, size: 16, seed: 3});
   const evenB = PT.checkerboard({scale: 8, size: 16, seed: 3});
   const junk = PT.wood({

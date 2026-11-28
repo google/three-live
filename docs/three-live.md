@@ -75,6 +75,7 @@ bundles and entry points.
 | `min-camera-orbit` | `string` | `three-live-viewer`+ | Lower bounds for camera orbit `"theta phi radius"` (e.g. `"-45deg 0deg 1m"` or `"auto 0deg auto"`). |
 | `max-camera-orbit` | `string` | `three-live-viewer`+ | Upper bounds for camera orbit (e.g. `"auto 90deg auto"` prevents orbiting beneath the ground plane). |
 | `field-of-view` | `string` | `three-live-viewer`+ | Vertical field of view angle (e.g. `"45deg"`, clamps between `10deg` and `90deg`). |
+| `camera-fit-fill` | `number \| string` | `three-live-viewer`+ | Target viewport-fill fraction (`0.1`–`0.98`, percentage like `"72%"`, or `"auto"`) for perspective 8-corner AABB auto-framing whenever `camera-orbit` omits an explicit radius (respects FOV, aspect ratio, orbit angles, `camera-target`, and `boundsIgnore`). |
 | `selected-mesh` | `string` | `three-live-viewer`+ | Name of the sub-mesh to highlight. |
 | `camera-controls` | `boolean` | `three-live-viewer`+ | Enables interactive orbit/pan/zoom camera controls (disabled by default unless `camera-controls` is present, matching `<model-viewer>`). |
 | `ar` | `boolean` | `three-live-viewer`+ | Enables the augmented reality launcher button. |
@@ -116,7 +117,8 @@ JavaScript configurators, hotspot managers, and AR launchers:
     `requestAnimationFrame` loop).
 -   **Camera & Screenshot:** `viewer.getCameraOrbit()`,
     `viewer.getCameraTarget()`, `viewer.getFieldOfView()`,
-    `viewer.jumpCameraToGoal()`, `viewer.toDataURL()`, `await viewer.toBlob()`
+    `viewer.fitCameraToBounds(fill?)`, `viewer.jumpCameraToGoal()`,
+    `viewer.toDataURL()`, `await viewer.toBlob()`
 -   **AR Status & Activation:** `viewer.canActivateAR` (boolean getter), `await
     viewer.activateAR()`
 -   **Surface Raycasting:** `viewer.positionAndNormalFromPoint(pixelX, pixelY)`

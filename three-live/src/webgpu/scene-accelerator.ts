@@ -38,6 +38,7 @@ import {resolveSectionCapColor} from '../section-plane';
 import {
   doesMeshCastShadow,
   doesMeshReceiveShadow,
+  isMeshCutAwayShadowSuppressed,
   MAX_SHADOW_LIGHTS,
   resolveActiveShadowLights,
   resolveShadowSectionPlane,
@@ -2282,7 +2283,8 @@ function syncSceneResources(
       !g.isBackdrop &&
       !nowBlend &&
       !prim.isTransmissive &&
-      doesMeshCastShadow(mesh, shadowPlan.promoteAllCasters)
+      doesMeshCastShadow(mesh, shadowPlan.promoteAllCasters) &&
+      !isMeshCutAwayShadowSuppressed(mesh, viewer, root, params.eyePos)
     ) {
       flags |= PART_FLAG_CAST_SHADOW;
     }
@@ -2732,7 +2734,7 @@ export class WebGPUSceneAccelerator implements GPUSceneAccelerator {
     }
 
     const scene = st.scene;
-    const shadowPlan = resolveActiveShadowLights(viewer);
+    const shadowPlan = resolveActiveShadowLights(viewer, params.eyePos);
     let desiredShadowView: unknown = pipes.dummyShadowView;
     const neededSlices = shadowPlan.slices.length;
     if (neededSlices > 0) {

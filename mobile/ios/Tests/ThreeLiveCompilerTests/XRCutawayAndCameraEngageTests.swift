@@ -26,13 +26,53 @@ final class XRCutawayAndCameraEngageTests: XCTestCase {
   }
 
   func testParseCutawayNormalizesAndRejectsInvalidInput() {
-    XCTAssertEqual(
-      XRLiveTraitParser.parseCutaway(["normal": [0.0, 0.0, 2.0]])?.normal, SIMD3<Float>(0, 0, 1))
+    let parsed = XRLiveTraitParser.parseCutaway(["normal": [0.0, 0.0, 2.0]])
+    XCTAssertEqual(parsed?.normal, SIMD3<Float>(0, 0, 1))
+    XCTAssertEqual(parsed?.castShadow, true)
+    let noShd = XRLiveTraitParser.parseCutaway(["normal": [0.0, 2.0, 0.0], "castShadow": false])
+    XCTAssertEqual(noShd?.normal, SIMD3<Float>(0, 1, 0))
+    XCTAssertEqual(noShd?.castShadow, false)
     XCTAssertEqual(
       XRLiveTraitParser.parseCutaway([3.0, 0.0, 4.0])?.normal, SIMD3<Float>(0.6, 0, 0.8))
     XCTAssertNil(XRLiveTraitParser.parseCutaway(["normal": [0.0, 0.0, 0.0]]))
     XCTAssertNil(XRLiveTraitParser.parseCutaway(["normal": [1.0, 0.0, 0.0], "enabled": false]))
     XCTAssertNil(XRLiveTraitParser.parseCutaway("front"))
+  }
+
+  func testCutawayCastShadowFalseSuppressesShadowsOnlyWhileCutAway() {
+    let gltf: [String: Any] = [
+      "asset": ["version": "2.0"],
+      "nodes": [
+        [
+          "name": "Roof", "translation": [0, 3, 0],
+          "extras": ["xr": ["cutaway": ["normal": [0, 1, 0], "castShadow": false]]],
+        ],
+        [
+          "name": "FrontWall", "translation": [0, 0, 2],
+          "extras": ["xr": ["cutaway": ["normal": [0, 0, 1]]]],
+        ],
+      ],
+    ]
+    let s = XRLiveRuntimeSession(gltf: gltf)
+    s.step(dt: 1.0 / 60, headPose: pose(0, 8, 8))
+    XCTAssertTrue(s.isCutAway(0))
+    XCTAssertTrue(s.isCutAwayShadowSuppressed(0))
+    XCTAssertFalse(s.effectiveCastShadow(0, authoredCastShadow: true))
+    XCTAssertTrue(s.isCutAway(1))
+    XCTAssertFalse(s.isCutAwayShadowSuppressed(1), "default cutaway keeps casting shadows")
+    XCTAssertTrue(s.effectiveCastShadow(1, authoredCastShadow: true))
+
+    s.step(dt: 1.0 / 60, headPose: pose(0, 1, 8))
+    XCTAssertFalse(s.isCutAway(0))
+    XCTAssertFalse(s.isCutAwayShadowSuppressed(0))
+    XCTAssertTrue(s.effectiveCastShadow(0, authoredCastShadow: true))
+
+    s.step(dt: 1.0 / 60, headPose: pose(0, 8, 8))
+    XCTAssertTrue(s.isCutAwayShadowSuppressed(0))
+    s.cutawayEnabled = false
+    s.step(dt: 1.0 / 60, headPose: pose(0, 8, 8))
+    XCTAssertFalse(s.isCutAwayShadowSuppressed(0))
+    XCTAssertTrue(s.effectiveCastShadow(0, authoredCastShadow: true))
   }
 
   func testCutawayHidesCameraFacingWallsAndRestoresThem() {

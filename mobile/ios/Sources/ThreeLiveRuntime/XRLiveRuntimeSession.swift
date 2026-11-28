@@ -922,6 +922,18 @@ public final class XRLiveRuntimeSession {
     cutawayHidden.contains(index)
   }
 
+  /// Whether node `index` is cut away AND authored `cutaway.castShadow = false` so its shadow
+  /// should be suppressed while hidden.
+  public func isCutAwayShadowSuppressed(_ index: Int) -> Bool {
+    guard index >= 0, index < nodes.count else { return false }
+    return cutawayHidden.contains(index) && nodes[index].traits?.cutaway?.castShadow == false
+  }
+
+  /// Effective shadow casting for node `index`, respecting `cutaway.castShadow = false`.
+  public func effectiveCastShadow(_ index: Int, authoredCastShadow: Bool) -> Bool {
+    authoredCastShadow && !isCutAwayShadowSuppressed(index)
+  }
+
   /// Hides node `index` from the camera while the camera is on the side its world-space
   /// outward normal points to (port of `isMeshCutAway()` in `three-view.ts`).
   private func stepCutaway(_ index: Int, _ cutaway: XRLiveCutaway, headPose: XRPose?) {

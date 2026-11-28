@@ -130,6 +130,13 @@ export interface ViewOptions {
   variantName?: string;
   fieldOfView?: number;
   distanceMode?: 'auto' | 'relative' | 'absolute';
+  /**
+   * Optional viewport-fill target (`0.1..0.98`, e.g. `0.72`) used to compute
+   * automatic perspective framing distance from the model's projected AABB
+   * corners whenever no explicit orbit radius is set. Unset keeps the default
+   * `2.5 * bounds.radius` framing.
+   */
+  cameraFitFill?: number;
   cameraTarget?: [number, number, number];
   minCameraOrbit?: {theta?: number; phi?: number; distance?: number};
   maxCameraOrbit?: {theta?: number; phi?: number; distance?: number};
@@ -835,17 +842,18 @@ interface MeshGpu {
   boundsIgnore?: boolean;
 }
 
-/** Cached `cutaway` trait data: local outward normal and local AABB center. */
+/** Cached `cutaway` trait data: local outward normal, local AABB center, and shadow retention. */
 interface CutawayCache {
   readonly n: [number, number, number];
   readonly c: [number, number, number];
+  readonly castShadow: boolean;
 }
 
 /**
- * Resolves a mesh's `userData.xr.cutaway` (`[nx, ny, nz]` or `{normal}`) into
- * a unit local normal plus the local AABB center of its primitives, or `null`.
- * Mirrors `parseCutaway()` in `xr-trait-schema.ts` without importing it into
- * the viewer bundle.
+ * Resolves a mesh's `userData.xr.cutaway` (`[nx, ny, nz]` or
+ * `{normal, castShadow?}`) into a unit local normal, local AABB center, and
+ * shadow-casting flag, or `null`. Mirrors `parseCutaway()` in
+ * `xr-trait-schema.ts` without importing it into the viewer bundle.
  */
 function resolveCutaway(mesh: MeshGpu): CutawayCache | null {
   // tslint:disable-next-line:no-any Raw glTF extras / authoring userData.
@@ -858,6 +866,7 @@ function resolveCutaway(mesh: MeshGpu): CutawayCache | null {
   const nz = Number(v[2]);
   const len = Math.hypot(nx, ny, nz);
   if (!Number.isFinite(len) || len < 1e-8) return null;
+  const castShadow = Array.isArray(raw) ? true : raw.castShadow !== false;
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
   for (const prim of mesh.primitives) {
@@ -874,7 +883,7 @@ function resolveCutaway(mesh: MeshGpu): CutawayCache | null {
     min[0] <= max[0]
       ? [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]
       : [0, 0, 0];
-  return {n: [nx / len, ny / len, nz / len], c};
+  return {n: [nx / len, ny / len, nz / len], c, castShadow};
 }
 
 /** Cached `resolveCutaway()` result (computed once per mesh). */
@@ -906,6 +915,22 @@ export function isMeshCutAway(
   const py = model[1] * cx + model[5] * cy + model[9] * cz + model[13];
   const pz = model[2] * cx + model[6] * cy + model[10] * cz + model[14];
   return wx * (eyeX - px) + wy * (eyeY - py) + wz * (eyeZ - pz) > 0;
+}
+
+/**
+ * True when `mesh` is cut away AND configured `cutaway.castShadow = false` so
+ * shadow passes should omit it while cut away.
+ */
+export function doesCutawaySuppressShadow(
+  mesh: MeshGpu,
+  model: ArrayLike<number>,
+  eyeX: number,
+  eyeY: number,
+  eyeZ: number,
+): boolean {
+  const cut = resolveCutawayCached(mesh);
+  if (!cut || cut.castShadow) return false;
+  return isMeshCutAway(mesh, model, eyeX, eyeY, eyeZ);
 }
 
 /**
@@ -2145,6 +2170,8 @@ export class ThreeView {
   private initialPhi = 0.35;
   private initialDistance: number | null = null;
   private customDistance = false;
+  private userAdjustedDistance = false;
+  private cameraFitFill: number | null = null;
   private distanceMode: 'auto' | 'relative' | 'absolute' = 'auto';
   private initialCustomTarget: [number, number, number] | null = null;
   private texturesReady: Promise<void> = Promise.resolve();
@@ -2282,14 +2309,6 @@ export class ThreeView {
     if (o.exposure !== undefined) {
       this.exposure = sanitizeExposure(o.exposure);
     }
-    if (o.camera) {
-      this.setInitialCamera(
-        o.camera.theta,
-        o.camera.phi,
-        o.camera.distance,
-        o.camera.zoom,
-      );
-    }
     if (o.shadowIntensity !== undefined || o.shadowSoftness !== undefined) {
       this.setShadow(o.shadowIntensity ?? 0, o.shadowSoftness);
     }
@@ -2309,14 +2328,28 @@ export class ThreeView {
       this.activeVariantName = o.variantName || null;
     }
     if (o.fieldOfView !== undefined) {
-      this.fov = (o.fieldOfView * Math.PI) / 180;
+      this.fov = (Math.max(10, Math.min(90, o.fieldOfView)) * Math.PI) / 180;
     }
     if (o.distanceMode !== undefined) {
       this.distanceMode = o.distanceMode;
     }
+    if (o.cameraFitFill !== undefined) {
+      const f = Number(o.cameraFitFill);
+      if (Number.isFinite(f) && f > 0) {
+        this.cameraFitFill = Math.max(0.1, Math.min(0.98, f));
+      }
+    }
     if (o.cameraTarget !== undefined) {
       this.setTarget(o.cameraTarget[0], o.cameraTarget[1], o.cameraTarget[2]);
       this.initialCustomTarget = [...o.cameraTarget];
+    }
+    if (o.camera) {
+      this.setInitialCamera(
+        o.camera.theta,
+        o.camera.phi,
+        o.camera.distance,
+        o.camera.zoom,
+      );
     }
     if (o.minCameraOrbit || o.maxCameraOrbit) {
       this.setOrbitLimits({
@@ -2564,8 +2597,13 @@ export class ThreeView {
     }
 
     if (!this.customDistance) {
+      this.userAdjustedDistance = false;
       this.initialDistance =
-        this.distanceMode === 'absolute' ? 3.0 : bounds.radius * 2.5;
+        this.cameraFitFill !== null
+          ? this.clampFitDistance(
+              this.defaultAutoDistance(this.initialTheta, this.initialPhi),
+            )
+          : this.defaultAutoDistance(this.initialTheta, this.initialPhi);
       if (!this.followActive) {
         this.targetDistance = this.initialDistance;
         this.currDistance = this.initialDistance;
@@ -3136,6 +3174,7 @@ export class ThreeView {
 
   public setTarget(x: number, y: number, z: number): void {
     this.customTarget = [x, y, z];
+    this.refreshAutoFitDistance(false);
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
       this.render();
@@ -3149,6 +3188,7 @@ export class ThreeView {
   public clearTarget(): void {
     if (!this.customTarget) return;
     this.customTarget = null;
+    this.refreshAutoFitDistance(false);
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
       this.render();
@@ -3174,7 +3214,7 @@ export class ThreeView {
       this.targetPhi = this.clampPhi(this.initialPhi);
       this.targetDistance = this.clampDistance(
         this.initialDistance ??
-          (this.distanceMode === 'absolute' ? 3 : this.bounds.radius * 2.5),
+          this.defaultAutoDistance(this.initialTheta, this.initialPhi),
       );
     }
   }
@@ -3206,18 +3246,196 @@ export class ThreeView {
   public setFieldOfView(fovDeg: number): void {
     const clamped = Math.max(10, Math.min(90, fovDeg));
     this.fov = (clamped * Math.PI) / 180;
+    this.refreshAutoFitDistance(true);
   }
 
   public getFieldOfView(): number {
     return (this.fov * 180) / Math.PI;
   }
 
+  /**
+   * Computes the perspective orbit distance that fits the model's world AABB
+   * corners inside `fill` (`0.1..0.98`) of the viewport along both axes for
+   * the given orbit angles `(thetaRad, phiRad)` and current FOV / aspect ratio.
+   */
+  computeFitDistance(
+    fill: number,
+    thetaRad = this.targetTheta,
+    phiRad = this.targetPhi,
+  ): number {
+    const f = Math.max(0.1, Math.min(0.98, Number.isFinite(fill) ? fill : 0.75));
+    const rect =
+      typeof this.canvas?.getBoundingClientRect === 'function'
+        ? this.canvas.getBoundingClientRect()
+        : null;
+    const cw =
+      (rect && rect.width > 0 ? rect.width : 0) ||
+      this.canvas?.clientWidth ||
+      this.canvas?.width ||
+      300;
+    const ch =
+      (rect && rect.height > 0 ? rect.height : 0) ||
+      this.canvas?.clientHeight ||
+      this.canvas?.height ||
+      150;
+    const aspect = Math.max(0.1, cw / Math.max(1, ch));
+    const tanV = Math.max(1e-4, Math.tan(this.fov * 0.5));
+    const tanH = tanV * aspect;
+
+    const b = this.bounds;
+    const min = b?.min ?? [-1, -1, -1];
+    const max = b?.max ?? [1, 1, 1];
+    const tgt = this.customTarget ?? b?.center ?? [0, 0, 0];
+    const [tx, ty, tz] = tgt;
+
+    const cosT = Math.cos(thetaRad);
+    const sinT = Math.sin(thetaRad);
+    const cosP = Math.cos(phiRad);
+    const sinP = Math.sin(phiRad);
+    // Right, Up, and Eye-direction unit basis matching `getOrbitEye` + `mat4LookAt`.
+    const rx = cosT;
+    const rz = -sinT;
+    const ex = cosP * sinT;
+    const ey = sinP;
+    const ez = cosP * cosT;
+    const ux = -sinP * sinT;
+    const uy = cosP;
+    const uz = -sinP * cosT;
+
+    let maxNeed = 0;
+    let maxZ = -Infinity;
+    for (let ix = 0; ix < 2; ix++) {
+      const dx = (ix ? max[0] : min[0]) - tx;
+      for (let iy = 0; iy < 2; iy++) {
+        const dy = (iy ? max[1] : min[1]) - ty;
+        for (let iz = 0; iz < 2; iz++) {
+          const dz = (iz ? max[2] : min[2]) - tz;
+          const xc = Math.abs(dx * rx + dz * rz);
+          const yc = Math.abs(dx * ux + dy * uy + dz * uz);
+          const zc = dx * ex + dy * ey + dz * ez;
+          const need = Math.max(zc + xc / (f * tanH), zc + yc / (f * tanV));
+          if (need > maxNeed) maxNeed = need;
+          if (zc > maxZ) maxZ = zc;
+        }
+      }
+    }
+    const r = Math.max(b?.radius ?? 1, 0.1);
+    const fallback = r / (f * Math.min(tanV, tanH));
+    const minFront = Number.isFinite(maxZ) ? maxZ + 0.05 * r : 0.1;
+    return Math.max(maxNeed > 0 ? maxNeed : fallback, minFront, 0.05);
+  }
+
+  private defaultAutoDistance(
+    thetaRad = this.targetTheta,
+    phiRad = this.targetPhi,
+  ): number {
+    if (this.distanceMode === 'absolute') return 3.0;
+    if (this.cameraFitFill !== null) {
+      return this.computeFitDistance(this.cameraFitFill, thetaRad, phiRad);
+    }
+    return this.bounds.radius * 2.5;
+  }
+
+  private clampFitDistance(distance: number): number {
+    const lo = this.minDistanceLimit ?? 0.05;
+    const hi = this.maxDistanceLimit ?? 1e4;
+    return Math.max(lo, Math.min(hi, distance));
+  }
+
+  private refreshAutoFitDistance(renderNow: boolean): void {
+    if (
+      this.cameraFitFill === null ||
+      this.customDistance ||
+      this.distanceMode === 'absolute'
+    ) {
+      return;
+    }
+    const d = this.clampFitDistance(
+      this.computeFitDistance(
+        this.cameraFitFill,
+        this.initialTheta,
+        this.initialPhi,
+      ),
+    );
+    this.initialDistance = d;
+    if (!this.followActive && !this.userAdjustedDistance) {
+      this.targetDistance = d;
+      this.currDistance = d;
+      if (
+        renderNow &&
+        this.gl &&
+        (this.meshes.length > 0 || this.backdropMeshes.length > 0)
+      ) {
+        this.update(0);
+        this.render();
+      }
+    }
+  }
+
+  /**
+   * Sets (`0.1..0.98`) or clears (`null`) automatic perspective viewport-fill
+   * framing for scenes without an explicit `camera-orbit` radius.
+   */
+  setCameraFitFill(fill: number | null): void {
+    const next =
+      fill == null || !Number.isFinite(fill) || fill <= 0
+        ? null
+        : Math.max(0.1, Math.min(0.98, fill));
+    this.cameraFitFill = next;
+    if (!this.customDistance && this.distanceMode !== 'absolute') {
+      const d =
+        next !== null
+          ? this.clampFitDistance(
+              this.computeFitDistance(next, this.initialTheta, this.initialPhi),
+            )
+          : this.clampDistance(this.bounds.radius * 2.5);
+      this.initialDistance = d;
+      if (!this.followActive && !this.userAdjustedDistance) {
+        this.targetDistance = d;
+        this.currDistance = d;
+        if (
+          this.gl &&
+          (this.meshes.length > 0 || this.backdropMeshes.length > 0)
+        ) {
+          this.update(0);
+          this.render();
+        }
+      }
+    }
+  }
+
+  getCameraFitFill(): number | null {
+    return this.cameraFitFill;
+  }
+
+  /**
+   * Fits the current orbit distance so the model's projected AABB fills `fill`
+   * (default `cameraFitFill ?? 0.75`) of the viewport, returning the distance.
+   */
+  fitCameraToBounds(fill?: number): number {
+    const targetFill = fill ?? this.cameraFitFill ?? 0.75;
+    const d = this.clampFitDistance(
+      this.computeFitDistance(targetFill, this.targetTheta, this.targetPhi),
+    );
+    this.initialDistance = d;
+    this.targetDistance = d;
+    this.currDistance = d;
+    this.userAdjustedDistance = false;
+    if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
+      this.update(0);
+      this.render();
+    }
+    return d;
+  }
+
   public setDistanceMode(mode: 'auto' | 'relative' | 'absolute'): void {
     this.distanceMode = mode;
     if (!this.customDistance) {
-      const d = this.clampDistance(
-        this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5,
-      );
+      const raw = this.defaultAutoDistance(this.initialTheta, this.initialPhi);
+      const d =
+        this.cameraFitFill !== null && mode !== 'absolute'
+          ? this.clampFitDistance(raw)
+          : this.clampDistance(raw);
       this.initialDistance = d;
       this.targetDistance = d;
       this.currDistance = d;
@@ -3279,13 +3497,17 @@ export class ThreeView {
 
   private clampDistance(distance: number): number {
     const r = this.bounds?.radius;
+    const baseMin = r ? r * 0.5 : 0.1;
+    const baseMax = r ? r * 8.0 : 100;
+    const fitD = this.cameraFitFill !== null ? this.initialDistance : null;
     const minD = this.followActive
       ? 0.01
-      : (this.minDistanceLimit ?? (r ? r * 0.5 : 0.1));
-    return Math.max(
-      minD,
-      Math.min(this.maxDistanceLimit ?? (r ? r * 8.0 : 100), distance),
-    );
+      : (this.minDistanceLimit ??
+        (fitD !== null ? Math.min(baseMin, fitD * 0.5) : baseMin));
+    const maxD =
+      this.maxDistanceLimit ??
+      (fitD !== null ? Math.max(baseMax, fitD * 2.0) : baseMax);
+    return Math.max(minD, Math.min(maxD, distance));
   }
 
   public setCamera(
@@ -3302,11 +3524,13 @@ export class ThreeView {
     }
     if (distance !== undefined && distance > 0) {
       this.targetDistance = this.clampDistance(distance);
+      this.userAdjustedDistance = true;
     }
     if (zoom !== undefined && zoom > 0) {
       this.targetDistance = this.clampDistance(
         (this.bounds.radius * 2.5) / zoom,
       );
+      this.userAdjustedDistance = true;
     }
   }
 
@@ -3325,14 +3549,19 @@ export class ThreeView {
     }
     const hasDist = Boolean((distance && distance > 0) || (zoom && zoom > 0));
     this.customDistance = hasDist;
+    this.userAdjustedDistance = false;
+    const autoDist = this.defaultAutoDistance(
+      this.initialTheta,
+      this.initialPhi,
+    );
     this.initialDistance =
       this.currDistance =
       this.targetDistance =
         hasDist
           ? this.targetDistance
-          : this.clampDistance(
-              this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5,
-            );
+          : this.cameraFitFill !== null && this.distanceMode !== 'absolute'
+            ? this.clampFitDistance(autoDist)
+            : this.clampDistance(autoDist);
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
       this.render();
@@ -3342,11 +3571,18 @@ export class ThreeView {
   public resetCamera(): void {
     this.followTarget = null;
     this.followActive = false;
+    this.userAdjustedDistance = false;
     this.targetTheta = this.clampTheta(this.initialTheta);
     this.targetPhi = this.clampPhi(this.initialPhi);
-    this.targetDistance = this.clampDistance(
-      this.initialDistance ?? this.bounds.radius * 2.5,
-    );
+    const raw =
+      this.initialDistance ??
+      this.defaultAutoDistance(this.initialTheta, this.initialPhi);
+    this.targetDistance =
+      this.cameraFitFill !== null &&
+      !this.customDistance &&
+      this.distanceMode !== 'absolute'
+        ? this.clampFitDistance(raw)
+        : this.clampDistance(raw);
     this.customTarget = this.initialCustomTarget
       ? [...this.initialCustomTarget]
       : null;
@@ -3525,6 +3761,7 @@ export class ThreeView {
         this.lastInteractionTime = now();
         const factor = Math.exp(e.deltaY * 0.001);
         this.targetDistance = this.clampDistance(this.targetDistance * factor);
+        this.userAdjustedDistance = true;
       },
       {passive: false},
     );
@@ -3570,10 +3807,12 @@ export class ThreeView {
         case '+':
         case '=':
           this.targetDistance = this.clampDistance(this.targetDistance * 0.9);
+          this.userAdjustedDistance = true;
           break;
         case '-':
         case '_':
           this.targetDistance = this.clampDistance(this.targetDistance * 1.1);
+          this.userAdjustedDistance = true;
           break;
         case 'Home':
           this.resetCamera();
@@ -4005,6 +4244,7 @@ export class ThreeView {
       this.canvas.width = w;
       this.canvas.height = h;
       this.resizePickingFbo(w, h);
+      this.refreshAutoFitDistance(false);
       if (!this.xrSessionActive) {
         this.syncCameraMatrices();
       }
@@ -4464,9 +4704,22 @@ export class ThreeView {
     let hasRefraction = false;
     const sectionPlane = resolveSectionPlane(this);
     const sectionCapColor = resolveSectionCapColor(this);
+    const hasCutaway =
+      this.cutawayEnabled && this.meshes.some((m) => resolveCutawayCached(m));
+    const capHidden = hasCutaway
+      ? (m: unknown) => {
+          const mg = m as MeshGpu;
+          if (!resolveCutawayCached(mg)) return false;
+          if ((mg as {worldSpace?: boolean}).worldSpace === true) {
+            return isMeshCutAway(mg, mg.transform, eyeX, eyeY, eyeZ);
+          }
+          mat4Multiply(this.modelMatrix, this.modelRootMatrix, mg.transform);
+          return isMeshCutAway(mg, this.modelMatrix, eyeX, eyeY, eyeZ);
+        }
+      : undefined;
     const capMesh = (
       solidCaps && sectionPlane
-        ? capRenderer!(this, sectionPlane, sectionCapColor)
+        ? capRenderer!(this, sectionPlane, sectionCapColor, capHidden)
         : null
     ) as MeshGpu | null;
     const sceneList =
@@ -4535,9 +4788,8 @@ export class ThreeView {
             );
           }
         }
-        // Dollhouse cutaway: hide camera-facing walls from the color pass only
-        // (the shadow pass below still draws them, so exterior light and
-        // shadows are unchanged).
+        // Dollhouse cutaway: hide camera-facing walls from the color pass (and
+        // from the shadow pass too when `cutaway.castShadow === false`).
         if (
           this.cutawayEnabled &&
           i >= numBackdrop &&

@@ -4664,6 +4664,140 @@ fn test_a8_material_presets_use_native_kernels_and_export() {
     assert!(transcode_three_to_glb(&flat).is_ok());
 }
 
+#[test]
+fn test_shiplap_ext_box_world_uvs_and_arch_kit_ergonomics_in_boa() {
+    use three_live_compiler::material_preset::{
+        generate_material_preset_with_options, PresetParams,
+    };
+    let script = r#"
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(4, 0.2, 3, { uvGenerator: 'world' }),
+            new THREE.MeshStandardMaterial({
+                ...THREE.ProceduralTexture.shiplap({
+                    size: 64,
+                    scale: 8,
+                    seed: 7,
+                    color: 0x996633,
+                    color2: 0x221108,
+                    roughness: 0.65,
+                    buttJoints: 1,
+                    repeat: [0.25, 1.0],
+                }),
+            })
+        );
+        floor.name = 'Floor';
+        floor.position.set(0, 0.1, 0);
+        scene.add(floor);
+
+        const deck = new THREE.Mesh(
+            new THREE.BoxGeometry(4, 0.2, 3, { uvGenerator: 'world' }),
+            new THREE.MeshStandardMaterial({ color: 0xcccccc })
+        );
+        deck.name = 'WorldBox';
+        deck.position.set(0, 0.1, 4);
+        scene.add(deck);
+
+        const wall = new THREE.Mesh(
+            new THREE.Architecture.WallGeometry({
+                length: 4,
+                height: 2.8,
+                thickness: 0.2,
+                baseboardHeight: 0.14,
+                baseboardSide: 'back',
+                corniceHeight: 0.1,
+                corniceSide: 'back',
+            }),
+            new THREE.MeshStandardMaterial({ color: 0xeae5dc })
+        );
+        wall.name = 'Wall';
+        wall.position.set(0, 0, -1.5);
+        scene.add(wall);
+
+        const roof = new THREE.Mesh(
+            new THREE.Architecture.RoofGeometry({
+                style: 'flat-parapet',
+                width: 4,
+                depth: 3,
+                height: 0.6,
+                openSides: ['n'],
+            }),
+            new THREE.MeshStandardMaterial({ color: 0x555555 })
+        );
+        roof.name = 'Roof';
+        roof.position.set(0, 2.8, 0);
+        roof.userData.xr = { cutaway: { normal: [0, 1, 0], castShadow: false } };
+        scene.add(roof);
+
+        const door = THREE.Architecture.createDoorGroup(
+            {
+                name: 'Entry',
+                style: 'french',
+                leaves: 2,
+                width: 1.6,
+                openFraction: 0.35,
+                linkedLeaves: true,
+            },
+            {
+                frame: new THREE.MeshStandardMaterial({ color: 0xffffff }),
+                leaf: new THREE.MeshStandardMaterial({ color: 0x6b4423 }),
+            }
+        );
+        door.position.set(0, 0, 1.5);
+        scene.add(door);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    "#;
+    let sg =
+        three_live_compiler::validate_three_script(script).expect("arch ergonomics SceneGraph");
+    let floor_png = three_live_compiler::load_reference_bytes(
+        sg.materials[0].base_color_texture.as_deref().unwrap(),
+    )
+    .unwrap();
+    let (decoded, size) = three_live_compiler::decode_reference_image(&floor_png).unwrap();
+    assert_eq!(size, [64, 64]);
+    let expected = generate_material_preset_with_options(
+        &PresetParams {
+            kind: 12,
+            size: 64,
+            scale: 8,
+            seed: 7,
+            color: [153.0 / 255.0, 102.0 / 255.0, 51.0 / 255.0],
+            color2: [34.0 / 255.0, 17.0 / 255.0, 8.0 / 255.0],
+            roughness: 0.65,
+            normal_strength: 1.0,
+        },
+        1,
+        4.0,
+    );
+    assert_eq!(
+        decoded.rgba, expected.albedo,
+        "Boa shiplap(buttJoints=1, repeat=[0.25,1]) must match Rust native ext kernel byte-for-byte"
+    );
+    // BoxGeometry uvGenerator='world' with ENABLE_NATIVE_HOOKS=true emits 4m x 3m UVs on top face,
+    // and KHR_texture_transform repeat=[0.25, 1.0] bakes Floor's UVs down to 1m x 3m while
+    // unscaled WorldBox retains raw 4m x 3m world-meter UVs.
+    let floor_mesh = &sg.meshes[0];
+    let floor_max_u = floor_mesh.uvs.iter().map(|uv| uv[0]).fold(0.0f32, f32::max);
+    let floor_max_v = floor_mesh.uvs.iter().map(|uv| uv[1]).fold(0.0f32, f32::max);
+    assert!(
+        (floor_max_u - 1.0).abs() < 1e-4 && (floor_max_v - 3.0).abs() < 1e-4,
+        "Floor expected baked world*repeat UVs (1.0, 3.0), got ({}, {})",
+        floor_max_u,
+        floor_max_v
+    );
+    let world_box_mesh = &sg.meshes[1];
+    let max_u = world_box_mesh.uvs.iter().map(|uv| uv[0]).fold(0.0f32, f32::max);
+    let max_v = world_box_mesh.uvs.iter().map(|uv| uv[1]).fold(0.0f32, f32::max);
+    assert!(
+        (max_u - 4.0).abs() < 1e-4 && (max_v - 3.0).abs() < 1e-4,
+        "WorldBox expected raw world-meter UVs (4.0, 3.0), got ({}, {})",
+        max_u,
+        max_v
+    );
+
+    let glb = transcode_three_to_glb(script).expect("GLB export");
+    assert!(glb.len() > 8000);
+}
+
 // ---------------------------------------------------------------------------------------------
 // B5: AI textures (`userData.xr.material.prompt`) resolved from a texture pack
 // ---------------------------------------------------------------------------------------------
